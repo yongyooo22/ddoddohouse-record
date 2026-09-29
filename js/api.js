@@ -6,10 +6,18 @@ const TIMEOUT_MS = 15000;
 export class ApiError extends Error {
   constructor(code, status = 0, data = null) {
     super(code);
-    this.code = code;       // not_configured | too_many_attempts | unauthorized | invalid | too_large | not_found | conflict | limit | method_not_allowed | server_error | offline | network | timeout | bad_key
+    this.code = code;       // not_configured | too_many_attempts | unauthorized | invalid | too_large | not_found | conflict | limit | in_use | method_not_allowed | server_error | offline | network | timeout | bad_key | aborted
     this.status = status;
     this.data = data;
   }
+}
+
+/** 새 id (기록·사진). 서버 id 형식 [A-Za-z0-9_-] 에 맞음 */
+export function newId() {
+  if (globalThis.crypto && crypto.randomUUID) return crypto.randomUUID();
+  const b = new Uint8Array(16);
+  crypto.getRandomValues(b);
+  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
 }
 
 let errorHook = null;
@@ -56,19 +64,24 @@ async function request(method, path, body, { key: overrideKey } = {}) {
   let data = null;
   try { data = await res.json(); } catch { data = null; }
 
-  if (!res.ok) {
-    const fallback = {
-      400: 'invalid', 401: 'unauthorized', 404: 'not_found', 405: 'method_not_allowed',
-      409: 'conflict', 413: 'too_large', 429: 'too_many_attempts', 503: 'not_configured',
-    }[res.status] || 'server_error';
-    const err = new ApiError((data && typeof data.error === 'string' && data.error) || fallback, res.status, data);
-    if (errorHook && !overrideKey) {
-      try { errorHook(err); } catch { /* 무시 */ }
-    }
-    throw err;
-  }
+  if (!res.ok) throw httpError(res.status, data, !overrideKey);
   return data || {};
 }
+
+/** HTTP 오류 응답 → ApiError (전역 훅에도 알림) */
+function httpError(status, data, notify = true) {
+  const fallback = {
+    400: 'invalid', 401: 'unauthorized', 404: 'not_found', 405: 'method_not_allowed',
+    409: 'conflict', 413: 'too_large', 429: 'too_many_attempts', 503: 'not_configured',
+  }[status] || 'server_error';
+  const err = new ApiError((data && typeof data.error === 'string' && data.error) || fallback, status, data);
+  if (errorHook && notify) {
+    try { errorHook(err); } catch { /* 무시 */ }
+  }
+  return err;
+}
+
+const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 
 export const fetchData = (opts) => request('GET', '/api/data', undefined, opts);
 
@@ -80,6 +93,115 @@ export const deleteRecord = (id) => request('DELETE', `/api/records?id=${encodeU
 export const saveMember = (member) => request('POST', '/api/members', { member });
 
 export const deleteMember = (id) => request('DELETE', `/api/members?id=${encodeURIComponent(id)}`);
+
+// ── 사진 ──
+const IMAGE_TIMEOUT_MS = 30000;
+/** 올리기: 전체 시간이 아니라 '진행이 멈춘 시간'으로 판단 (느린 연결에서도 조금씩 올라가면 기다림) */
+const UPLOAD_STALL_MS = 30000;
+const UPLOAD_MAX_MS = 10 * 60 * 1000;
+
+export const imageStats = () => request('GET', '/api/images?stats=1');
+
+/** 서버의 모든 사진 정보 → {images:[{id, mime, bytesF, bytesT, createdAt}]} (백업용) */
+export const imageList = () => request('GET', '/api/images?list=1');
+
+/**
+ * 어떤 기록에도 안 쓰이고 올린 지(기록에서 빠진 지) 하루가 지난 사진 정리 → {deleted}
+ * keep: 이 기기의 초안이 쓰는 사진 (지우지 않음)
+ */
+export const gcImages = (keep = []) => request('POST', '/api/images?action=gc', { keep });
+
+export const deleteImage = (id) => request('DELETE', `/api/images?id=${encodeURIComponent(id)}`);
+
+/**
+ * 사진 한 장(바이너리) → Blob. size: 't'(작은 사진) | 'f'(원본 크기)
+ * 서버가 private·immutable 로 보내므로 브라우저 HTTP 캐시를 그대로 씀 (오프라인에서도 본 사진은 보일 수 있게)
+ * — 그래서 오프라인이라도 미리 막지 않고 한 번 시도해 봄
+ */
+export async function fetchImageBlob(id, size = 't', { signal } = {}) {
+  const key = getKey();
+  if (!key) throw new ApiError('unauthorized', 401);
+  if (!isValidKeyFormat(key)) throw new ApiError('bad_key', 0);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), IMAGE_TIMEOUT_MS);
+  const onAbort = () => ctrl.abort();
+  if (signal) signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    let res;
+    try {
+      res = await fetch(`/api/images?id=${encodeURIComponent(id)}&size=${size === 'f' ? 'f' : 't'}`, {
+        headers: { 'x-app-key': key },
+        signal: ctrl.signal,
+        credentials: 'same-origin',
+        referrerPolicy: 'no-referrer',
+      });
+    } catch (e) {
+      if (signal && signal.aborted) throw new ApiError('aborted', 0);
+      throw new ApiError(e && e.name === 'AbortError' ? 'timeout' : (isOffline() ? 'offline' : 'network'), 0);
+    }
+    if (!res.ok) {
+      let data = null;
+      try { data = await res.json(); } catch { data = null; }
+      throw httpError(res.status, data);
+    }
+    try {
+      return await res.blob();
+    } catch {
+      throw new ApiError(isOffline() ? 'offline' : 'network', 0);
+    }
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener('abort', onAbort);
+  }
+}
+
+/**
+ * 사진 올리기 {full, thumb, id?} (base64) → {image}. 올라가는 정도를 알려고 fetch 대신 XHR 사용.
+ * 30초 동안 하나도 더 올라가지 않으면(또는 다 보낸 뒤 응답이 없으면) 'timeout'.
+ * onSent: 본문을 다 보냄 (이 뒤로는 끊어도 서버에 저장될 수 있음)
+ * 반환: { promise, abort }
+ */
+export function uploadImage(body, { onProgress, onSent } = {}) {
+  let xhr = null;
+  let stall = 0;
+  const promise = new Promise((resolve, reject) => {
+    const key = getKey();
+    if (!key) { reject(new ApiError('unauthorized', 401)); return; }
+    if (!isValidKeyFormat(key)) { reject(new ApiError('bad_key', 0)); return; }
+    if (isOffline()) { reject(new ApiError('offline', 0)); return; }
+    xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/images');
+    xhr.timeout = UPLOAD_MAX_MS;
+    xhr.setRequestHeader('x-app-key', key);
+    xhr.setRequestHeader('content-type', 'application/json');
+    xhr.setRequestHeader('accept', 'application/json');
+    let stalled = false;
+    const arm = () => {
+      clearTimeout(stall);
+      stall = setTimeout(() => { stalled = true; xhr.abort(); }, UPLOAD_STALL_MS);
+    };
+    if (xhr.upload) {
+      xhr.upload.addEventListener('progress', (e) => {
+        arm();
+        if (onProgress && e.lengthComputable && e.total) onProgress(e.loaded / e.total);
+      });
+      xhr.upload.addEventListener('load', () => { arm(); if (onSent) onSent(); });
+    }
+    xhr.addEventListener('loadend', () => clearTimeout(stall));
+    xhr.addEventListener('load', () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { data = null; }
+      if (xhr.status >= 200 && xhr.status < 300 && data) resolve(data);
+      else reject(xhr.status >= 200 && xhr.status < 300 ? new ApiError('server_error', xhr.status) : httpError(xhr.status, data));
+    });
+    xhr.addEventListener('error', () => reject(new ApiError(isOffline() ? 'offline' : 'network', 0)));
+    xhr.addEventListener('timeout', () => reject(new ApiError('timeout', 0)));
+    xhr.addEventListener('abort', () => reject(new ApiError(stalled ? 'timeout' : 'aborted', 0)));
+    arm();
+    xhr.send(JSON.stringify(body));
+  });
+  return { promise, abort: () => { clearTimeout(stall); if (xhr) xhr.abort(); } };
+}
 
 /** 사용자에게 보여줄 오류 문구 */
 export function errorMessage(err, action = '저장') {

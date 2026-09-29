@@ -5,6 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bumpSource, nextVersion } from '../scripts/bump-sw.mjs';
+import { sourceToRegExp } from '../scripts/dev.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(path.join(ROOT, p), 'utf8');
@@ -89,6 +90,11 @@ test('vercel.json: 전역 보안 헤더와 no-cache', () => {
   const get = (k) => (all.headers.find((x) => x.key === k) || {}).value;
   assert.match(get('Content-Security-Policy'), /default-src 'self'; script-src 'self'; style-src 'self'/);
   assert.match(get('Content-Security-Policy'), /frame-ancestors 'none'/);
+  // 사진은 fetch → Blob → URL.createObjectURL 로 보여 주므로 blob: 필요 (그 밖의 출처는 여전히 막음)
+  assert.match(get('Content-Security-Policy'), /(^|; )img-src 'self' data: blob:;/);
+  assert.equal(get('X-Content-Type-Options'), 'nosniff');
+  // 전역 보안 헤더 규칙이 API(사진 바이너리 응답 포함)에도 적용됨
+  assert.ok(sourceToRegExp(all.source).test('/api/images'));
   assert.equal(get('X-Robots-Tag'), 'noindex, nofollow, noarchive');
   assert.equal(get('Referrer-Policy'), 'no-referrer');
   assert.equal(get('X-Frame-Options'), 'DENY');
@@ -97,5 +103,20 @@ test('vercel.json: 전역 보안 헤더와 no-cache', () => {
     assert.ok(rule && rule.headers.some((x) => x.key === 'Cache-Control' && /no-cache/.test(x.value)), p);
   }
   const api = readdirSync(path.join(ROOT, 'api')).filter((f) => f.endsWith('.js'));
-  assert.ok(api.length <= 3, 'Vercel Hobby 함수 수 제한');
+  assert.deepEqual(api.sort(), ['data.js', 'images.js', 'members.js', 'records.js']);
+  assert.ok(api.length <= 12, 'Vercel Hobby 함수 수 제한');
+});
+
+test('clear-cache.txt: 잠글 때 받아 둔 사진 캐시를 비우는 신호 — Clear-Site-Data "cache", 저장·가로채기 없음', () => {
+  assert.ok(existsSync(path.join(ROOT, 'clear-cache.txt')));
+  const cfg = JSON.parse(read('vercel.json'));
+  const rule = cfg.headers.find((h) => h.source === '/clear-cache.txt');
+  assert.ok(rule, 'vercel.json 규칙');
+  const get = (k) => (rule.headers.find((x) => x.key === k) || {}).value;
+  assert.equal(get('Clear-Site-Data'), '"cache"'); // "storage" 는 안 됨 (서비스 워커·오프라인 사본까지 지움)
+  assert.equal(get('Cache-Control'), 'no-store');
+  // 서비스 워커가 가로채면 브라우저가 헤더를 못 볼 수 있으므로 그대로 네트워크로
+  assert.match(read('sw.js'), /pathname === '\/clear-cache\.txt'\) return;/);
+  assert.ok(!precacheList().includes('/clear-cache.txt'));
+  assert.ok(!read('.vercelignore').split('\n').some((l) => l.trim() && 'clear-cache.txt'.startsWith(l.trim().replace(/\/$/, ''))), '배포에 포함');
 });

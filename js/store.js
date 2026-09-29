@@ -310,6 +310,27 @@ export function latestWithTitle(type, title, excludeId) {
   return recordsSorted().find((r) => r.type === type && r.id !== excludeId && norm(r.title) === k) || null;
 }
 
+const PHOTO_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** 기록의 사진 id 목록 (첫 장 = 대표). 예전 기록(photos 없음)은 [] */
+export function photosOf(r) {
+  return r && Array.isArray(r.photos) ? r.photos.filter((id) => typeof id === 'string' && PHOTO_ID_RE.test(id)) : [];
+}
+
+/** 같은 종류·같은 제목이면서 사진이 있는 가장 최근 기록 ('이전 대표 사진 쓰기' 제안용) */
+export function latestWithPhoto(type, title, excludeId) {
+  const k = norm(title);
+  if (!k) return null;
+  return recordsSorted().find((r) => r.type === type && r.id !== excludeId && norm(r.title) === k && photosOf(r).length > 0) || null;
+}
+
+/** 기록들이 쓰는 사진 id (중복 없이, 최신 기록 순) */
+export function referencedPhotos() {
+  const seen = new Set();
+  for (const r of recordsSorted()) for (const id of photosOf(r)) seen.add(id);
+  return [...seen];
+}
+
 /** 같은 종류·같은 제목을 이미 해 본 멤버 id (머미·방탈출은 다시 하기 어려워서 알려 줌) */
 export function playedBy(type, title, excludeId) {
   const k = norm(title);

@@ -4,7 +4,9 @@ import { APP_NAME } from './constants.js';
 import * as store from './store.js';
 import * as api from './api.js';
 import { setRouter, markRendered, navigate } from './nav.js';
-import { toast } from './ui.js';
+import { toast, closeAllDialogs } from './ui.js';
+import { clearImageCache, clearHttpImageCache } from './images.js';
+import { closeViewer } from './views/photos.js';
 import * as lockView from './views/lock.js';
 import * as homeView from './views/home.js';
 import * as listView from './views/list.js';
@@ -139,6 +141,7 @@ api.onApiError((err) => {
   if (err.code === 'unauthorized') {
     store.forgetAccess();
     started = false;
+    clearHttpImageCache(); // 이 기기 브라우저 캐시에 남은 사진도 (다음 사람이 못 보게)
     lock('코드가 바뀌었거나 맞지 않아요. 새로 공유받은 링크로 들어와 주세요.');
   } else if (err.code === 'too_many_attempts') {
     toast('시도가 너무 많아요. 15분쯤 뒤에 다시 해 주세요', 'error', 4500);
@@ -151,6 +154,10 @@ let currentName = null;
 
 function lock(message) {
   if (current && current.destroy) { try { current.destroy(); } catch { /* 무시 */ } }
+  // 잠금 화면 위에 사진·기록이 남지 않게: 전체화면 뷰어·사진 시트·확인 창을 모두 닫음
+  closeViewer();
+  closeAllDialogs();
+  clearImageCache(); // 메모리에 받아 둔 사진도 버림
   currentName = 'lock';
   tabbar.hidden = true;
   banner.hidden = true;

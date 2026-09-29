@@ -7,6 +7,10 @@ import * as api from '../api.js';
 import { navigate } from '../nav.js';
 import { appBar, typeBadge, starsView, stamp, avatar, scoreBars, spoilerBlock, confirmDialog, toast, emptyState, loadingState, loadErrorState } from '../ui.js';
 import { recordStamp, ordinalLabel, bgOf, mmOf, erOf, spoilerKey } from './bits.js';
+import { gallery, closeViewer } from './photos.js';
+
+// 상세를 다시 그려도(새로고침·다른 기기의 변경) 보던 사진 그대로: 기록 id → 사진 번호
+const galleryAt = new Map();
 
 const arr = (v) => (Array.isArray(v) ? v : []);
 
@@ -208,6 +212,7 @@ function render(root, id, ctx) {
         h('button', { type: 'button', class: 'icon-btn', 'aria-label': '삭제', onClick: onDelete }, icon('trash')),
       ],
     }),
+    gallery(r, { start: galleryAt.get(r.id) || 0, onIndex: (i) => galleryAt.set(r.id, i) }),
     hero,
     members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null,
     typeSecs,
@@ -222,8 +227,26 @@ function render(root, id, ctx) {
   root.replaceChildren(view);
 }
 
+/** 이 화면에 보이는 내용의 요약 — 같으면 다시 그리지 않음 (넘기던 사진·열린 뷰어·스크롤이 흔들리지 않게) */
+function signature(id) {
+  const r = recordById(id);
+  if (!r) return JSON.stringify([null, state.status, isFirstLoad(), loadFailed(), state.records.length]);
+  const ord = ordinalLabel(r);
+  return JSON.stringify([r, state.members, ord ? ord.textContent : null]);
+}
+
 export function mount(root, ctx) {
   const id = ctx.params[0];
+  if (!ctx.restored) galleryAt.delete(id); // 새로 열면 첫 사진부터 (뒤로가기로 돌아오면 보던 사진)
+  let shown = signature(id);
   render(root, id, ctx);
-  return { update: () => render(root, id, ctx) };
+  return {
+    update() {
+      const sig = signature(id);
+      if (sig === shown) return;
+      shown = sig;
+      render(root, id, ctx);
+    },
+    destroy: () => closeViewer(),
+  };
 }

@@ -3,7 +3,7 @@ import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, TAG_SUGGESTIONS, LIMITS, FIELD_LABELS, MM_SCORES, ER_SCORES } from '../constants.js';
 import {
   state, recordById, upsertRecord, membersSorted, memberInfo, titlesFor, latestWithTitle, usedTags,
-  getDraft, setDraft, clearDraftIf, isFirstLoad, playedBy,
+  getDraft, setDraft, clearDraftIf, isFirstLoad, playedBy, photosOf,
 } from '../store.js';
 import { todayStr, yesterdayStr, defaultRecordDate, fmtDate, relTime, parseDate, fmtDateTime } from '../format.js';
 import * as api from '../api.js';
@@ -13,6 +13,8 @@ import {
 } from '../ui.js';
 import { bgSection, mmSection, erSection, textInput, recalcResults } from './form-sections.js';
 import { openMemberEditor } from './members.js';
+import { photoField, discardPhotos } from './photos.js';
+import { existingPhotos } from '../images.js';
 
 // ── 모델 ──
 function blankModel(type) {
@@ -26,6 +28,7 @@ function blankModel(type) {
     review: '',
     spoiler: false,
     tags: [],
+    photos: [],
     bg: { place: '', playTimeMin: '', mode: 'competitive', results: [], coopWin: null, expansion: '' },
     mm: {
       publisher: '', format: 'store', store: '', gm: '', playerCount: '', playTimeMin: '', roles: [], culpritResult: null,
@@ -48,6 +51,7 @@ function toModel(src, type) {
   for (const k of ['date', 'title', 'oneLiner', 'review']) if (typeof src[k] === 'string') m[k] = src[k];
   if (Array.isArray(src.members)) m.members = src.members.filter((x) => typeof x === 'string');
   if (Array.isArray(src.tags)) m.tags = src.tags.filter((x) => typeof x === 'string');
+  if (Array.isArray(src.photos)) m.photos = [...new Set(src.photos.filter((x) => typeof x === 'string'))].slice(0, LIMITS.photos);
   m.rating = Number(src.rating) || 0;
   m.spoiler = !!src.spoiler;
   if (isObj(src.bg)) {
@@ -106,12 +110,7 @@ function toModel(src, type) {
   return m;
 }
 
-function newId() {
-  if (globalThis.crypto && crypto.randomUUID) return crypto.randomUUID();
-  const b = new Uint8Array(16);
-  crypto.getRandomValues(b);
-  return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
-}
+const newId = api.newId;
 
 const intOrNull = (v) => (v === '' || v === null || v === undefined ? null : Math.round(Number(v)));
 
@@ -119,7 +118,7 @@ const intOrNull = (v) => (v === '' || v === null || v === undefined ? null : Mat
 function toPayload(m, id, createdAt) {
   const rec = {
     id, type: m.type, date: m.date, title: m.title.trim(), members: [...m.members], rating: m.rating,
-    oneLiner: m.oneLiner.trim(), review: m.review.trim(), spoiler: !!m.spoiler, tags: [...m.tags],
+    oneLiner: m.oneLiner.trim(), review: m.review.trim(), spoiler: !!m.spoiler, tags: [...m.tags], photos: [...m.photos],
   };
   if (createdAt) rec.createdAt = createdAt;
   const n = m.members.length;
@@ -256,13 +255,21 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
   let dismissedTitle = '';
   let recreateCreatedAt = null; // 삭제된 기록을 다시 만들 때 원래 작성 시각 유지 (N번째 순서 보존)
   let autoRetried = false;
+  let alive = true;
+  let formReady = false; // 저장 버튼까지 만들어진 뒤부터 사진 상태를 버튼에 반영
 
   // ── 초안 ──
   /** 초안 저장. 기기 저장 공간 문제로 실패하면 false */
   function writeDraft() {
     clearTimeout(draftTimer);
     draftTimer = null;
-    return setDraft({ key: draftKey, model: m, baseUpdatedAt: base, savedAt: new Date().toISOString(), recordId });
+    const prev = getDraft();
+    const ok = setDraft({ key: draftKey, model: m, baseUpdatedAt: base, savedAt: new Date().toISOString(), recordId });
+    // 불러오지 않은 다른 초안을 덮어썼으면 그 초안에만 있던 사진은 서버에서도 지움 (어디에도 안 쓰인 채 남지 않게)
+    if (ok && prev && !(prev.key === draftKey && (draftKey !== 'new' || prev.recordId === recordId))) {
+      discardPhotos(photosOf(prev.model).filter((id) => !m.photos.includes(id)));
+    }
+    return ok;
   }
   function changed() {
     dirty = true;
@@ -333,9 +340,9 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
       titleInput.removeAttribute('aria-invalid');
       changed();
       clearTimeout(st);
-      st = setTimeout(() => showSuggest(suggest), 350);
+      st = setTimeout(() => { showSuggest(suggest); photos.refreshSuggest(); }, 350);
     });
-    titleInput.addEventListener('change', () => showSuggest(suggest));
+    titleInput.addEventListener('change', () => { showSuggest(suggest); photos.refreshSuggest(); });
 
     const dateInput = h('input', { type: 'date', class: 'input', value: m.date, max: '2100-12-31', min: '1900-01-01', required: true, 'data-field': 'date', id: nextId('date') });
     const quick = [['오늘', todayStr], ['어제', yesterdayStr]].map(([label, fn]) => {
@@ -537,7 +544,15 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
         h('div', { class: 'tag-add' }, input, h('button', { type: 'button', class: 'btn btn-soft', onClick: add }, '추가'))));
   }
 
-  const builders = { common: sectionCommon, members: sectionMembers, type: sectionType, review: sectionReview, tags: sectionTags };
+  // 사진 칸은 올리는 중인 상태를 들고 있어서 한 번만 만들고 계속 씀
+  const photos = photoField({
+    model: () => m,
+    onChange: changed,
+    onBusy: () => { if (formReady) paintSaveLabel(); },
+    type,
+    excludeId: isNew ? null : rec.id,
+  });
+  const builders = { common: sectionCommon, photos: () => photos.el, members: sectionMembers, type: sectionType, review: sectionReview, tags: sectionTags };
   function rerender(name) {
     const old = sections[name];
     const next = builders[name]();
@@ -546,7 +561,7 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
   }
   function buildAll() {
     for (const k of Object.keys(builders)) sections[k] = builders[k]();
-    holder.body.replaceChildren(banner, sections.common, sections.members, sections.type, sections.review, sections.tags);
+    holder.body.replaceChildren(banner, sections.common, sections.photos, sections.members, sections.type, sections.review, sections.tags);
   }
 
   // ── 초안 배너 ──
@@ -556,7 +571,14 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
     banner.append(
       h('p', {}, icon('note'), h('span', { text: `저장하지 않은 작성 내용이 있어요 (${relTime(existingDraft.savedAt)})` })),
       h('div', { class: 'draft-actions' },
-        h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onClick: () => { clearDraftIf((d) => d.key === draftKey); banner.hidden = true; } }, '버리기'),
+        h('button', {
+          type: 'button', class: 'btn btn-ghost btn-sm',
+          onClick: () => {
+            clearDraftIf((d) => d.key === draftKey);
+            banner.hidden = true;
+            discardPhotos(photosOf(existingDraft.model)); // 초안에만 있던 사진도 지움
+          },
+        }, '버리기'),
         h('button', {
           type: 'button', class: 'btn btn-primary btn-sm',
           onClick: () => {
@@ -566,6 +588,7 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
             syncMembers();
             dirty = true;
             banner.hidden = true;
+            photos.reset(m.photos);
             buildAll();
             toast('작성하던 내용을 불러왔어요', 'ok');
           },
@@ -583,14 +606,24 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
       draftTimer = null;
       dirty = false;
       clearMyDraft();
+      photos.discardUnsaved();
     }
     goBack(isNew ? '#/' : `#/record/${encodeURIComponent(rec.id)}`);
   });
 
-  function setBusy(on) {
+  const idleLabel = isNew ? '기록 저장' : '수정 저장';
+  function setBusy(on, label = '저장 중…') {
     saveBtn.disabled = on;
     saveBtn.classList.toggle('is-busy', on);
-    saveBtn.lastChild.textContent = on ? '저장 중…' : (isNew ? '기록 저장' : '수정 저장');
+    saveBtn.lastChild.textContent = on ? label : idleLabel;
+    if (!on) paintSaveLabel();
+  }
+  /** 사진을 올리는 동안은 저장 버튼에 알림 (누르면 다 올린 뒤 저장) */
+  function paintSaveLabel() {
+    if (saving) return;
+    const n = photos.busy();
+    saveBtn.classList.toggle('is-waiting', n > 0);
+    saveBtn.lastChild.textContent = n > 0 ? `사진 올리는 중… (${n})` : idleLabel;
   }
 
   function invalid(msg, sel) {
@@ -658,9 +691,24 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
     if (saving) return;
     if (holder.commitTag && holder.commitTag() === false) return;
     if (!validate()) return;
+    if (photos.busy()) {
+      // 사진을 다 올린 다음에 저장 (올리는 중인 사진이 빠진 채 저장되지 않게)
+      saving = true;
+      setBusy(true, '사진 올리는 중…');
+      toast('사진을 다 올리면 바로 저장할게요', 'info');
+      await photos.whenIdle();
+      saving = false;
+      setBusy(false);
+      if (!alive) return;
+    }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       const kept = flushDraft();
       toast(`오프라인이라 저장할 수 없어요. ${keptMsg(kept)}`, 'error', 4000);
+      return;
+    }
+    if (photos.failed()) {
+      toast('올리지 못한 사진이 있어요. 사진을 눌러 다시 올리거나 ✕로 빼 주세요', 'error', 4500);
+      photos.focus();
       return;
     }
     saving = true;
@@ -692,6 +740,19 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
         saving = false;
         setBusy(false);
         await handleDeleted();
+      } else if (e.code === 'invalid' && /^photos/.test(String((e.data && e.data.field) || ''))) {
+        // 오래된 초안의 사진이 그사이 정리된 경우 → 없는 사진만 빼고 다시 저장하게
+        // (서버가 알려 준 목록을 먼저 씀 — 메모리에 받아 둔 사진은 서버에서 지워졌어도 있는 것처럼 보이므로)
+        flushDraft();
+        const missing = e.data && Array.isArray(e.data.missing) ? e.data.missing : null;
+        const ok = missing ? m.photos.filter((id) => !missing.includes(id)) : await existingPhotos(m.photos);
+        const gone = m.photos.filter((id) => !ok.includes(id));
+        if (gone.length) {
+          photos.drop(gone);
+          toast(`사라진 사진 ${gone.length}장을 뺐어요. 다시 저장해 주세요`, 'error', 4500);
+        } else {
+          toast('사진 항목을 확인해 주세요', 'error', 4000);
+        }
       } else if (e.code === 'invalid') {
         flushDraft();
         toast(`${fieldLabel(e.data && e.data.field)} 항목을 확인해 주세요`, 'error', 4000);
@@ -723,8 +784,9 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
 
   async function handleConflict(current, mine) {
     const diffKeys = [];
-    const cmp = ['title', 'date', 'rating', 'oneLiner', 'review', 'spoiler', 'tags', 'members'];
-    for (const k of cmp) if (JSON.stringify(current[k] ?? null) !== JSON.stringify(mine[k] ?? null)) diffKeys.push(FIELD_LABELS[k] || k);
+    const cmp = ['title', 'date', 'rating', 'oneLiner', 'review', 'spoiler', 'tags', 'members', 'photos'];
+    const cmpVal = (rec, k) => (k === 'photos' ? rec.photos || [] : rec[k] ?? null); // 사진이 없던 예전 기록 = []
+    for (const k of cmp) if (JSON.stringify(cmpVal(current, k)) !== JSON.stringify(cmpVal(mine, k))) diffKeys.push(FIELD_LABELS[k] || k);
     const blk = { boardgame: 'bg', murdermystery: 'mm', escaperoom: 'er' }[type];
     if (JSON.stringify(current[blk] ?? null) !== JSON.stringify(mine[blk] ?? null)) diffKeys.push('상세 기록');
 
@@ -770,6 +832,7 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
   holder.body = h('div', { class: 'form-body' });
   form.append(holder.body, h('div', { class: 'savebar' }, cancelBtn, saveBtn));
 
+  formReady = true;
   buildAll();
   root.replaceChildren(h('div', { class: `page page-form ${t.cls}` },
     appBar({ title: isNew ? `새 ${t.short} 기록` : `${t.short} 기록 수정`, back: isNew ? '#/' : `#/record/${encodeURIComponent(rec.id)}` }),
@@ -779,8 +842,10 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
   window.addEventListener('pagehide', onHide);
   document.addEventListener('visibilitychange', onHide);
   return () => {
+    alive = false;
     window.removeEventListener('pagehide', onHide);
     document.removeEventListener('visibilitychange', onHide);
+    photos.destroy();
     if (dirty && draftTimer) writeDraft();
   };
 }

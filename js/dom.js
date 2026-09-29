@@ -116,6 +116,10 @@ const ICONS = {
   mask: '<path d="M4 6.5c2.5-1 5.2-1.5 8-1.5s5.5.5 8 1.5c0 6.5-3.3 12-8 12.5-4.7-.5-8-6-8-12.5z"/><path d="M7.5 10.5c.8-.6 1.7-.6 2.5 0M14 10.5c.8-.6 1.7-.6 2.5 0M9.5 14.5c1.5 1 3.5 1 5 0"/>',
   info: '<circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5"/><circle cx="12" cy="7.8" r=".9" fill="currentColor" stroke="none"/>',
   more: '<circle cx="5.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="18.5" cy="12" r="1.3" fill="currentColor" stroke="none"/>',
+  camera: '<path d="M4 8.7a2.2 2.2 0 0 1 2.2-2.2h1.9l1.6-2.2h4.6l1.6 2.2h1.9A2.2 2.2 0 0 1 20 8.7v9.1a2.2 2.2 0 0 1-2.2 2.2H6.2A2.2 2.2 0 0 1 4 17.8z"/><circle cx="12" cy="13" r="3.5"/>',
+  image: '<rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><circle cx="9" cy="9.5" r="1.7"/><path d="M4 17.5l4.6-4.6 3.4 3.4 2.6-2.6 5.4 5.3"/>',
+  imageOff: '<path d="M3.5 3.5l17 17"/><path d="M20.5 16.2V7a2.5 2.5 0 0 0-2.5-2.5H8.8M4.4 5.3A2.5 2.5 0 0 0 3.5 7v10A2.5 2.5 0 0 0 6 19.5h12c.5 0 1-.1 1.3-.4"/><path d="M4 17.5l4.6-4.6 3.4 3.4"/>',
+  swap: '<path d="M7 4.5 3.5 8 7 11.5"/><path d="M3.5 8h13"/><path d="M17 12.5l3.5 3.5-3.5 3.5"/><path d="M20.5 16h-13"/>',
 };
 
 const STAR_PATH = 'M12 2.6l2.83 5.95 6.5.8-4.78 4.5 1.22 6.45L12 17.14 6.23 20.3l1.22-6.45L2.67 9.35l6.5-.8z';

@@ -1174,9 +1174,14 @@ await step('잠금 해제 정보 지우기', async () => {
   await page.waitForSelector('.page-settings');
   await page.click('.page-settings button:has-text("이 기기에서 잠금 해제 정보 지우기")');
   await page.waitForSelector(dlg);
+  check('확인 문구에 받아 둔 사진도 지운다는 안내', (await text(`${dlg} .dlg-text`)).includes('받아 둔 사진'));
+  const cleared = page.waitForResponse((r) => new URL(r.url()).pathname === '/clear-cache.txt', { timeout: 5000 }).catch(() => null);
   await dialogButton('지우기');
   await page.waitForSelector('.lock', { timeout: 5000 });
   check('잠금 화면으로', true);
+  // 헤더는 브라우저가 처리하고 감춤 — 실제로 캐시가 비는지는 사진 단계에서 확인
+  const cr = await cleared;
+  check('브라우저 캐시(받아 둔 사진)도 비우라고 요청 (/clear-cache.txt)', !!cr && cr.status() === 200, cr ? String(cr.status()) : '요청 없음');
   check('키·캐시·초안 삭제', await page.evaluate(() => ['ddh:key', 'ddh:cache', 'ddh:draft'].every((k) => localStorage.getItem(k) === null)));
   check('주소창 초기화', page.url().endsWith('#/') || !page.url().includes('#/settings'), page.url());
   await page.reload();
@@ -1627,6 +1632,854 @@ await step('첫 로딩: 빈 화면 대신 ‘불러오는 중’, 새 기록 폼
 });
 
 await c3.close();
+
+// ═════════════════════════════════════════════════════════════
+// 사진 — 올리기(압축·EXIF 제거) · 대표/순서 · 갤러리/뷰어 · 이전 대표 사진 · 정리(gc) · 백업 (새 브라우저 컨텍스트에서)
+const PHOTO_DIR = path.join(SHOTS, '..', 'photos');
+mkdirSync(PHOTO_DIR, { recursive: true });
+const cp = await newContext();
+await cp.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: BASE });
+page = await cp.newPage();
+watch(page, '[photo] ');
+await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
+await page.waitForSelector('.page-home');
+
+const imgStats = async () => (await api('GET', '/api/images?stats=1')).data;
+const imgList = async () => (await api('GET', '/api/images?list=1')).data.images;
+/** 저장된 사진 바이트 (x-app-key 로) */
+async function imgBytes(id, size = 'f') {
+  const res = await fetch(`${BASE}/api/images?id=${encodeURIComponent(id)}&size=${size}`, { headers: { 'x-app-key': SECRET } });
+  return { status: res.status, type: res.headers.get('content-type'), headers: res.headers, buf: Buffer.from(await res.arrayBuffer()) };
+}
+/** 저장된 사진의 가로·세로 (브라우저에서 디코드) */
+const imgDims = (id, size = 'f') => page.evaluate(async ([i, s]) => {
+  const res = await fetch(`/api/images?id=${encodeURIComponent(i)}&size=${s}`, { headers: { 'x-app-key': localStorage.getItem('ddh:key') } });
+  const bmp = await createImageBitmap(await res.blob());
+  return { w: bmp.width, h: bmp.height };
+}, [id, size]);
+/** 폼 사진 칸의 사진 id 순서 (올리기 끝난 것만) */
+const formPhotoIds = () => page.$$eval('.fsec-photos .ph-cell:not(.ph-cell-add)', (els) => els.map((e) => (e.querySelector('.pimg[data-photo]') || { dataset: {} }).dataset.photo || null));
+const photoInput = '.fsec-photos input[type="file"]';
+async function photosSettled(n, timeout = 20000) {
+  return until(async () => {
+    const st = await page.$$eval('.fsec-photos .ph-tile', (els) => els.map((e) => (e.classList.contains('is-busy') ? 'busy' : e.classList.contains('is-error') ? 'error' : 'ok')));
+    return st.length === n && st.every((x) => x !== 'busy') && st;
+  }, timeout);
+}
+
+// 테스트용 사진을 브라우저 canvas 로 만듦: EXIF(회전 6 + 가짜 GPS 문구)를 끼운 JPEG, 투명 PNG, 잡음 가득한 큰 JPEG, 작은 JPEG 들
+const made = await page.evaluate(async () => {
+  const toB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
+  async function draw(w, h, type, hue, { noise = false, alpha = false, q = 0.92 } = {}) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d');
+    if (noise) {
+      const im = x.createImageData(w, h);
+      for (let i = 0; i < im.data.length; i += 4) {
+        im.data[i] = Math.random() * 255; im.data[i + 1] = Math.random() * 255; im.data[i + 2] = Math.random() * 255; im.data[i + 3] = 255;
+      }
+      x.putImageData(im, 0, 0);
+    } else {
+      if (!alpha) {
+        const g = x.createLinearGradient(0, 0, w, h);
+        g.addColorStop(0, `hsl(${hue},70%,62%)`); g.addColorStop(1, `hsl(${hue + 50},65%,38%)`);
+        x.fillStyle = g; x.fillRect(0, 0, w, h);
+      }
+      x.fillStyle = alpha ? `hsla(${hue},80%,50%,.85)` : 'rgba(255,255,255,.85)';
+      x.beginPath(); x.arc(w * 0.38, h * 0.45, Math.min(w, h) * 0.22, 0, Math.PI * 2); x.fill();
+      x.fillStyle = '#26221E'; x.font = `bold ${Math.round(Math.min(w, h) / 7)}px sans-serif`; x.fillText('또또', w * 0.56, h * 0.62);
+    }
+    const b = await new Promise((r) => c.toBlob(r, type, q));
+    return new Uint8Array(await b.arrayBuffer());
+  }
+  // JPEG 의 SOI 바로 뒤에 EXIF(APP1) 끼우기: Orientation=6(시계 방향 90°) + 위치 정보처럼 보이는 문구
+  function withExif(jpg) {
+    const secret = new TextEncoder().encode('GPS-SECRET-37.5665N-126.9780E');
+    const tiff = [0x4d, 0x4d, 0x00, 0x2a, 0, 0, 0, 8, 0x00, 0x01, 0x01, 0x12, 0x00, 0x03, 0, 0, 0, 1, 0x00, 0x06, 0, 0, 0, 0, 0, 0];
+    const payload = [...new TextEncoder().encode('Exif'), 0, 0, ...tiff, ...secret];
+    const len = payload.length + 2;
+    const app1 = [0xff, 0xe1, len >> 8, len & 0xff, ...payload];
+    const out = new Uint8Array(jpg.length + app1.length);
+    out.set(jpg.subarray(0, 2), 0);
+    out.set(app1, 2);
+    out.set(jpg.subarray(2), 2 + app1.length);
+    return out;
+  }
+  return {
+    exif: toB64(withExif(await draw(1800, 1200, 'image/jpeg', 20))),
+    png: toB64(await draw(900, 1200, 'image/png', 200, { alpha: true })),
+    noisy: toB64(await draw(3000, 2000, 'image/jpeg', 0, { noise: true, q: 0.95 })),
+    s3: toB64(await draw(640, 480, 'image/jpeg', 120)),
+    s4: toB64(await draw(480, 640, 'image/jpeg', 280)),
+    s5: toB64(await draw(800, 600, 'image/jpeg', 330)),
+  };
+});
+const P = {};
+for (const [k, ext] of [['exif', 'jpg'], ['png', 'png'], ['noisy', 'jpg'], ['s3', 'jpg'], ['s4', 'jpg'], ['s5', 'jpg']]) {
+  P[k] = path.join(PHOTO_DIR, `${k}.${ext}`);
+  writeFileSync(P[k], Buffer.from(made[k], 'base64'));
+}
+P.heic = path.join(PHOTO_DIR, 'IMG_0001.heic');
+writeFileSync(P.heic, Buffer.from('000000186674797068656963000000006d696631686569630000', 'hex'));
+P.heic2 = path.join(PHOTO_DIR, 'IMG_0002.heic');
+writeFileSync(P.heic2, Buffer.from('000000186674797068656963000000006d696631686569630000', 'hex'));
+const photoIds = {};
+
+await step('사진: 올리기 — JPEG·PNG 모두 다시 인코딩, EXIF(위치 정보) 제거, 회전 반영', async () => {
+  check('테스트 사진: EXIF 넣은 JPEG', readFileSync(P.exif).includes(Buffer.from('GPS-SECRET')) && readFileSync(P.noisy).length > 1_500_000, String(readFileSync(P.noisy).length));
+  const before = await imgStats();
+  await go('#/new/boardgame', '.page-form');
+  check('사진 칸: 빈 상태는 큰 추가 버튼', !!(await page.$('.fsec-photos .ph-grid.is-empty .ph-add')) && (await text('.fsec-photos .counter')) === '0/4');
+  await page.fill('[data-field="title"]', '카탄');
+  await pickMembers(['연경', '영식']);
+  // 동시에 몇 장을 올리는지 (느린 연결에서 한꺼번에 올리면 모두 시간 초과가 나므로 한 장씩)
+  const upl = { now: 0, max: 0, n: 0 };
+  const isUpload = (r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/images';
+  const onReq = (r) => { if (isUpload(r)) { upl.n++; upl.now++; upl.max = Math.max(upl.max, upl.now); } };
+  const onDone = (r) => { if (isUpload(r)) upl.now--; };
+  page.on('request', onReq);
+  page.on('requestfinished', onDone);
+  page.on('requestfailed', onDone);
+  await page.setInputFiles(photoInput, [P.exif, P.png]);
+  check('고르자마자 칸 2개 (줄이는 중/대기 표시)', (await page.$$('.fsec-photos .ph-tile')).length === 2);
+  const st = await photosSettled(2);
+  page.off('request', onReq);
+  page.off('requestfinished', onDone);
+  page.off('requestfailed', onDone);
+  check('두 장 모두 올라감', st && st.every((x) => x === 'ok'), JSON.stringify(st));
+  check('여러 장을 골라도 한 장씩 차례로 올림 (동시에 1장)', upl.n === 2 && upl.max === 1, JSON.stringify(upl));
+  check('첫 장에 ‘대표’ 표시, 둘째 장엔 ‘대표로’ 버튼', (await text('.fsec-photos .ph-cell:nth-child(1) .ph-badge')) === '대표' &&
+    !!(await page.$('.fsec-photos .ph-cell:nth-child(2) .ph-cover-btn')));
+  check('썸네일이 blob: 주소로 보임', await page.$$eval('.fsec-photos .ph-cell:not(.ph-cell-add) img', (els) => els.length === 2 && els.every((e) => e.src.startsWith('blob:') && e.complete && e.naturalWidth > 0)));
+  const ids = await formPhotoIds();
+  photoIds.exif = ids[0];
+  photoIds.png = ids[1];
+  check('서버에 2장 추가', (await imgStats()).count === before.count + 2);
+  const full = await imgBytes(photoIds.exif, 'f');
+  const thumb = await imgBytes(photoIds.exif, 't');
+  check('원본: WebP/JPEG 로 다시 인코딩 (600KB 이하)', /image\/(webp|jpeg)/.test(full.type) && full.buf.length <= 600 * 1024, `${full.type} ${full.buf.length}`);
+  check('썸네일: 80KB 이하', thumb.buf.length <= 80 * 1024 && /image\/(webp|jpeg)/.test(thumb.type), String(thumb.buf.length));
+  check('EXIF·위치 정보 문구가 남지 않음', !full.buf.includes(Buffer.from('GPS-SECRET')) && !full.buf.includes(Buffer.from('Exif')) && !thumb.buf.includes(Buffer.from('GPS-SECRET')));
+  const d = await imgDims(photoIds.exif, 'f');
+  check('EXIF 회전(6) 반영 → 세로 사진, 긴 변 1600px 이하', d.h > d.w && Math.max(d.w, d.h) <= 1600, JSON.stringify(d));
+  const dt = await imgDims(photoIds.exif, 't');
+  check('썸네일 긴 변 480px 이하', Math.max(dt.w, dt.h) <= 480, JSON.stringify(dt));
+  const png = await imgBytes(photoIds.png, 'f');
+  check('PNG 도 WebP/JPEG 로 바꿔 올림', /image\/(webp|jpeg)/.test(png.type) && png.buf[0] !== 0x89, png.type);
+  check('사진 응답 헤더 (nosniff·private 캐시·CSP)', full.headers.get('x-content-type-options') === 'nosniff' && /private/.test(full.headers.get('cache-control') || '') &&
+    /img-src 'self' data: blob:/.test(full.headers.get('content-security-policy') || ''), `${full.headers.get('cache-control')} | ${full.headers.get('content-security-policy')}`);
+});
+
+await step('사진: 큰 사진 줄이기 · 4장 제한 · 열 수 없는 형식(HEIC)', async () => {
+  await page.setInputFiles(photoInput, [P.heic]);
+  check('열 수 없는 형식(HEIC) 안내 + 해결 방법', !!(await toastSeen(/이 사진 형식\(HEIC 등\)은 열 수 없어요\. 카메라 설정의 ‘고효율’ 사진을 끄거나 JPG로 저장해서 올려 주세요/, 10000)), String(await texts('.toast')));
+  check('열지 못한 사진은 칸에서 빠짐', !!(await until(async () => (await page.$$('.fsec-photos .ph-tile')).length === 2, 3000)));
+  await page.evaluate(() => document.querySelectorAll('#toasts .toast').forEach((t) => t.remove()));
+  await page.setInputFiles(photoInput, [P.heic, P.heic2]);
+  check('여러 장이 같은 이유로 실패하면 알림은 하나 (몇 장인지)', !!(await toastSeen(/사진 2장은 열 수 없는 형식\(HEIC 등\)이라 뺐어요/, 10000)) &&
+    (await texts('.toast')).filter((t) => t.includes('HEIC')).length === 1, String(await texts('.toast')));
+  check('두 장 모두 칸에서 빠짐', !!(await until(async () => (await page.$$('.fsec-photos .ph-tile')).length === 2, 3000)));
+  await page.setInputFiles(photoInput, [P.noisy, P.s3]);
+  const st = await photosSettled(4, 30000);
+  check('큰 사진 포함 4장', st && st.length === 4 && st.every((x) => x === 'ok'), JSON.stringify(st));
+  check('4장이면 추가 칸 사라짐 · 4/4', !(await page.$('.fsec-photos .ph-cell-add')) && (await text('.fsec-photos .counter')) === '4/4');
+  const ids = await formPhotoIds();
+  photoIds.noisy = ids[2];
+  photoIds.s3 = ids[3];
+  const big = await imgBytes(photoIds.noisy, 'f');
+  const dims = await imgDims(photoIds.noisy, 'f');
+  check('잡음 가득한 큰 사진도 600KB·1600px 안으로', big.buf.length <= 600 * 1024 && Math.max(dims.w, dims.h) <= 1600, `${big.buf.length} ${JSON.stringify(dims)}`);
+  check('썸네일도 80KB 이하', (await imgBytes(photoIds.noisy, 't')).buf.length <= 80 * 1024);
+  await page.setInputFiles(photoInput, [P.s4]);
+  check('5장째는 안내만', !!(await toastSeen(/사진은 4장까지/)) && (await page.$$('.fsec-photos .ph-tile')).length === 4);
+  await noOverflow('사진 4장 폼');
+});
+
+await step('사진: 대표 바꾸기 · 순서 · 빼기 · 붙여넣기', async () => {
+  const [a, b, c, d] = await formPhotoIds();
+  await page.click('.fsec-photos .ph-cell:nth-child(2) .ph-cover-btn');
+  check('‘대표로’ → 둘째 장이 맨 앞', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, a, c, d]), JSON.stringify(await formPhotoIds()));
+  check('새 대표에 배지', !!(await page.$(`.fsec-photos .ph-cell:nth-child(1).is-cover .pimg[data-photo="${b}"]`)));
+  // 사진을 누르면 순서 바꾸기 시트
+  await page.click('.fsec-photos .ph-cell:nth-child(3) .ph-open');
+  await page.waitForSelector(`${dlg}.dlg-photo`);
+  check('시트: 크게 보기·대표로·앞 순서로·뒤 순서로·빼기', JSON.stringify(await texts(`${dlg} .ph-sheet-actions .btn`)) === JSON.stringify(['크게 보기', '대표로', '앞 순서로', '뒤 순서로', '사진 빼기']), JSON.stringify(await texts(`${dlg} .ph-sheet-actions .btn`)));
+  check('순서 버튼 이름에 몇 번 사진인지 (앱의 ‘뒤로’와 다름)', (await page.getAttribute(`${dlg} .ph-sheet-actions .btn:has-text("뒤 순서로")`, 'aria-label')) === '3번 사진을 뒤 순서로');
+  await shot('31-photo-sheet');
+  await page.click(`${dlg} .ph-sheet-actions .btn:has-text("앞 순서로")`);
+  await page.waitForSelector(dlg, { state: 'detached' });
+  check('‘앞 순서로’ → 3번째가 2번째로', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, c, a, d]), JSON.stringify(await formPhotoIds()));
+  check('대표로 버튼 이름: ‘2번 사진을 대표 사진으로’', (await page.getAttribute('.fsec-photos .ph-cell:nth-child(2) .ph-cover-btn', 'aria-label')) === '2번 사진을 대표 사진으로');
+  // ✕ 로 빼기: 잠깐 되돌릴 수 있고, 그 뒤 이 폼에서 올린 사진이라 서버에서도 지움
+  const before = (await imgStats()).count;
+  // ✕ 누르는 영역이 사진을 크게 덮지 않음 (사진 모서리만)
+  const xCover = await page.$eval('.fsec-photos .ph-cell:nth-child(2) .ph-tile', (tile) => {
+    const b = tile.getBoundingClientRect();
+    let hit = 0, all = 0;
+    for (let x = b.left + 1; x < b.right; x += 2) for (let y = b.top + 1; y < b.bottom; y += 2) {
+      all++;
+      const el = document.elementFromPoint(x, y);
+      if (el && el.closest('.ph-x')) hit++;
+    }
+    return hit / all;
+  });
+  check('✕ 누르는 영역은 사진의 13% 이하', xCover > 0 && xCover <= 0.13, String(xCover));
+  await page.click('.fsec-photos .ph-cell:nth-child(4) .ph-x');
+  check('✕ → 3장', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, c, a]));
+  check('빼고 나면 초점이 남은 칸으로', await page.evaluate(() => !!document.activeElement.closest('.fsec-photos')));
+  check('‘되돌리기’ 알림', !!(await toastSeen(/4번 사진을 뺐어요/)) && !!(await page.$('.toast .toast-btn:text-is("되돌리기")')));
+  await page.click('.toast .toast-btn:text-is("되돌리기")');
+  check('되돌리기 → 같은 자리로', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, c, a, d]), JSON.stringify(await formPhotoIds()));
+  check('되돌리는 동안 서버 사진 그대로', (await imgStats()).count === before);
+  await page.click('.fsec-photos .ph-cell:nth-child(4) .ph-x');
+  check('다시 ✕ → 3장', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, c, a]));
+  check('되돌릴 시간이 지나면 서버에서도 지움', !!(await until(async () => (await imgStats()).count === before - 1, 10000)), JSON.stringify(await imgStats()));
+  // 클립보드 붙여넣기: 실제 클립보드에 그림을 넣고 Ctrl+V (클립보드를 못 쓰는 환경이면 paste 이벤트로 대신)
+  const clip = await page.evaluate(async (b64) => {
+    const bin = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bin], { type: 'image/png' }) })]);
+      if (document.activeElement) document.activeElement.blur();
+      return 'clipboard';
+    } catch {
+      const dt = new DataTransfer();
+      dt.items.add(new File([bin], 'clip.png', { type: 'image/png' }));
+      document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      return 'event';
+    }
+  }, readFileSync(P.png).toString('base64'));
+  if (clip === 'clipboard') await page.keyboard.press('Control+V');
+  const st = await photosSettled(4);
+  check(`붙여넣은 사진이 4번째로 (${clip === 'clipboard' ? '실제 클립보드 + Ctrl+V' : 'paste 이벤트'})`, st && st.length === 4 && st.every((x) => x === 'ok'), JSON.stringify(st));
+  const pasted = (await formPhotoIds())[3];
+  check('붙여넣은 PNG 도 WebP/JPEG 로 올라감', !!pasted && /image\/(webp|jpeg)/.test((await imgBytes(pasted, 'f')).type));
+  // 글 칸에 글자를 붙여넣을 때는 가로채지 않음
+  const hijacked = await page.evaluate(() => {
+    const dt = new DataTransfer();
+    dt.setData('text/plain', '글자');
+    dt.items.add(new File([new Uint8Array([1, 2, 3])], 'x.png', { type: 'image/png' }));
+    const input = document.querySelector('.page-form input[placeholder="한 문장으로 남긴다면?"]');
+    const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+    input.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  });
+  check('글 칸에 글자+그림 붙여넣기는 방해 안 함', hijacked === false && (await page.$$('.fsec-photos .ph-tile')).length === 4);
+  photoIds.order = await formPhotoIds();
+  await noOverflow('사진 폼');
+  await shot('32-form-photos');
+});
+
+await step('사진: 저장 → 상세 갤러리 · 전체화면 뷰어 · 목록 카드 썸네일', async () => {
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 10000 });
+  ids.catan = decodeURIComponent(page.url().split('#/record/')[1] || '');
+  const saved = await serverRecord(ids.catan);
+  check('서버 기록에 사진 순서 그대로 (첫 장 = 대표)', saved && JSON.stringify(saved.photos) === JSON.stringify(photoIds.order), JSON.stringify(saved && saved.photos));
+  check('갤러리 4장', (await page.$$('.page-detail .dg-slide')).length === 4 && (await page.$$('.page-detail .dg-thumb')).length === 4);
+  check('대표 사진이 맨 앞', (await page.getAttribute('.page-detail .dg-slide:first-child .pimg', 'data-photo')) === photoIds.order[0]);
+  check('카운터 1 / 4', (await text('.page-detail .dg-count')) === '1 / 4');
+  const loaded = await until(() => page.$eval('.page-detail .dg-slide:first-child img', (e) => e.complete && e.naturalWidth > 0 && e.src.startsWith('blob:')), 5000);
+  check('대표 사진 표시', !!loaded);
+  await page.click('.page-detail .dg-thumb:nth-child(3)');
+  check('썸네일 누르면 넘어감 (3 / 4)', !!(await until(async () => (await text('.page-detail .dg-count')) === '3 / 4', 3000)), await text('.page-detail .dg-count'));
+  check('고른 썸네일 표시', (await page.getAttribute('.page-detail .dg-thumb:nth-child(3)', 'aria-current')) === 'true');
+  check('Tab 으로는 보이는 사진 하나만 (나머지는 썸네일로)', JSON.stringify(await page.$$eval('.page-detail .dg-slide', (els) => els.map((e) => e.tabIndex))) === JSON.stringify([-1, -1, 0, -1]));
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith('/api/data'), { timeout: 8000 }),
+    page.evaluate(() => window.dispatchEvent(new Event('online'))),
+  ]);
+  await sleep(300);
+  check('새로고침돼도 보던 사진 그대로 (3 / 4)', (await text('.page-detail .dg-count')) === '3 / 4' &&
+    (await page.$eval('.page-detail .dg-track', (t) => Math.round(t.scrollLeft / t.clientWidth))) === 2, await text('.page-detail .dg-count'));
+  await page.click('.page-detail .dg-thumb:nth-child(1)');
+  await until(async () => (await text('.page-detail .dg-count')) === '1 / 4', 3000);
+  // 넘어가는 움직임이 끝난 뒤에 찍음 (전체 페이지 스크린샷은 움직이는 도중을 멈춰 찍음)
+  await until(() => page.$eval('.page-detail .dg-track', (t) => t.scrollLeft < 1), 3000);
+  await sleep(200);
+  await noOverflow('사진 상세');
+  await shot('33-detail-gallery');
+
+  // 전체화면 뷰어
+  await page.click('.page-detail .dg-slide:first-child');
+  await page.waitForSelector('dialog.viewer[open]');
+  check('뷰어: 접근성 이름·닫기·이전/다음 라벨', (await page.getAttribute('dialog.viewer', 'aria-label')) === '사진 크게 보기' &&
+    !!(await page.$('dialog.viewer button[aria-label="닫기"]')) && !!(await page.$('dialog.viewer button[aria-label="다음 사진"]')) && !!(await page.$('dialog.viewer button[aria-label="이전 사진"]')));
+  check('뷰어: 초점이 닫기 버튼', await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('aria-label') === '닫기'));
+  check('뷰어: 1 / 4 · 사진 대체 텍스트', (await text('dialog.viewer .vw-count')) === '1 / 4' && (await page.getAttribute('dialog.viewer .vw-slide:first-child img', 'alt')) === '사진 1 / 4');
+  await until(() => page.$eval('dialog.viewer .vw-slide:first-child img', (e) => e.complete && e.naturalWidth > 0), 5000);
+  await page.keyboard.press('ArrowRight');
+  check('→ 키로 다음 사진', !!(await until(async () => (await text('dialog.viewer .vw-count')) === '2 / 4', 3000)));
+  await page.click('dialog.viewer button[aria-label="다음 사진"]');
+  check('다음 버튼', !!(await until(async () => (await text('dialog.viewer .vw-count')) === '3 / 4', 3000)));
+  await page.keyboard.press('ArrowLeft');
+  check('← 키로 이전 사진', !!(await until(async () => (await text('dialog.viewer .vw-count')) === '2 / 4', 3000)));
+  check('뷰어가 열린 동안 상태 표시줄 색도 어둡게', (await page.$$eval('meta[name="theme-color"]', (els) => els.map((e) => e.content))).every((c) => c === '#0B0A0D'));
+  await sleep(400);
+  await page.screenshot({ path: path.join(SHOTS, `${theme}-34-viewer.png`) });
+  await page.keyboard.press('Escape');
+  await page.waitForSelector('dialog.viewer', { state: 'detached' });
+  check('Esc 로 닫힘 · 갤러리도 뷰어에서 본 사진(2 / 4)으로, 초점도 그 사진', (await text('.page-detail .dg-count')) === '2 / 4' &&
+    await page.evaluate(() => document.activeElement.classList.contains('dg-slide') && document.activeElement.getAttribute('aria-label') === '사진 2/4 크게 보기'), await text('.page-detail .dg-count'));
+  check('상태 표시줄 색 되돌림', !(await page.$$eval('meta[name="theme-color"]', (els) => els.map((e) => e.content))).includes('#0B0A0D'));
+  check('닫아도 상세 화면 그대로', !!(await page.$('.page-detail')) && page.url().includes('#/record/'));
+  // 안드로이드 뒤로가기 → 뷰어만 닫힘
+  await page.click('.page-detail .dg-slide:first-child');
+  await page.waitForSelector('dialog.viewer[open]');
+  await page.goBack();
+  await page.waitForSelector('dialog.viewer', { state: 'detached', timeout: 3000 });
+  check('뒤로가기는 뷰어만 닫음', !!(await page.$('.page-detail')) && page.url().includes(`#/record/${encodeURIComponent(ids.catan)}`), page.url());
+  // 아래로 쓸어내려 닫기
+  await page.click('.page-detail .dg-slide:first-child');
+  await page.waitForSelector('dialog.viewer[open]');
+  const box = await (await page.$('dialog.viewer .vw-track')).boundingBox();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 60, { steps: 4 });
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 220, { steps: 6 });
+  await page.mouse.up();
+  check('아래로 쓸면 닫힘', !!(await until(async () => !(await page.$('dialog.viewer')), 3000)));
+  check('쓸어 닫아도 상세 화면', page.url().includes('#/record/'), page.url());
+
+  // 목록 카드 · 홈 최근 기록
+  await tab('records', '.page-list');
+  const card = `.page-list .rcard:has(.card-link:text-is("카탄"))`;
+  await page.waitForSelector(`${card} .rcard-photo`);
+  const thumbOk = await until(() => page.$eval(`${card} .rcard-photo img`, (e) => e.complete && e.naturalWidth > 0 && e.src.startsWith('blob:')), 5000);
+  check('목록 카드: 대표 사진 썸네일', !!thumbOk && (await page.getAttribute(`${card} .rcard-photo .pimg`, 'data-photo')) === photoIds.order[0]);
+  check('목록 카드: 사진 수 표시 · 링크 이름에 사진 수', (await text(`${card} .rcard-pn`)) === '4' && /사진 4장/.test(await page.getAttribute(`${card} .card-link`, 'aria-label')));
+  const plain = '.page-list .rcard:has(.card-link:text-is("잊혀진 연구소"))';
+  check('사진 없는 카드는 예전 모습', !!(await page.$(plain)) && !(await page.$(`${plain} .rcard-photo`)) && !(await page.$eval(plain, (e) => e.classList.contains('has-photo'))));
+  check('사진 썸네일을 눌러도 기록이 열림', await page.$eval(`${card} .rcard-photo`, (el) => {
+    const b = el.getBoundingClientRect();
+    const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return !!hit && hit.classList.contains('card-link');
+  }));
+  await noOverflow('사진 있는 목록');
+  await shot('35-list-photo');
+  await tab('home', '.page-home');
+  check('홈 최근 기록에도 썸네일', !!(await page.waitForSelector('.page-home .rcard .rcard-photo img', { timeout: 5000 })));
+  await shot('36-home-photo');
+});
+
+await step('사진: 같은 제목 새 기록에서 ‘이전 대표 사진 쓰기’ (다시 올리지 않고 같은 사진)', async () => {
+  const before = (await imgStats()).count;
+  await go('#/new/boardgame', '.page-form');
+  check('제목 전에는 제안 없음', await page.$eval('.fsec-photos .ph-suggest', (e) => e.hidden));
+  await page.fill('[data-field="title"]', '카탄');
+  await page.waitForSelector('.fsec-photos .ph-suggest:not([hidden])', { timeout: 3000 });
+  check('제안에 이전 대표 사진 미리보기', (await page.getAttribute('.ph-suggest .pimg', 'data-photo')) === photoIds.order[0] &&
+    (await text('.ph-suggest')).includes('이전 대표 사진이 있어요'));
+  await shot('37-reuse-suggest');
+  await page.click('.ph-suggest button:has-text("이전 대표 사진 쓰기")');
+  check('같은 사진 id 로 들어감', JSON.stringify(await formPhotoIds()) === JSON.stringify([photoIds.order[0]]), JSON.stringify(await formPhotoIds()));
+  check('넣고 나면 제안 사라짐', await page.$eval('.fsec-photos .ph-suggest', (e) => e.hidden));
+  check('다시 올리지 않음 (사진 수 그대로)', (await imgStats()).count === before);
+  await pickMembers(['민지짱']);
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  ids.catan2 = decodeURIComponent(page.url().split('#/record/')[1] || '');
+  check('저장된 기록이 같은 사진을 가리킴', JSON.stringify((await serverRecord(ids.catan2)).photos) === JSON.stringify([photoIds.order[0]]));
+  check('사진 1장이면 넘기기·썸네일 줄 없음', (await page.$$('.page-detail .dg-slide')).length === 1 && !(await page.$('.page-detail .dg-thumbs')) && !(await page.$('.page-detail .dg-count')));
+});
+
+await step('사진: 올리기 실패 → 다시 시도 · 올리는 중에 저장하면 기다렸다 저장', async () => {
+  await go('#/new/escaperoom', '.page-form');
+  await page.fill('[data-field="title"]', '사진 테스트 방');
+  await page.click('label.stamp-choice-clear');
+  let fails = 1;
+  await page.route('**/api/images', async (route) => {
+    if (route.request().method() === 'POST' && fails > 0) {
+      fails--;
+      await route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"server_error"}' });
+    } else await route.continue();
+  });
+  await allowing([/status of 500/], async () => {
+    await page.setInputFiles(photoInput, [P.s4]);
+    const st = await photosSettled(1);
+    check('실패하면 그 칸에 다시 시도', st && st[0] === 'error' && (await text('.fsec-photos .ph-state')).includes('다시'), JSON.stringify(st));
+    check('실패 안내', !!(await toastSeen(/업로드하지 못했어요/)), String(await texts('.toast')));
+  });
+  await page.click('.save-btn');
+  check('실패한 사진이 있으면 저장 안 하고 안내', !!(await toastSeen(/올리지 못한 사진이 있어요/)) && !!(await page.$('.page-form')));
+  await page.click('.fsec-photos .ph-cell:nth-child(1) .ph-open');
+  const st2 = await photosSettled(1);
+  check('다시 시도 → 올라감', st2 && st2[0] === 'ok', JSON.stringify(st2));
+  // 느린 업로드: 올리는 중에 저장 → 다 올라간 뒤 자동 저장
+  await page.unroute('**/api/images');
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  await page.route('**/api/images', async (route) => {
+    if (route.request().method() === 'POST') await gate;
+    await route.continue();
+  });
+  await page.setInputFiles(photoInput, [P.s5]);
+  await page.waitForSelector('.fsec-photos .ph-tile.is-busy');
+  check('올리는 중: 저장 버튼에 표시', /사진 올리는 중/.test(await text('.save-btn')), await text('.save-btn'));
+  await page.click('.save-btn');
+  check('눌러도 바로 저장하지 않고 안내', !!(await toastSeen(/사진을 다 올리면 바로 저장할게요/)) && !!(await page.$('.page-form')));
+  release();
+  await page.waitForSelector('.page-detail', { timeout: 10000 });
+  await page.unroute('**/api/images');
+  ids.erPhoto = decodeURIComponent(page.url().split('#/record/')[1] || '');
+  const rec = await serverRecord(ids.erPhoto);
+  check('다 올린 뒤 두 장과 함께 저장', rec && rec.photos.length === 2, JSON.stringify(rec && rec.photos));
+  photoIds.er = rec.photos;
+});
+
+await step('사진: 저장 전에 서버에서 사라진 사진 → 그 사진만 빼고 다시 저장하게', async () => {
+  await go('#/new/escaperoom', '.page-form');
+  await page.fill('[data-field="title"]', '사라진 사진 방');
+  await page.click('label.stamp-choice-clear');
+  await page.setInputFiles(photoInput, [P.s3, P.s5]);
+  await photosSettled(2);
+  const [gone, kept] = await formPhotoIds();
+  // 다른 기기에서 정리된 경우처럼 서버에서만 지움 (이 기기 메모리에는 받아 둔 사진이 그대로 있음)
+  check('서버에서 사진 하나 지움', (await api('DELETE', `/api/images?id=${encodeURIComponent(gone)}`)).status === 200);
+  await allowing([/status of 400/], async () => {
+    await page.click('.save-btn');
+    check('없는 사진만 빼고 다시 저장하라는 안내', !!(await toastSeen(/사라진 사진 1장을 뺐어요/, 5000)) && !!(await page.$('.page-form')), String(await texts('.toast')));
+  });
+  check('폼에 남은 사진은 그대로', JSON.stringify(await formPhotoIds()) === JSON.stringify([kept]), JSON.stringify(await formPhotoIds()));
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  const id = decodeURIComponent(page.url().split('#/record/')[1] || '');
+  check('다시 저장하면 남은 사진과 함께 저장', JSON.stringify((await serverRecord(id)).photos) === JSON.stringify([kept]));
+});
+
+await step('사진: 초안에 올린 사진이 남음', async () => {
+  await go('#/new/murdermystery', '.page-form');
+  await page.fill('[data-field="title"]', '사진 초안');
+  await page.setInputFiles(photoInput, [P.s3]);
+  await photosSettled(1);
+  const [pid] = await formPhotoIds();
+  const draft = await until(() => page.evaluate(() => {
+    const d = JSON.parse(localStorage.getItem('ddh:draft') || 'null');
+    return d && d.model && Array.isArray(d.model.photos) && d.model.photos.length ? d : null;
+  }), 3000);
+  check('초안에 사진 id', draft && draft.model && JSON.stringify(draft.model.photos) === JSON.stringify([pid]), JSON.stringify(draft && draft.model && draft.model.photos));
+  await page.click('.page-form .appbar button[aria-label="뒤로"]');
+  await page.waitForSelector('.page-home, .page-detail, .page-list, .page-picker', { timeout: 5000 });
+  await page.click('#tabbar .tab-add');
+  await page.click('.page-picker .draft-card button:has-text("이어 쓰기")');
+  await page.waitForSelector('.page-form');
+  check('이어 쓰면 사진도 그대로', JSON.stringify(await formPhotoIds()) === JSON.stringify([pid]) &&
+    !!(await until(() => page.$eval('.fsec-photos .ph-cell:nth-child(1) img', (e) => e.complete && e.naturalWidth > 0), 5000)));
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.waitForSelector(dlg);
+  await dialogButton('그만 쓰기');
+  await sleep(200);
+  check('그만 쓰면 초안 삭제', (await draftNow()) === null);
+  check('초안에만 있던 사진도 서버에서 지움', !!(await until(async () => (await imgBytes(pid, 't')).status === 404, 4000)));
+
+  // 초안 배너의 ‘버리기’도 초안에만 있던 사진을 지움
+  await go('#/new/murdermystery', '.page-form');
+  await page.fill('[data-field="title"]', '버릴 초안');
+  await page.setInputFiles(photoInput, [P.s4]);
+  await photosSettled(1);
+  const [pid2] = await formPhotoIds();
+  await until(async () => JSON.stringify(((await draftNow()) || { model: {} }).model.photos) === JSON.stringify([pid2]), 3000);
+  await page.click('.page-form .appbar button[aria-label="뒤로"]');
+  await page.waitForSelector('.page-home, .page-detail, .page-list, .page-picker', { timeout: 5000 });
+  await go('#/new/murdermystery', '.page-form');
+  await page.click('.draft-banner button:has-text("버리기")');
+  check('초안 버리기 → 그 사진도 지움', !!(await until(async () => (await imgBytes(pid2, 't')).status === 404, 4000)) && (await draftNow()) === null);
+  await page.click('.page-form .appbar button[aria-label="뒤로"]');
+  await page.waitForSelector('.page-home, .page-detail, .page-list, .page-picker', { timeout: 5000 });
+});
+
+/** 기록에서 빠진 사진의 하루 유예가 지난 것처럼: 빠진 시각(imgtouch)과 올린 시각을 이틀 전으로 */
+async function ageReleased(ids) {
+  const old = new Date(Date.now() - 2 * 86400e3).toISOString();
+  for (const id of ids) {
+    const raw = await srv.redis.hget('ddh:imgmeta', id);
+    if (raw) await srv.redis.hset('ddh:imgmeta', { [id]: JSON.stringify({ ...JSON.parse(raw), createdAt: old }) });
+    if (await srv.redis.hget('ddh:imgtouch', id)) await srv.redis.hset('ddh:imgtouch', { [id]: old });
+  }
+}
+
+await step('사진: 기록 수정으로 뺀 사진 → 저장하면 빠진 것으로 표시, 하루 뒤 정리 (다른 기록이 쓰는 사진은 남김)', async () => {
+  await go(`#/edit/${encodeURIComponent(ids.catan)}`, '.page-form');
+  check('수정 폼에 저장된 사진 순서 그대로', JSON.stringify(await formPhotoIds()) === JSON.stringify(photoIds.order), JSON.stringify(await formPhotoIds()));
+  const dropped = photoIds.order[3];
+  await page.click('.fsec-photos .ph-cell:nth-child(4) .ph-x');
+  // 대표(0번)는 ‘카탄’ 두 번째 기록도 쓰므로 빼도 남아야 함 → 대표를 빼고 원래 둘째 장이 대표가 되게
+  await page.click('.fsec-photos .ph-cell:nth-child(1) .ph-x');
+  check('폼에서 2장 뺌', JSON.stringify(await formPhotoIds()) === JSON.stringify(photoIds.order.slice(1, 3)), JSON.stringify(await formPhotoIds()));
+  await sleep(300);
+  check('저장 전에는 서버 사진 그대로 (저장된 기록이 아직 씀)', (await imgBytes(dropped, 't')).status === 200 && (await imgBytes(photoIds.order[0], 't')).status === 200);
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  check('서버 기록: 남은 2장, 둘째 장이 대표', JSON.stringify((await serverRecord(ids.catan)).photos) === JSON.stringify(photoIds.order.slice(1, 3)));
+  // 바로 지우지 않음: 다른 기기의 저장 안 한 폼(되살리기·가져다 쓴 대표 사진)이 아직 가리킬 수 있어서
+  check('뺀 사진은 하루 동안 남고 빠진 시각이 적힘', (await imgBytes(dropped, 't')).status === 200 && !!(await srv.redis.hget('ddh:imgtouch', dropped)));
+  check('상세 갤러리 2장', (await page.$$('.page-detail .dg-slide')).length === 2 && (await text('.page-detail .dg-count')) === '1 / 2');
+  await ageReleased([dropped, photoIds.order[0]]);
+  check('하루 뒤 정리: 안 쓰는 사진만', (await api('POST', '/api/images?action=gc', {})).data.deleted === 1);
+  check('뺀 사진은 서버에서 정리됨', (await imgBytes(dropped, 't')).status === 404 && !(await imgList()).some((m) => m.id === dropped));
+  check('다른 기록이 쓰는 사진은 남음', (await imgBytes(photoIds.order[0], 't')).status === 200);
+});
+
+await step('사진: 기록 삭제 → 그 기록에만 있던 사진은 하루 뒤 정리 (그동안은 되살리기 가능, 함께 쓰는 대표 사진은 남김)', async () => {
+  const snapshot = await serverRecord(ids.catan);
+  await go(`#/record/${encodeURIComponent(ids.catan)}`, '.page-detail');
+  await page.click('.page-detail .appbar button[aria-label="삭제"]');
+  await page.waitForSelector(dlg);
+  await dialogButton('삭제');
+  await page.waitForSelector('.page-list', { timeout: 8000 });
+  const mine = photoIds.order.slice(1, 3);
+  check('지운 직후엔 사진이 남음 (다른 기기에서 수정 중이던 폼이 되살릴 수 있게)', mine.every((id) => !!id) && (await imgBytes(mine[0], 't')).status === 200);
+  // 수정 중이던 다른 기기가 '새 기록으로 다시 저장' → 사진까지 그대로
+  const again = await api('POST', '/api/records', { record: { ...snapshot, title: '카탄 (되살림)' }, baseUpdatedAt: null });
+  check('유예 동안 되살리면 사진도 그대로', again.status === 200 && JSON.stringify(again.data.record.photos) === JSON.stringify(mine), JSON.stringify(again.data));
+  check('되살린 기록 삭제', (await api('DELETE', `/api/records?id=${encodeURIComponent(ids.catan)}`)).status === 200);
+  await ageReleased([...mine, photoIds.order[0]]);
+  // 하루 뒤 아무 기록이나 저장·삭제하면 서버가 함께 정리 (gc 를 누르지 않아도)
+  const tmp = await api('POST', '/api/records', { record: { type: 'boardgame', date: TODAY, title: '정리 트리거', members: [] } });
+  check('임시 기록 저장·삭제', tmp.status === 200 && (await api('DELETE', `/api/records?id=${encodeURIComponent(tmp.data.record.id)}`)).status === 200);
+  const left = new Set((await imgList()).map((m) => m.id));
+  check('함께 쓰는 대표 사진은 남음', left.has(photoIds.order[0]));
+  check('이 기록에만 있던 사진은 지워짐', mine.every((id) => !left.has(id)), JSON.stringify(mine.map((id) => left.has(id))));
+  check('지워진 사진은 404', (await imgBytes(mine[0], 't')).status === 404);
+  await syncFromServer();
+});
+
+let photoExport = null;
+let photoExportNoImg = null;
+await step('사진: 설정 — 저장 공간 · 사용하지 않는 사진 정리', async () => {
+  // 어떤 기록에도 안 쓰이고 하루가 지난 사진 하나 만들기 (서버 메타의 시각을 이틀 전으로)
+  const up = await api('POST', '/api/images', { full: made.s3, thumb: made.s3 });
+  check('고아 사진 올림', up.status === 200 && up.data.image && up.data.image.id, JSON.stringify(up.data));
+  const orphan = up.data.image.id;
+  const meta = JSON.parse(await srv.redis.hget('ddh:imgmeta', orphan));
+  await srv.redis.hset('ddh:imgmeta', { [orphan]: JSON.stringify({ ...meta, createdAt: new Date(Date.now() - 2 * 86400e3).toISOString() }) });
+  const stats = await imgStats();
+  await go('#/settings', '.page-settings');
+  const main = await until(async () => { const t = await text('.set-store .store-main'); return t.includes('장') && t; }, 5000);
+  check('사진 수·용량 / 한도', main && main.includes(`사진 ${stats.count}장`) && /\d+(\.\d)?(KB|MB) \/ 150MB/.test(main), main);
+  check('사용량 막대 (meter)', (await page.getAttribute('.set-store .store-meter', 'role')) === 'meter' && (await page.getAttribute('.set-store .store-meter', 'aria-valuenow')) !== null);
+  await noOverflow('설정 (사진 저장 공간)');
+  await shot('38-settings-storage');
+  await page.click('.set-store button:has-text("사용하지 않는 사진 정리")');
+  await page.waitForSelector(dlg);
+  check('정리 전 확인', (await text(`${dlg} .dlg-title`)).includes('정리할까요'));
+  await dialogButton('정리하기');
+  check('정리 결과 토스트 (1장)', !!(await toastSeen(/사용하지 않는 사진 1장을 정리했어요/)), String(await texts('.toast')));
+  check('고아 사진 삭제', (await imgBytes(orphan, 't')).status === 404);
+  check('화면의 사진 수도 줄어듦', !!(await until(async () => (await text('.set-store .store-main')).includes(`사진 ${stats.count - 1}장`), 5000)), await text('.set-store .store-main'));
+  check('기록에 붙은 사진은 그대로', (await imgBytes(photoIds.order[0], 't')).status === 200 && (await imgBytes(photoIds.er[0], 't')).status === 200);
+});
+
+await step('사진: 내보내기에 사진 포함 · 가져오기로 사진까지 되살림', async () => {
+  check('‘사진 포함’ 기본 켬', await page.$eval('.page-settings .switch-row:has-text("사진 포함") input', (e) => e.checked));
+  const [dl] = await Promise.all([page.waitForEvent('download', { timeout: 15000 }), page.click('.page-settings button:has-text("내보내기")')]);
+  photoExport = path.join(SHOTS, '..', 'export-photos.json');
+  await dl.saveAs(photoExport);
+  const json = JSON.parse(readFileSync(photoExport, 'utf8'));
+  const want = [...new Set(json.records.flatMap((r) => r.photos || []))];
+  check('images: 기록이 쓰는 사진 모두', Array.isArray(json.images) && json.images.length === want.length && want.every((id) => json.images.some((im) => im.id === id)), `${json.images && json.images.length} vs ${want.length}`);
+  const im = json.images.find((x) => x.id === photoIds.er[0]) || {};
+  check('사진 항목: id·mime·full·thumb(base64)·createdAt', /image\/(webp|jpeg)/.test(im.mime) && /^[A-Za-z0-9+/]+=*$/.test(im.full || '') && /^[A-Za-z0-9+/]+=*$/.test(im.thumb || '') &&
+    !String(im.full).startsWith('data:') && typeof im.createdAt === 'string', JSON.stringify({ ...im, full: String(im.full).slice(0, 20), thumb: String(im.thumb).slice(0, 20) }));
+  check('백업의 사진 = 서버 사진 그대로', Buffer.from(im.full, 'base64').equals((await imgBytes(photoIds.er[0], 'f')).buf));
+  check('내보내기 토스트에 사진 수', !!(await toastSeen(new RegExp(`사진 ${want.length}장을 내보냈어요`))));
+  // 사진 빼고 내보내기
+  await page.click('.page-settings .switch-row:has-text("사진 포함")');
+  const [dl2] = await Promise.all([page.waitForEvent('download'), page.click('.page-settings button:has-text("내보내기")')]);
+  photoExportNoImg = path.join(SHOTS, '..', 'export-nophotos.json');
+  await dl2.saveAs(photoExportNoImg);
+  const j2 = JSON.parse(readFileSync(photoExportNoImg, 'utf8'));
+  check('‘사진 포함’ 끄면 images 없음', !('images' in j2) && j2.records.length === json.records.length);
+  await page.click('.page-settings .switch-row:has-text("사진 포함")');
+
+  // 서버에서 사진 기록을 지우고 하루가 지나 사진도 정리된 뒤, 백업으로 기록과 사진을 함께 되살림
+  const countBefore = (await imgStats()).count;
+  check('사진 기록 삭제 API', (await api('DELETE', `/api/records?id=${encodeURIComponent(ids.erPhoto)}`)).status === 200);
+  await ageReleased(photoIds.er);
+  check('하루 뒤 정리로 그 기록의 사진도 사라짐', (await api('POST', '/api/images?action=gc', {})).data.deleted === photoIds.er.length && (await imgBytes(photoIds.er[0], 'f')).status === 404);
+  await page.click('.page-settings button:has-text("새로고침")');
+  await until(async () => (await text('.conn-meta')).includes(`기록 ${json.records.length - 1}개`), 5000);
+  await page.setInputFiles('#import-file', photoExport);
+  await page.waitForSelector(dlg);
+  const counts = await text(`${dlg} .import-counts`);
+  check('미리보기에 사진 수', counts.includes(`사진 ${want.length}장`), counts);
+  await shot('39-import-photos');
+  await dialogButton('가져오기');
+  check('가져오기 완료', !!(await toastSeen(/가져오기 완료: 성공 3(?!\d)/, 15000)), String(await texts('.toast')));
+  const back = await serverRecord(ids.erPhoto);
+  check('기록이 사진과 함께 돌아옴', back && JSON.stringify(back.photos) === JSON.stringify(photoIds.er), JSON.stringify(back && back.photos));
+  const restored = await imgBytes(photoIds.er[0], 'f');
+  check('사진이 같은 id 로 같은 내용', restored.status === 200 && restored.buf.equals(Buffer.from(im.full, 'base64')));
+  check('사진 수도 삭제 전과 같음 (이미 있던 사진은 다시 올리지 않음)', (await imgStats()).count === countBefore, `${(await imgStats()).count} vs ${countBefore}`);
+});
+
+await step('사진: 코드 없이는 사진을 볼 수 없음 (401)', async () => {
+  const id = photoIds.order[0];
+  const noKey = await fetch(`${BASE}/api/images?id=${encodeURIComponent(id)}&size=t`);
+  const body = Buffer.from(await noKey.arrayBuffer());
+  check('키 없는 사진 요청 → 401 JSON (사진 바이트 없음)', noKey.status === 401 && /application\/json/.test(noKey.headers.get('content-type') || '') &&
+    body[0] !== 0xff && !body.toString('latin1').includes('WEBP') && noKey.headers.get('cache-control') === 'no-store', `${noKey.status} ${noKey.headers.get('content-type')} ${noKey.headers.get('cache-control')}`);
+  const failsBefore = await failCount();
+  const wrong = await fetch(`${BASE}/api/images?id=${encodeURIComponent(id)}&size=f`, { headers: { 'x-app-key': 'wrong-key-000000000000' } });
+  check('틀린 코드 → 401', wrong.status === 401 && !(await wrong.text()).includes('WEBP'));
+  check('틀린 코드는 실패 횟수로 셈 (무차별 대입 차단 대상)', (await failCount()) === failsBefore + 1);
+  await srv.redis.del('ddh:fail:127.0.0.1'); // 이 확인으로 쌓인 실패 횟수는 지움 (뒤 단계에 영향 없게)
+  // 브라우저에서 주소만으로(<img src>) 부르면 키가 안 붙으므로 못 봄 → 앱은 항상 x-app-key 로 받아 blob: 으로 보여 줌
+  await allowing([/status of 401/], async () => {
+    const r = await page.evaluate((u) => new Promise((resolve) => {
+      const im = new Image();
+      im.onload = () => resolve({ ok: true, w: im.naturalWidth });
+      im.onerror = () => resolve({ ok: false });
+      im.src = u;
+    }), `/api/images?id=${encodeURIComponent(id)}&size=t`);
+    check('<img src="/api/images?..."> 로는 안 보임', r.ok === false, JSON.stringify(r));
+  });
+  check('그래도 앱은 잠기지 않음', !(await page.$('section.lock')) && !!(await page.$('#tabbar:not([hidden])')));
+});
+
+await step('사진: 코드가 바뀌어 잠기면 뷰어·사진 시트도 닫히고 받아 둔 사진 캐시도 비움', async () => {
+  const lockBy401 = async () => {
+    const cleared = page.waitForResponse((r) => new URL(r.url()).pathname === '/clear-cache.txt', { timeout: 5000 }).catch(() => null);
+    await page.route('**/api/data', (route) => route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"unauthorized"}' }));
+    await allowing([/status of 401/], async () => {
+      await page.evaluate(() => window.dispatchEvent(new Event('online')));
+      await page.waitForSelector('section.lock', { timeout: 5000 });
+    });
+    await page.unroute('**/api/data');
+    return cleared;
+  };
+  const photoVisible = () => page.$$eval('img', (els) => els.some((e) => e.src.startsWith('blob:') && !e.hidden && e.getBoundingClientRect().width > 0));
+  /** 이 사진이 브라우저 HTTP 캐시에 있는지 (네트워크 없이 캐시만 봄) */
+  const httpCached = (id) => allowing([/ERR_CACHE_MISS/], () => page.evaluate(async ([i, k]) => {
+    try {
+      const r = await fetch(`/api/images?id=${encodeURIComponent(i)}&size=t`, { headers: { 'x-app-key': k }, cache: 'only-if-cached', mode: 'same-origin' });
+      return r.status === 200;
+    } catch { return false; }
+  }, [id, SECRET]));
+  const unlockAgain = async () => {
+    await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
+    await page.waitForSelector('.page-home');
+  };
+  // 1) 상세의 전체화면 뷰어가 열린 채로
+  await go(`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail');
+  const probeId = photoIds.er[0];
+  await page.evaluate(async ([i, k]) => { await (await fetch(`/api/images?id=${encodeURIComponent(i)}&size=t`, { headers: { 'x-app-key': k } })).arrayBuffer(); }, [probeId, SECRET]);
+  check('(준비) 본 사진은 브라우저 캐시에 있음', await httpCached(probeId));
+  await page.click('.page-detail .dg-slide:first-child');
+  await page.waitForSelector('dialog.viewer[open]');
+  const cr = await lockBy401();
+  check('잠금 화면 위에 뷰어가 남지 않음 (사진 안 보임)', !(await page.$('dialog')) && !(await photoVisible()));
+  check('뷰어 상태도 되돌림 (스크롤 잠금·상태 표시줄 색)', !(await page.evaluate(() => document.documentElement.classList.contains('vw-open'))) &&
+    !(await page.$$eval('meta[name="theme-color"]', (els) => els.map((e) => e.content))).includes('#0B0A0D'));
+  check('브라우저 캐시의 사진도 비움 (Clear-Site-Data: "cache")', !!cr && cr.status() === 200 && !(await httpCached(probeId)), cr ? String(cr.status()) : '요청 없음');
+  await unlockAgain();
+  // 2) 폼의 사진 시트가 열린 채로
+  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
+  await page.click('.fsec-photos .ph-cell:nth-child(1) .ph-open');
+  await page.waitForSelector(`${dlg}.dlg-photo`);
+  await page.click(`${dlg} .ph-sheet-actions .btn:has-text("크게 보기")`);
+  await page.waitForSelector('dialog.viewer[open]');
+  await lockBy401();
+  check('잠금 화면 위에 폼의 뷰어·사진 시트가 남지 않음', !(await page.$('dialog')) && !(await photoVisible()));
+  await unlockAgain();
+  // 사진 시트만 열린 채로
+  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
+  await page.click('.fsec-photos .ph-cell:nth-child(1) .ph-open');
+  await page.waitForSelector(`${dlg}.dlg-photo`);
+  await lockBy401();
+  check('사진 시트만 열려 있어도 닫힘', !(await page.$('dialog')) && !(await photoVisible()));
+  await unlockAgain();
+});
+
+await step('사진: 빈 새 서버에 백업 가져오기 → 기록·사진 모두 되살림', async () => {
+  const json = JSON.parse(readFileSync(photoExport, 'utf8'));
+  const withPhotos = json.records.filter((r) => (r.photos || []).length);
+  const srv2 = await startDevServer({
+    port: 0,
+    logger: { error: (...a) => serverErrors.push(`[srv2] ${a.map(String).join(' ')}`), log() {}, warn() {} },
+  });
+  const api2 = async (p) => (await fetch(srv2.url + p, { headers: { 'x-app-key': srv2.secret } })).json();
+  const bytes2 = async (id, size) => {
+    const res = await fetch(`${srv2.url}/api/images?id=${encodeURIComponent(id)}&size=${size}`, { headers: { 'x-app-key': srv2.secret } });
+    return { status: res.status, buf: Buffer.from(await res.arrayBuffer()) };
+  };
+  const c2 = await newContext();
+  const prevPage = page;
+  page = await c2.newPage();
+  watch(page, '[fresh] ');
+  try {
+    await page.goto(`${srv2.url}/#k=${encodeURIComponent(srv2.secret)}`);
+    await page.waitForSelector('.page-home');
+    check('새 서버는 비어 있음', (await api2('/api/data')).records.length === 0 && (await api2('/api/images?stats=1')).count === 0);
+    await go('#/settings', '.page-settings');
+
+    // 1) 사진 없이 내보낸 백업: 서버에 없는 사진 참조만 빼고 기록은 저장 (서버가 알려 준 missing 목록으로)
+    await allowing([/status of 400/], async () => {
+      await page.setInputFiles('#import-file', photoExportNoImg);
+      await page.waitForSelector(dlg);
+      check('사진 없는 백업 미리보기엔 사진 줄 없음', !(await text(`${dlg} .import-counts`)).includes('사진'));
+      await dialogButton('가져오기');
+      check('사진 없는 백업도 실패 없이 가져옴', !!(await toastSeen(new RegExp(`가져오기 완료: 성공 ${json.records.length + json.members.length}(?!\\d)(?!.*실패)`), 15000)), String(await texts('.toast')));
+    });
+    const d1 = await api2('/api/data');
+    check('기록은 모두 들어오고 없는 사진 참조는 빠짐', d1.records.length === json.records.length && d1.records.every((r) => Array.isArray(r.photos) && r.photos.length === 0));
+
+    // 사진 포함 백업을 '건너뛰기'로: 가져오지 않는(이미 있는) 기록의 사진은 올리지 않음 (어디에도 안 쓰이는 사진이 쌓이지 않게)
+    await page.setInputFiles('#import-file', photoExport);
+    await page.waitForSelector(dlg);
+    await dialogButton('가져오기');
+    check('건너뛰기: 가져올 것이 없음', !!(await toastSeen(/가져오기 완료: 성공 0(?!\d)/, 15000)), String(await texts('.toast')));
+    check('건너뛴 기록의 사진은 올리지 않음', (await api2('/api/images?stats=1')).count === 0);
+
+    // 2) 사진 포함 백업을 덮어쓰기로: 사진을 같은 id 로 먼저 올리고 기록이 다시 사진을 가리킴
+    await page.setInputFiles('#import-file', photoExport);
+    await page.waitForSelector(dlg);
+    const counts = await text(`${dlg} .import-counts`);
+    check('미리보기: 기록·멤버·사진 수', counts.includes(`기록 ${json.records.length}개`) && counts.includes(`사진 ${json.images.length}장`), counts);
+    await page.click(`${dlg} .seg-item:has-text("덮어쓰기")`);
+    // 첫 사진 올리기는 서버 오류 한 번 (잠깐의 문제는 다시 올려서 기록에서 빠지지 않아야 함)
+    let failOnce = true;
+    await page.route('**/api/images', async (route) => {
+      if (route.request().method() === 'POST' && failOnce) {
+        failOnce = false;
+        await route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"server_error"}' });
+      } else await route.continue();
+    });
+    await allowing([/status of 500/], async () => {
+      await dialogButton('가져오기');
+      check('사진까지 가져오기 완료 (실패 없음 — 한 번 실패한 사진은 다시 올림)', !!(await toastSeen(new RegExp(`가져오기 완료: 성공 ${json.members.length + json.images.length + json.records.length}(?!\\d)(?!.*실패)`), 20000)) && !failOnce, String(await texts('.toast')));
+    });
+    await page.unroute('**/api/images');
+    const list2 = (await api2('/api/images?list=1')).images;
+    check('새 서버에 사진이 같은 id 로 모두', list2.length === json.images.length && json.images.every((im) => list2.some((m) => m.id === im.id && m.mime === im.mime)),
+      `${list2.length} vs ${json.images.length}`);
+    let same = true;
+    for (const im of json.images) {
+      const [f, t] = [await bytes2(im.id, 'f'), await bytes2(im.id, 't')];
+      if (f.status !== 200 || !f.buf.equals(Buffer.from(im.full, 'base64')) || t.status !== 200 || !t.buf.equals(Buffer.from(im.thumb, 'base64'))) same = false;
+    }
+    check('원본·썸네일 바이트가 백업과 똑같음', same);
+    const d2 = await api2('/api/data');
+    check('기록이 사진을 원래 순서대로 가리킴', withPhotos.length > 0 && withPhotos.every((r) => JSON.stringify((d2.records.find((x) => x.id === r.id) || {}).photos) === JSON.stringify(r.photos)));
+    // 화면에서도 보임
+    await tab('records', '.page-list');
+    const t0 = withPhotos[0];
+    const card = `.page-list .rcard:has(.pimg[data-photo="${t0.photos[0]}"])`;
+    check('새 서버 목록 카드에 대표 사진', !!(await until(() => page.$eval(`${card} .rcard-photo img`, (e) => !e.hidden && e.complete && e.naturalWidth > 0), 6000)));
+    await go(`#/record/${encodeURIComponent(t0.id)}`, '.page-detail');
+    check('새 서버 상세 갤러리', (await page.$$('.page-detail .dg-slide')).length === t0.photos.length &&
+      !!(await until(() => page.$eval('.page-detail .dg-slide:first-child img', (e) => !e.hidden && e.complete && e.naturalWidth > 0), 6000)));
+    await go('#/settings', '.page-settings');
+    check('새 서버 설정: 사진 수', !!(await until(async () => (await text('.set-store .store-main')).includes(`사진 ${json.images.length}장`), 5000)), await text('.set-store .store-main'));
+  } finally {
+    await c2.close();
+    page = prevPage;
+    await srv2.close();
+  }
+});
+
+await step('사진: 불러오기 실패·오프라인 → 자리표시, 다시 연결되면 보임', async () => {
+  const imageGets = (url) => url.pathname === '/api/images' && url.searchParams.has('id');
+  await page.route(imageGets, (route) => route.abort());
+  await allowing([/ERR_FAILED|Failed to load resource|net::/], async () => {
+    await page.reload();
+    await page.waitForSelector('#tabbar:not([hidden])');
+    await tab('records', '.page-list');
+    const card = `.page-list .rcard:has(.card-link:text-is("카탄"))`;
+    const err = await until(() => page.$(`${card} .rcard-photo .pimg.is-error .pimg-fallback`), 5000);
+    check('실패하면 아이콘 자리표시 (깨진 이미지 아님)', !!err && !(await page.$eval(`${card} .rcard-photo img`, (e) => !e.hidden)));
+    await shot('40-photo-fallback');
+    await page.unroute(imageGets);
+    await page.evaluate(() => window.dispatchEvent(new Event('online')));
+    const ok = await until(() => page.$eval(`${card} .rcard-photo img`, (e) => !e.hidden && e.complete && e.naturalWidth > 0), 5000);
+    check('다시 연결되면 사진이 보임', !!ok);
+  });
+});
+
+await step('사진: 원본이 작은 사진보다 먼저 와도 원본이 남음 (늦게 온 작은 사진으로 덮지 않음)', async () => {
+  const rec = (await api('GET', '/api/data')).data.records.find((r) => r.title === '카탄' && (r.photos || []).length);
+  const cover = rec.photos[0];
+  const gets = (size) => (url) => url.pathname === '/api/images' && url.searchParams.get('size') === size;
+  let fullDone;
+  const fullSent = new Promise((r) => { fullDone = r; });
+  // 작은 사진은 원본 바로 뒤에 도착 (원본을 그리는 사이) — 둘 다 브라우저 캐시에 있을 때 생길 수 있는 순서.
+  // 그 사이를 매번 재현하려고 이 단계에서만 그리기(decode)를 늦춤
+  await page.addInitScript(() => {
+    const orig = HTMLImageElement.prototype.decode;
+    HTMLImageElement.prototype.decode = function decode() {
+      const p = orig.call(this);
+      if (!sessionStorage.getItem('e2e-slow-decode')) return p;
+      return new Promise((resolve, reject) => setTimeout(() => p.then(resolve, reject), 500));
+    };
+  });
+  await page.evaluate(() => sessionStorage.setItem('e2e-slow-decode', '1'));
+  await page.route(gets('f'), async (route) => { const res = await route.fetch(); await route.fulfill({ response: res }); fullDone(); });
+  await page.route(gets('t'), async (route) => { const res = await route.fetch(); await fullSent; await sleep(50); await route.fulfill({ response: res }); });
+  await page.goto(`${BASE}/#/record/${encodeURIComponent(rec.id)}`);
+  await page.reload(); // 메모리의 사진 캐시를 비우고 처음부터
+  const slideImg = '.page-detail .dg-slide:first-child img';
+  await until(() => page.$eval(slideImg, (e) => !e.hidden && e.complete && e.naturalWidth > 0), 8000);
+  await sleep(1500);
+  const shownW = await page.$eval(slideImg, (e) => e.naturalWidth);
+  await page.evaluate(() => sessionStorage.removeItem('e2e-slow-decode'));
+  await page.unroute(gets('f'));
+  await page.unroute(gets('t'));
+  const full = await imgDims(cover, 'f');
+  check('대표 사진은 원본 크기로 보임', shownW === full.w, `보이는 ${shownW}px, 원본 ${full.w}px`);
+});
+
+await step('사진: 다크 모드 · 320px · 가로 스크롤 없음', async () => {
+  await page.evaluate(() => localStorage.setItem('ddh:theme', 'dark'));
+  await page.reload();
+  await page.waitForSelector('#tabbar:not([hidden])');
+  theme = 'dark';
+  check('다크 적용', isDarkColor(await bodyBg()));
+  const screens = [
+    [`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail', 'photo-detail'],
+    ['#/records', '.page-list', 'photo-list'],
+    [`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form', 'photo-form'],
+    ['#/settings', '.page-settings', 'photo-settings'],
+  ];
+  for (const [hash, sel, name] of screens) {
+    await go(hash, sel);
+    await until(() => page.$$eval('.pimg', (els) => els.every((e) => !e.classList.contains('is-loading'))), 2500);
+    await noOverflow(`다크 ${name}`);
+    await shot(name);
+  }
+  await go(`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail');
+  await page.click('.page-detail .dg-slide:first-child');
+  await page.waitForSelector('dialog.viewer[open]');
+  await sleep(400);
+  await page.screenshot({ path: path.join(SHOTS, 'dark-photo-viewer.png') });
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => localStorage.removeItem('ddh:theme'));
+  await page.reload();
+  await page.waitForSelector('#tabbar:not([hidden])');
+  theme = 'light';
+
+  await page.setViewportSize({ width: 320, height: 640 });
+  for (const [hash, sel] of [[`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail'], ['#/records', '.page-list'], ['#/', '.page-home'],
+    [`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form'], ['#/settings', '.page-settings']]) {
+    await go(hash, sel);
+    await sleep(150);
+    await noOverflow(`320px 사진 ${hash}`);
+    if (sel === '.page-form') await shot('320-photo-form');
+    if (sel === '.page-list') await shot('320-photo-list');
+  }
+  // 320px 에서도 사진 칸 버튼들이 44px 이상 누를 수 있음
+  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
+  const targets = await page.$$eval('.fsec-photos .ph-x, .fsec-photos .ph-cover-btn, .fsec-photos .ph-open, .fsec-photos .ph-add', (els) => els.map((el) => {
+    const b = el.getBoundingClientRect();
+    const after = getComputedStyle(el, '::after');
+    const extra = after.content !== 'none' ? { t: -parseFloat(after.top) || 0, l: -parseFloat(after.left) || 0 } : { t: 0, l: 0 };
+    return { cls: el.className, w: Math.round(b.width + 2 * Math.max(0, extra.l)), h: Math.round(b.height + 2 * Math.max(0, extra.t)) };
+  }));
+  check('320px: 사진 칸 버튼 누르는 영역 44px 이상', targets.length > 0 && targets.every((t) => t.w >= 44 && t.h >= 44), JSON.stringify(targets));
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.setViewportSize(VIEWPORT);
+});
+
+await cp.close();
 
 // ── 마무리 ──────────────────────────────────────────────────
 currentStep = '전체';

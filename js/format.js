@@ -130,3 +130,14 @@ export function numOrNull(v) {
 export function dateStamp(d = new Date()) {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
+
+/** 바이트 → 'KB'·'MB' */
+export function fmtBytes(n) {
+  const b = Math.max(0, Number(n) || 0);
+  if (b < 1024 * 1024) {
+    const kb = b / 1024;
+    return `${kb < 10 && kb > 0 ? kb.toFixed(1) : Math.round(kb)}KB`;
+  }
+  const mb = b / (1024 * 1024);
+  return `${mb < 100 ? mb.toFixed(1) : Math.round(mb)}MB`;
+}

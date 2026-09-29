@@ -6,8 +6,16 @@ import { readFile, stat } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { createHandlers, UPSERT_SCRIPT, MAX_BODY_BYTES } from '../lib/handler.js';
+import { createHandlers, UPSERT_SCRIPT, RECORD_DELETE_SCRIPT, MAX_BODY_BYTES } from '../lib/handler.js';
 import { FAIL_SCRIPT, PUBLIC_DEV_SECRET } from '../lib/auth.js';
+import {
+  IMAGE_ADD_SCRIPT,
+  IMAGE_COMMIT_SCRIPT,
+  IMAGE_DELETE_SCRIPT,
+  IMAGE_ROLLBACK_SCRIPT,
+  MAX_IMAGE_BODY_BYTES,
+  PENDING_MARK,
+} from '../lib/images.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_DEV_SECRET = PUBLIC_DEV_SECRET;
@@ -36,8 +44,10 @@ const MIME = {
 // ── 인메모리 가짜 Redis (lib/redis.js 인터페이스와 동일) ─────────────
 
 /**
- * handler가 쓰는 명령만 구현한 가짜 Redis.
- * EVAL은 lib/handler.js의 UPSERT_SCRIPT와 lib/auth.js의 FAIL_SCRIPT만 지원하며 같은 로직을 JS로 수행한다.
+ * handler가 쓰는 명령만 구현한 가짜 Redis. 값은 실제 Upstash 클라이언트(automaticDeserialization: false)처럼 문자열.
+ * EVAL은 lib/handler.js의 UPSERT_SCRIPT·RECORD_DELETE_SCRIPT, lib/auth.js의 FAIL_SCRIPT, lib/images.js의
+ * IMAGE_ADD_SCRIPT·IMAGE_COMMIT_SCRIPT·IMAGE_ROLLBACK_SCRIPT·IMAGE_DELETE_SCRIPT만 지원하며
+ * 같은 로직(문자열 패턴까지)을 JS로 수행한다.
  * @param {{ now?: () => number }} [opts]  만료 계산용 시계(ms)
  */
 export function createMemoryRedis({ now = Date.now } = {}) {
@@ -104,8 +114,28 @@ export function createMemoryRedis({ now = Date.now } = {}) {
     async hlen(key) {
       return hash(key, false)?.size ?? 0;
     },
+    async hexists(key, field) {
+      return hash(key, false)?.has(String(field)) ? 1 : 0;
+    },
     async get(key) {
       return str(key);
+    },
+    async set(key, value) {
+      // SET 은 종류와 만료를 가리지 않고 덮어씀
+      purge(key);
+      hashes.delete(key);
+      expiresAt.delete(key);
+      strings.set(key, String(value));
+      return 'OK';
+    },
+    async del(...keys) {
+      let n = 0;
+      for (const key of keys) {
+        purge(key);
+        if (strings.delete(key) || hashes.delete(key)) n++;
+        expiresAt.delete(key);
+      }
+      return n;
     },
     async incr(key) {
       const cur = str(key);
@@ -131,13 +161,92 @@ export function createMemoryRedis({ now = Date.now } = {}) {
         expiresAt.set(key, now() + Number(args[0]) * 1000);
         return n + 1;
       }
+      // 모든 기록이 가리키는 사진 id (Lua 의 REFS 조각과 같은 패턴)
+      const refsOf = (recordsKey) => {
+        const refs = new Set();
+        for (const rec of hash(recordsKey, false)?.values() ?? []) {
+          const list = /"photos":\[([^\]]*)\]/.exec(rec);
+          if (list) for (const m of list[1].matchAll(/"([^"]*)"/g)) refs.add(m[1]);
+        }
+        return refs;
+      };
+      const exists = (...ks) => ks.filter((k) => str(k) !== null).length;
+      const hdelField = (key, field) => {
+        hash(key, false)?.delete(field);
+        dropIfEmpty(key);
+      };
+      if (script === IMAGE_ADD_SCRIPT) {
+        const [id, meta, bytes, maxCount, maxBytes, at] = args.map(String);
+        const h = hash(keys[0], false);
+        if (h?.has(id)) {
+          hash(keys[3], true).set(id, at);
+          const cur = h.get(id);
+          return [cur.includes(PENDING_MARK) || exists(keys[1], keys[2]) < 2 ? 'incomplete' : 'exists', cur];
+        }
+        const vals = [...(h?.values() ?? [])];
+        if (vals.length >= Number(maxCount)) return ['limit', 'count'];
+        let total = Number(bytes);
+        for (const v of vals) total += Number(/"bytesF":(\d+)/.exec(v)?.[1] ?? 0) + Number(/"bytesT":(\d+)/.exec(v)?.[1] ?? 0);
+        if (total > Number(maxBytes)) return ['limit', 'bytes'];
+        hash(keys[0], true).set(id, meta);
+        return ['ok', ''];
+      }
+      if (script === IMAGE_COMMIT_SCRIPT) {
+        if (exists(keys[1], keys[2]) < 2) return 'incomplete';
+        hash(keys[0], true).set(String(args[0]), String(args[1]));
+        return 'ok';
+      }
+      if (script === IMAGE_ROLLBACK_SCRIPT) {
+        const id = String(args[0]);
+        const cur = hash(keys[1], false)?.get(id);
+        if (cur !== undefined && !cur.includes(PENDING_MARK)) return 'kept';
+        if (cur !== undefined && refsOf(keys[0]).has(id)) return 'in_use';
+        if (cur !== undefined) hdelField(keys[1], id);
+        strings.delete(keys[2]);
+        strings.delete(keys[3]);
+        return 'deleted';
+      }
+      if (script === IMAGE_DELETE_SCRIPT) {
+        const refs = refsOf(keys[0]);
+        const [cutoff, ...ids] = args.map(String);
+        return ids.map((id, i) => {
+          const touched = hash(keys[2], false)?.get(id);
+          if (!hash(keys[1], false)?.has(id)) {
+            if (touched !== undefined) hdelField(keys[2], id);
+            return 'missing';
+          }
+          if (refs.has(id)) {
+            if (touched !== undefined) hdelField(keys[2], id);
+            return 'in_use';
+          }
+          if (cutoff !== '' && touched !== undefined && touched > cutoff) return 'young';
+          strings.delete(keys[3 + 2 * i]);
+          strings.delete(keys[4 + 2 * i]);
+          hdelField(keys[1], id);
+          if (touched !== undefined) hdelField(keys[2], id);
+          return 'deleted';
+        });
+      }
+      if (script === RECORD_DELETE_SCRIPT) {
+        const h = hash(keys[0], false);
+        const id = String(args[0]);
+        if (!h?.has(id)) return null;
+        const cur = h.get(id);
+        hdelField(keys[0], id);
+        return cur;
+      }
       if (script !== UPSERT_SCRIPT) throw new Error('fake redis: unsupported script');
-      const [hashKey] = keys;
-      const [field, expected, value, max] = args.map(String);
+      const [hashKey, metaKey] = keys;
+      const [field, expected, value, max, ...photos] = args.map(String);
       const h = hash(hashKey, false);
       const cur = h?.get(field) ?? '';
       if (cur !== expected) return ['conflict', cur];
       if (cur === '' && (h?.size ?? 0) >= Number(max)) return ['limit', ''];
+      const missing = photos.filter((p) => {
+        const m = hash(metaKey, false)?.get(p);
+        return m === undefined || m.includes(PENDING_MARK);
+      });
+      if (missing.length) return ['missing', missing.join(',')];
       hash(hashKey, true).set(field, value);
       return ['ok', ''];
     },
@@ -188,7 +297,8 @@ function applyHeaderRules(rules, pathname, res) {
 
 // ── 요청 처리 ────────────────────────────────────────────────
 
-function enhanceResponse(res) {
+/** Vercel Node 런타임의 res 도우미(status/json/send) 흉내 */
+export function enhanceResponse(res) {
   res.status = (code) => {
     res.statusCode = code;
     return res;
@@ -198,10 +308,26 @@ function enhanceResponse(res) {
     res.end(JSON.stringify(obj));
     return res;
   };
+  res.send = (body) => {
+    if (body === undefined || body === null) {
+      res.end();
+    } else if (Buffer.isBuffer(body) || body instanceof Uint8Array) {
+      if (!res.getHeader('Content-Type')) res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader('Content-Length', String(body.length));
+      res.end(body);
+    } else if (typeof body === 'string') {
+      if (!res.getHeader('Content-Type')) res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Content-Length', String(Buffer.byteLength(body)));
+      res.end(body);
+    } else {
+      res.json(body);
+    }
+    return res;
+  };
   return res;
 }
 
-/** 본문 읽기 (64KB 초과면 null) */
+/** 본문 읽기 (한도 초과면 null) */
 function readRawBody(req, limit) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -304,7 +430,14 @@ export async function startDevServer(opts = {}) {
   const root = path.resolve(opts.root ?? ROOT);
   const redis = opts.redis ?? createMemoryRedis();
   const handlers = createHandlers({ redis, env: { APP_SECRET: secret }, logger: opts.logger ?? console });
-  const routes = { '/api/data': handlers.data, '/api/records': handlers.records, '/api/members': handlers.members };
+  const routes = {
+    '/api/data': handlers.data,
+    '/api/records': handlers.records,
+    '/api/members': handlers.members,
+    '/api/images': handlers.images,
+  };
+  // 사진 업로드만 1.5MB, 나머지는 64KB (배포에서는 Vercel 이 본문을 받고 handler 가 같은 한도로 다시 확인)
+  const bodyLimits = { '/api/images': MAX_IMAGE_BODY_BYTES };
   const headerRules = loadHeaderRules(root);
 
   const server = http.createServer(async (req, res) => {
@@ -314,13 +447,14 @@ export async function startDevServer(opts = {}) {
       applyHeaderRules(headerRules, pathname, res);
 
       if (pathname === '/api' || pathname.startsWith('/api/')) {
-        const route = routes[pathname.replace(/\/+$/, '')];
+        const routePath = pathname.replace(/\/+$/, '');
+        const route = Object.hasOwn(routes, routePath) ? routes[routePath] : null;
         if (!route) return sendJson(res, 404, { error: 'not_found' });
         // Vercel은 x-forwarded-for를 실제 접속 IP로 덮어쓴다
         req.headers['x-forwarded-for'] = String(req.socket.remoteAddress || '').replace(/^::ffff:/, '');
         req.query = Object.fromEntries(url.searchParams);
         if (!['GET', 'HEAD'].includes(req.method)) {
-          const buf = await readRawBody(req, MAX_BODY_BYTES);
+          const buf = await readRawBody(req, bodyLimits[routePath] ?? MAX_BODY_BYTES);
           if (buf === null) return sendJson(res, 413, { error: 'too_large' });
           attachBody(req, buf);
         } else {

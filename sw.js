@@ -1,7 +1,7 @@
 // 또또하우스 기록장 서비스 워커 — 정적 셸만 캐시. /api/* 는 절대 캐시하지 않음 (항상 네트워크 직행)
 // 배포 전에 npm run bump-sw 로 CACHE_VERSION 을 올리면 새 파일이 바로 반영돼요.
 // (깜빡해도 정적 파일은 뒤에서 새로 받아 두므로 한 번 더 열면 반영돼요)
-const CACHE_VERSION = 'ddh-v2';
+const CACHE_VERSION = 'ddh-v4';
 const CACHE = `ddoddohouse-record-${CACHE_VERSION}`;
 
 const PRECACHE = [
@@ -18,6 +18,8 @@ const PRECACHE = [
   '/js/format.js',
   '/js/constants.js',
   '/js/stats.js',
+  '/js/images.js',
+  '/js/compress.js',
   '/js/views/bits.js',
   '/js/views/lock.js',
   '/js/views/home.js',
@@ -28,6 +30,7 @@ const PRECACHE = [
   '/js/views/stats.js',
   '/js/views/members.js',
   '/js/views/settings.js',
+  '/js/views/photos.js',
   '/icon-192.png',
   '/icon-512.png',
   '/icon-maskable-512.png',
@@ -61,6 +64,8 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   // API 는 서비스 워커를 거치지 않고 네트워크로 (인증 헤더가 붙은 응답을 절대 저장하지 않음)
   if (url.pathname.startsWith('/api/')) return;
+  // 브라우저 캐시 비우기 신호(Clear-Site-Data)는 브라우저가 직접 받아야 함 — 저장하지도 가로채지도 않음
+  if (url.pathname === '/clear-cache.txt') return;
 
   // 페이지(HTML)는 네트워크 우선 → 새 배포가 바로 반영, 오프라인이면 캐시
   if (req.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {

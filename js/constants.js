@@ -35,7 +35,7 @@ export const TAG_SUGGESTIONS = {
 export const LIMITS = {
   title: 80, oneLiner: 100, review: 5000, tag: 15, tags: 10, members: 20,
   place: 40, expansion: 60, publisher: 40, store: 40, gm: 20, character: 30,
-  brand: 40, branch: 40, genre: 20, memberName: 20,
+  brand: 40, branch: 40, genre: 20, memberName: 20, photos: 4,
 };
 
 export const BG_MODES = [
@@ -102,7 +102,7 @@ export const FIELD_LABELS = {
   expansion: '확장판', publisher: '제작사', format: '형태', store: '매장', gm: 'GM', playerCount: '인원',
   roles: '역할', character: '캐릭터', culpritResult: '범인 검거 결과', scores: '세부 점수', difficulty: '난이도',
   brand: '브랜드', branch: '지점', genre: '장르', timeLimitMin: '제한 시간', remainingSec: '남은 시간',
-  hints: '힌트', fear: '공포도', activity: '활동성', name: '이름', emoji: '이모지', color: '색',
+  hints: '힌트', fear: '공포도', activity: '활동성', name: '이름', emoji: '이모지', color: '색', photos: '사진',
 };
 
 export const STORAGE = {

@@ -3,8 +3,6 @@
 // Lua 스크립트와 가짜 구현이 똑같이 동작하는지 확인한다.
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import net from 'node:net';
-import { spawn, spawnSync } from 'node:child_process';
 import {
   createHandlers,
   UPSERT_SCRIPT,
@@ -17,36 +15,13 @@ import { validateRecord, validateMember } from '../lib/validate.js';
 import { keyMatches, clientIp, readSecret, FAIL_SCRIPT } from '../lib/auth.js';
 import { pairsToObject, wrapUpstash, createRedisFromEnv } from '../lib/redis.js';
 import { createMemoryRedis, startDevServer, sourceToRegExp } from '../scripts/dev.mjs';
+import { hasRedisServer, mockRes, startRedisServer } from './redis-helpers.mjs';
 
 const SECRET = 'test-secret-key-0123456789';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const silent = { error() {} };
 
 // ── 도우미 ───────────────────────────────────────────────────
-
-function mockRes() {
-  return {
-    statusCode: 200,
-    headers: {},
-    body: undefined,
-    headersSent: false,
-    setHeader(k, v) {
-      this.headers[k.toLowerCase()] = v;
-    },
-    getHeader(k) {
-      return this.headers[k.toLowerCase()];
-    },
-    status(code) {
-      this.statusCode = code;
-      return this;
-    },
-    json(obj) {
-      this.body = JSON.parse(JSON.stringify(obj));
-      this.headersSent = true;
-      return this;
-    },
-  };
-}
 
 function setup({ env = { APP_SECRET: SECRET }, redis = createMemoryRedis(), now, logger = silent } = {}) {
   const handlers = createHandlers({ redis, env, now, logger });
@@ -141,7 +116,7 @@ describe('설정 확인 (fail closed)', () => {
   ]) {
     test(`${label} → 503 not_configured (모든 API, 키가 맞아도)`, async () => {
       const { call } = setup({ env });
-      for (const route of ['data', 'records', 'members']) {
+      for (const route of ['data', 'records', 'members', 'images']) {
         const res = await call(route, { key: env.APP_SECRET ?? SECRET, method: 'POST', body: {} });
         assert.equal(res.statusCode, 503);
         assert.deepEqual(res.body, { error: 'not_configured' });
@@ -160,7 +135,7 @@ describe('설정 확인 (fail closed)', () => {
   test('createRedisFromEnv: URL/토큰 없으면 null, 있으면 인터페이스 객체', () => {
     assert.equal(createRedisFromEnv({}), null);
     const r = createRedisFromEnv({ UPSTASH_REDIS_REST_URL: 'https://example.upstash.io', UPSTASH_REDIS_REST_TOKEN: 't' });
-    for (const m of ['hgetall', 'hget', 'hset', 'hdel', 'hlen', 'get', 'incr', 'expire', 'eval']) {
+    for (const m of ['hgetall', 'hget', 'hset', 'hdel', 'hlen', 'hexists', 'get', 'set', 'del', 'incr', 'expire', 'eval']) {
       assert.equal(typeof r[m], 'function', m);
     }
   });
@@ -539,7 +514,9 @@ describe('기록 검증', () => {
     assert.equal(v.er, undefined);
     assert.equal(v.bg.secret, undefined);
     assert.deepEqual(v.bg.results, [{ memberId: 'm1', score: 3, rank: null, winner: true }]);
+    // photos 를 안 보냈으면 담지 않음 (저장할 때 handler 가 지금 사진을 그대로 둠)
     assert.deepEqual(Object.keys(v).sort(), ['bg', 'date', 'members', 'oneLiner', 'rating', 'review', 'spoiler', 'tags', 'title', 'type']);
+    assert.equal(v.photos, undefined);
   });
 
   test('기본값 채우기 + 문자열 정리', () => {
@@ -893,126 +870,20 @@ storageSuite('인메모리 가짜 Redis', () => createMemoryRedis());
 
 // ── 실제 redis-server로 Lua 스크립트 검증 (설치돼 있을 때만) ────────
 
-const hasRedisServer = spawnSync('redis-server', ['--version']).status === 0;
-
-/** 최소 RESP 클라이언트 — Upstash 클라이언트처럼 raw 값을 돌려준다 */
-function createRespClient(port) {
-  const sock = net.createConnection({ port, host: '127.0.0.1' });
-  let buf = Buffer.alloc(0);
-  const pending = [];
-
-  function parse(b, i) {
-    const eol = b.indexOf('\r\n', i);
-    if (eol < 0) return null;
-    const type = String.fromCharCode(b[i]);
-    const line = b.toString('utf8', i + 1, eol);
-    const next = eol + 2;
-    if (type === '+') return [line, next];
-    if (type === '-') return [new Error(line), next];
-    if (type === ':') return [Number(line), next];
-    if (type === '$') {
-      const len = Number(line);
-      if (len < 0) return [null, next];
-      if (b.length < next + len + 2) return null;
-      return [b.toString('utf8', next, next + len), next + len + 2];
-    }
-    if (type === '*') {
-      const n = Number(line);
-      if (n < 0) return [null, next];
-      const out = [];
-      let pos = next;
-      for (let k = 0; k < n; k++) {
-        const r = parse(b, pos);
-        if (!r) return null;
-        out.push(r[0]);
-        pos = r[1];
-      }
-      return [out, pos];
-    }
-    throw new Error(`RESP type ${type}`);
-  }
-
-  sock.on('data', (d) => {
-    buf = Buffer.concat([buf, d]);
-    while (pending.length) {
-      const r = parse(buf, 0);
-      if (!r) return;
-      buf = buf.subarray(r[1]);
-      const p = pending.shift();
-      if (r[0] instanceof Error) p.reject(r[0]);
-      else p.resolve(r[0]);
-    }
-  });
-
-  function cmd(...args) {
-    const parts = [`*${args.length}\r\n`];
-    for (const a of args) {
-      const s = String(a);
-      parts.push(`$${Buffer.byteLength(s)}\r\n${s}\r\n`);
-    }
-    return new Promise((resolve, reject) => {
-      pending.push({ resolve, reject });
-      sock.write(parts.join(''));
-    });
-  }
-
-  const ready = new Promise((resolve, reject) => {
-    sock.once('connect', resolve);
-    sock.once('error', reject);
-  });
-
-  // Upstash 클라이언트(automaticDeserialization: false)와 같은 모양
-  const raw = {
-    hgetall: (k) => cmd('HGETALL', k),
-    hget: (k, f) => cmd('HGET', k, f),
-    hset: (k, obj) => cmd('HSET', k, ...Object.entries(obj).flat()),
-    hdel: (k, ...f) => cmd('HDEL', k, ...f),
-    hlen: (k) => cmd('HLEN', k),
-    get: (k) => cmd('GET', k),
-    incr: (k) => cmd('INCR', k),
-    expire: (k, s) => cmd('EXPIRE', k, s),
-    eval: (script, keys, args) => cmd('EVAL', script, keys.length, ...keys, ...args),
-  };
-  return { raw, cmd, ready, close: () => sock.end() };
-}
-
-async function freePort() {
-  const srv = net.createServer();
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  const { port } = srv.address();
-  await new Promise((r) => srv.close(r));
-  return port;
-}
-
 describe('실제 redis-server', { skip: hasRedisServer ? false : 'redis-server 없음' }, () => {
-  let proc;
+  let server;
   let client;
   let wrapped;
 
   before(async () => {
-    const port = await freePort();
-    proc = spawn('redis-server', ['--port', String(port), '--bind', '127.0.0.1', '--save', '', '--appendonly', 'no'], {
-      stdio: 'ignore',
-    });
-    for (let i = 0; i < 50; i++) {
-      try {
-        client = createRespClient(port);
-        await client.ready;
-        break;
-      } catch {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-    }
-    await client.cmd('FLUSHALL');
+    server = await startRedisServer();
+    client = server.client;
     // wrapUpstash 경유 → lib/redis.js 어댑터도 함께 검증
     wrapped = wrapUpstash(client.raw);
     wrapped.flushall = () => client.cmd('FLUSHALL');
   });
 
-  after(() => {
-    client?.close();
-    proc?.kill();
-  });
+  after(() => server?.stop());
 
   test('UPSERT_SCRIPT 동작: 새로 추가 / 기대값 불일치 / 한도', async () => {
     const ev = (...args) => wrapped.eval(UPSERT_SCRIPT, ['t:h'], args);

@@ -5,90 +5,19 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import net from 'node:net';
-import { spawn, spawnSync } from 'node:child_process';
 import { createRedisFromEnv } from '../lib/redis.js';
 import { createHandlers, UPSERT_SCRIPT, RECORDS_KEY } from '../lib/handler.js';
+import { IMAGE_META_KEY, IMAGE_TOUCH_KEY, MAX_FULL_BYTES, MAX_THUMB_BYTES } from '../lib/images.js';
+import { fakeJpeg, fakeWebp, hasRedisServer, mockRes, startRedisServer } from './redis-helpers.mjs';
 
-const hasRedisServer = spawnSync('redis-server', ['--version']).status === 0;
 const SECRET = 'upstash-test-secret-0123456789';
 const TOKEN = 'rest-token-for-tests';
 
-async function freePort() {
-  const srv = net.createServer();
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  const { port } = srv.address();
-  await new Promise((r) => srv.close(r));
-  return port;
-}
-
-/** 최소 RESP 클라이언트 (응답은 요청 순서대로 옴) */
-function respClient(port) {
-  const sock = net.createConnection({ port, host: '127.0.0.1' });
-  let buf = Buffer.alloc(0);
-  const pending = [];
-  function parse(b, i) {
-    const eol = b.indexOf('\r\n', i);
-    if (eol < 0) return null;
-    const type = String.fromCharCode(b[i]);
-    const line = b.toString('utf8', i + 1, eol);
-    const next = eol + 2;
-    if (type === '+') return [line, next];
-    if (type === '-') return [new Error(line), next];
-    if (type === ':') return [Number(line), next];
-    if (type === '$') {
-      const len = Number(line);
-      if (len < 0) return [null, next];
-      if (b.length < next + len + 2) return null;
-      return [b.toString('utf8', next, next + len), next + len + 2];
-    }
-    if (type === '*') {
-      const n = Number(line);
-      if (n < 0) return [null, next];
-      const out = [];
-      let pos = next;
-      for (let k = 0; k < n; k++) {
-        const r = parse(b, pos);
-        if (!r) return null;
-        out.push(r[0]);
-        pos = r[1];
-      }
-      return [out, pos];
-    }
-    throw new Error(`RESP type ${type}`);
-  }
-  sock.on('data', (d) => {
-    buf = Buffer.concat([buf, d]);
-    while (pending.length) {
-      const r = parse(buf, 0);
-      if (!r) return;
-      buf = buf.subarray(r[1]);
-      const p = pending.shift();
-      if (r[0] instanceof Error) p.reject(r[0]);
-      else p.resolve(r[0]);
-    }
-  });
-  const ready = new Promise((resolve, reject) => {
-    sock.once('connect', resolve);
-    sock.once('error', reject);
-  });
-  function cmd(...args) {
-    const parts = [`*${args.length}\r\n`];
-    for (const a of args) {
-      const s = String(a);
-      parts.push(`$${Buffer.byteLength(s)}\r\n${s}\r\n`);
-    }
-    return new Promise((resolve, reject) => {
-      pending.push({ resolve, reject });
-      sock.write(parts.join(''));
-    });
-  }
-  return { cmd, ready, close: () => sock.end() };
-}
-
-/** Upstash REST 흉내: POST / (명령 하나), POST /pipeline (여러 개). Upstash-Encoding: base64 지원 */
+/** Upstash REST 흉내: POST / (명령 하나), POST /pipeline (여러 개). Upstash-Encoding: base64 지원.
+ *  requests 에 요청마다 {bytes: 본문 크기, cmds: 명령 이름들} 을 남김 (요청 크기 한도 확인용) */
 function restShim(redis) {
   const log = [];
+  const requests = [];
   const server = http.createServer((req, res) => {
     const chunks = [];
     req.on('data', (c) => chunks.push(c));
@@ -108,8 +37,10 @@ function restShim(redis) {
           return { error: e.message };
         }
       };
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const rawBody = Buffer.concat(chunks);
+      const body = JSON.parse(rawBody.toString('utf8'));
       const path = new URL(req.url, 'http://x').pathname;
+      requests.push({ bytes: rawBody.length, cmds: (path === '/pipeline' ? body : [body]).map((c) => String(c[0]).toLowerCase()) });
       if (path === '/pipeline') {
         log.push(`pipeline:${body.map((c) => c[0]).join(',')}`);
         const out = [];
@@ -123,35 +54,11 @@ function restShim(redis) {
       }
     });
   });
-  return { server, log };
-}
-
-function mockRes() {
-  return {
-    statusCode: 200,
-    headers: {},
-    body: undefined,
-    headersSent: false,
-    setHeader(k, v) {
-      this.headers[k.toLowerCase()] = v;
-    },
-    getHeader(k) {
-      return this.headers[k.toLowerCase()];
-    },
-    status(code) {
-      this.statusCode = code;
-      return this;
-    },
-    json(obj) {
-      this.body = JSON.parse(JSON.stringify(obj));
-      this.headersSent = true;
-      return this;
-    },
-  };
+  return { server, log, requests };
 }
 
 describe('실제 Upstash 클라이언트 + REST 흉내 서버 + redis-server', { skip: hasRedisServer ? false : 'redis-server 없음' }, () => {
-  let proc;
+  let server;
   let resp;
   let shim;
   let url;
@@ -166,18 +73,8 @@ describe('실제 Upstash 클라이언트 + REST 흉내 서버 + redis-server', {
   }
 
   before(async () => {
-    const port = await freePort();
-    proc = spawn('redis-server', ['--port', String(port), '--bind', '127.0.0.1', '--save', '', '--appendonly', 'no'], { stdio: 'ignore' });
-    for (let i = 0; i < 50; i++) {
-      try {
-        resp = respClient(port);
-        await resp.ready;
-        break;
-      } catch {
-        await new Promise((r) => setTimeout(r, 100));
-      }
-    }
-    await resp.cmd('FLUSHALL');
+    server = await startRedisServer();
+    resp = server.client;
     shim = restShim(resp);
     await new Promise((r) => shim.server.listen(0, '127.0.0.1', r));
     url = `http://127.0.0.1:${shim.server.address().port}`;
@@ -189,8 +86,7 @@ describe('실제 Upstash 클라이언트 + REST 흉내 서버 + redis-server', {
   after(async () => {
     shim?.server.closeAllConnections?.();
     await new Promise((r) => (shim ? shim.server.close(r) : r()));
-    resp?.close();
-    proc?.kill();
+    server?.stop();
   });
 
   test('어댑터: 문자열(한글·이모지)·해시·카운터·EVAL 이 그대로 오감', async () => {
@@ -270,6 +166,98 @@ describe('실제 Upstash 클라이언트 + REST 흉내 서버 + redis-server', {
     assert.deepEqual(res.body, { error: 'too_many_attempts' });
     const other = await call('data', { ip: '10.9.9.10' });
     assert.equal(other.statusCode, 200);
+  });
+
+  test('사진: 최대 크기 업로드 → 바이너리 조회 (Upstash 요청 하나는 1MB 미만, 원본·썸네일 SET 은 따로)', async () => {
+    await resp.cmd('DEL', IMAGE_META_KEY);
+    const full = fakeJpeg(MAX_FULL_BYTES, 3);
+    const thumb = fakeWebp(MAX_THUMB_BYTES, 4);
+    shim.requests.length = 0;
+    let res = await call('images', { method: 'POST', body: { full: full.toString('base64'), thumb: thumb.toString('base64') } });
+    assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+    const { image } = res.body;
+    assert.equal(image.mime, 'image/jpeg');
+    assert.equal(image.mimeT, 'image/webp');
+    const sets = shim.requests.filter((r) => r.cmds.includes('set'));
+    assert.deepEqual(sets.map((r) => r.cmds), [['set'], ['set']]);
+    const biggest = Math.max(...shim.requests.map((r) => r.bytes));
+    assert.ok(biggest < 1024 * 1024, `가장 큰 요청 ${biggest} bytes`);
+    assert.equal(await resp.cmd('GET', `ddh:img:${image.id}:f`), full.toString('base64'));
+    assert.deepEqual(JSON.parse(await resp.cmd('HGET', IMAGE_META_KEY, image.id)), image);
+
+    for (const [size, bytes, mime] of [['f', full, 'image/jpeg'], ['t', thumb, 'image/webp']]) {
+      res = await call('images', { query: { id: image.id, size } });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.headers['content-type'], mime);
+      assert.equal(res.headers['cache-control'], 'private, max-age=604800, immutable');
+      assert.ok(res.raw.equals(bytes), size);
+    }
+    res = await call('images', { query: { stats: '1' } });
+    assert.equal(res.body.count, 1);
+    assert.equal(res.body.bytes, MAX_FULL_BYTES + MAX_THUMB_BYTES);
+    res = await call('images', { query: { id: 'nope', size: 't' } });
+    assert.equal(res.statusCode, 404);
+  });
+
+  test('사진: 가져오기 멱등(existed) · 기록 참조 확인 · 삭제 시 정리 · in_use · gc (Lua 결과가 클라이언트를 거쳐도 그대로)', async () => {
+    await resp.cmd('DEL', IMAGE_META_KEY, RECORDS_KEY);
+    let clock = Date.parse('2026-09-01T00:00:00.000Z');
+    const timed = createHandlers({ redis, env: { APP_SECRET: SECRET }, now: () => new Date(clock), logger: { error: (...a) => errors.push(a.join(' ')) } });
+    const tcall = async (route, { method = 'GET', body, query = {} } = {}) => {
+      const res = mockRes();
+      await timed[route]({ method, headers: { 'x-app-key': SECRET, 'x-forwarded-for': '10.0.0.9' }, query, body }, res);
+      return res;
+    };
+    const up = (id, seed) =>
+      tcall('images', { method: 'POST', body: { id, full: fakeJpeg(3000, seed).toString('base64'), thumb: fakeJpeg(300, seed).toString('base64') } });
+
+    let res = await up('imp-a', 1);
+    assert.equal(res.statusCode, 200);
+    const metaA = res.body.image;
+    clock += 1000;
+    res = await up('imp-a', 2);
+    assert.deepEqual(res.body, { image: metaA, existed: true });
+    assert.equal((await up('imp-b', 3)).statusCode, 200);
+    assert.equal((await up('imp-c', 4)).statusCode, 200);
+
+    const record = { type: 'escaperoom', date: '2026-09-03', title: '저주받은 병동 👻', members: [] };
+    res = await tcall('records', { method: 'POST', body: { record: { ...record, photos: ['imp-a', 'ghost'] } } });
+    assert.deepEqual(res.body, { error: 'invalid', field: 'photos', missing: ['ghost'] });
+    res = await tcall('records', { method: 'POST', body: { record: { ...record, photos: ['imp-a', 'imp-b'] } } });
+    assert.equal(res.statusCode, 200);
+    const saved = res.body.record;
+    assert.deepEqual(saved.photos, ['imp-a', 'imp-b']);
+
+    res = await tcall('images', { method: 'DELETE', query: { id: 'imp-a' } });
+    assert.deepEqual(res.body, { error: 'in_use' });
+    res = await tcall('records', { method: 'POST', body: { record: { ...saved, photos: ['imp-b'] }, baseUpdatedAt: saved.updatedAt } });
+    assert.equal(res.statusCode, 200);
+    // 빠진 사진은 바로 지우지 않고 빠진 시각만 적음 (하루 유예)
+    assert.equal(await resp.cmd('HEXISTS', IMAGE_META_KEY, 'imp-a'), 1);
+    assert.equal(await resp.cmd('HGET', IMAGE_TOUCH_KEY, 'imp-a'), new Date(clock).toISOString());
+    // 사진을 모르는 예전 앱이 photos 없이 고쳐 저장해도 사진은 그대로
+    const cur = res.body.record;
+    const { photos, ...legacy } = cur;
+    res = await tcall('records', { method: 'POST', body: { record: { ...legacy, title: '예전 앱에서 고침' }, baseUpdatedAt: cur.updatedAt } });
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.record.photos, photos);
+
+    clock += 24 * 60 * 60 * 1000;
+    res = await tcall('records', { method: 'DELETE', query: { id: saved.id } });
+    assert.deepEqual(res.body, { ok: true });
+    // 기록을 지울 때 하루 지난 imp-a 는 함께 정리, 방금 빠진 imp-b 는 유예
+    assert.equal(await resp.cmd('HEXISTS', IMAGE_META_KEY, 'imp-a'), 0);
+    assert.equal(await resp.cmd('EXISTS', 'ddh:img:imp-a:f'), 0);
+    assert.equal(await resp.cmd('HEXISTS', IMAGE_META_KEY, 'imp-b'), 1);
+
+    res = await tcall('images', { method: 'POST', query: { action: 'gc' } });
+    assert.deepEqual(res.body, { deleted: 1 }, '기록에 붙은 적 없는 imp-c 만');
+    clock += 24 * 60 * 60 * 1000;
+    res = await tcall('images', { method: 'POST', query: { action: 'gc' } });
+    assert.deepEqual(res.body, { deleted: 1 });
+    assert.equal(await resp.cmd('EXISTS', 'ddh:img:imp-b:t'), 0);
+    assert.equal(await resp.cmd('EXISTS', IMAGE_META_KEY), 0);
+    assert.equal(await resp.cmd('EXISTS', IMAGE_TOUCH_KEY), 0);
   });
 
   test('자동 파이프라이닝 경로도 사용됨 (동시 명령이 /pipeline 으로 묶임)', () => {

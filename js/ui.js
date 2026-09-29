@@ -10,24 +10,41 @@ export const nextId = (p = 'u') => `${p}${++uid}`;
 // ── 토스트 ──
 const MAX_TOASTS = 3;
 
-export function toast(message, kind = 'info', ms = 2800) {
+/**
+ * 잠깐 뜨는 알림. action: {label, onClick} — 알림 안의 버튼 (예: 되돌리기). 눌리면 알림은 바로 닫힘
+ * 같은 내용의 알림이 이미 떠 있으면 새로 쌓지 않고 그 알림을 조금 더 보여 줌 (여러 장이 한꺼번에 실패할 때 등)
+ */
+export function toast(message, kind = 'info', ms = 2800, { action = null } = {}) {
   const box = document.getElementById('toasts');
   if (!box) return;
   // 성공 알림이 뜨면 앞서 남은 오류 알림은 더 이상 맞지 않으므로 치움 (예: 입력 오류 → 고쳐서 저장 성공)
   if (kind === 'ok') box.querySelectorAll('.toast-error').forEach((t) => t.remove());
-  // 한꺼번에 너무 많이 쌓여 화면을 가리지 않도록 오래된 것부터 치움
   const live = [...box.querySelectorAll('.toast:not(.is-out)')];
-  live.slice(0, Math.max(0, live.length - (MAX_TOASTS - 1))).forEach((t) => t.remove());
-  const el = h('div', { class: `toast toast-${kind}`, role: kind === 'error' ? 'alert' : 'status' },
-    icon(kind === 'error' ? 'info' : kind === 'ok' ? 'check' : 'sparkle'),
-    h('span', { text: message }));
-  box.appendChild(el);
-  requestAnimationFrame(() => el.classList.add('is-in'));
-  setTimeout(() => {
+  const same = !action && live.find((t) => t.dataset.kind === kind && t.dataset.msg === message && !t.querySelector('.toast-btn'));
+  const dismiss = (el) => {
+    clearTimeout(el.timer);
     el.classList.remove('is-in');
     el.classList.add('is-out');
     setTimeout(() => el.remove(), 300);
-  }, ms);
+  };
+  if (same) {
+    clearTimeout(same.timer);
+    same.timer = setTimeout(() => dismiss(same), ms);
+    return;
+  }
+  // 한꺼번에 너무 많이 쌓여 화면을 가리지 않도록 오래된 것부터 치움
+  live.slice(0, Math.max(0, live.length - (MAX_TOASTS - 1))).forEach((t) => t.remove());
+  const el = h('div', { class: `toast toast-${kind}`, role: kind === 'error' ? 'alert' : 'status', dataset: { kind, msg: message } },
+    icon(kind === 'error' ? 'info' : kind === 'ok' ? 'check' : 'sparkle'),
+    h('span', { class: 'toast-text', text: message }),
+    action ? h('button', {
+      type: 'button', class: 'toast-btn',
+      onClick: () => { dismiss(el); action.onClick(); },
+    }, action.label) : null);
+  if (action) el.classList.add('has-action');
+  box.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('is-in'));
+  el.timer = setTimeout(() => dismiss(el), ms);
 }
 
 // ── 다이얼로그 (bottom sheet 스타일) ──
@@ -70,6 +87,8 @@ export function openDialog({ title, body, actions = [{ label: '확인', value: t
       dlg.remove();
       resolve(v);
     }
+    // 밖에서 닫혀도(잠금 등 closeAllDialogs) 기다리는 쪽이 '취소'로 받게
+    dlg.addEventListener('close', () => close(null));
     dlg.addEventListener('cancel', (e) => {
       e.preventDefault();
       if (dismissible) close(null);
@@ -81,6 +100,14 @@ export function openDialog({ title, body, actions = [{ label: '확인', value: t
     if (bind) bind(close);
     if (onOpen) onOpen(dlg);
   });
+}
+
+/** 열려 있는 다이얼로그를 모두 닫고 없앰 (잠글 때 — 사진·기록이 잠금 화면 위에 남지 않게) */
+export function closeAllDialogs() {
+  for (const d of document.querySelectorAll('dialog')) {
+    try { d.close(); } catch { /* 무시 */ }
+    d.remove();
+  }
 }
 
 export async function confirmDialog(title, message, { ok = '확인', cancel = '취소', danger = false } = {}) {
