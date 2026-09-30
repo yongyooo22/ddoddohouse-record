@@ -13,7 +13,7 @@ export async function loadSamples() {
   try {
     const art = await makeSampleArt();
     await repo.addSamples({ ...buildSamples({ art }) });
-    toast('예시 기록을 넣었어요. ‘예시’ 표시가 붙어 있고 언제든 한 번에 지울 수 있어요', 'ok', 4200);
+    toast(`예시 기록 ${repo.sampleCount()}개를 넣었어요`, 'ok');
     return true;
   } catch (e) {
     toast(e && e.code === 'quota' ? '저장 공간이 부족해 예시를 넣지 못했어요' : '예시 기록을 넣지 못했어요', 'error');

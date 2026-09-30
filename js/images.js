@@ -17,15 +17,15 @@ function drop(key) {
 repo.onImagesDeleted((ids) => {
   if (!ids) {
     for (const k of [...cache.keys()]) drop(k);
-    missing.clear();
     return;
   }
   for (const id of ids) {
     drop(`${id}:t`);
     drop(`${id}:f`);
-    missing.add(id);
   }
 });
+// 기록이 바뀌면(가져오기 등으로 같은 id 의 사진이 다시 생길 수 있음) '없는 사진' 기억을 비움
+repo.subscribe(() => missing.clear());
 
 function put(key, url) {
   cache.set(key, url);

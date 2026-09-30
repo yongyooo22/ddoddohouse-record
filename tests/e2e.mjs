@@ -424,11 +424,9 @@ await step('수정 · 삭제', async () => {
   await route('play');
   check('고친 내용 반영', /다시 생각해도 최고의 테마/.test(await text('.td-oneliner')));
   check('수정 알림', !!(await toastSeen(/기록을 고쳤어요/)));
-  check('스포일러 유지', true);
   await page.click('.spoiler-fold .fold-btn');
   check('스포일러가 그대로', (await text('.spoilers')).includes('0315'));
   // 삭제: 같은 작품에 기록이 더 있는 경우 → 작품 화면으로
-  const before = await page.evaluate(() => document.title);
   await go(`#/work/${encodeURIComponent(catanWork)}`, 'work');
   await page.click('.tw-plays .tl-row >> nth=0');
   await route('play');
@@ -438,7 +436,16 @@ await step('수정 · 삭제', async () => {
   await dialogButton('지우기');
   await route('work');
   check('삭제 후 작품 화면 (3회 남음)', (await page.$$('.tw-plays .tl-row')).length === 3);
-  check('제목이 남아 있음', !!before);
+  // 작품의 마지막 기록을 지우면 작품도 함께 → 메인으로
+  await quickRecord({ genre: '보드게임', title: '지울 게임' });
+  await save();
+  await route('play');
+  await page.click('.appbar button[aria-label="삭제"]');
+  await until(() => page.$(dlg));
+  check('마지막 기록이면 작품도 지운다고 알림', /작품 정보\(표지 포함\)도 함께 지워져요/.test(await text(dlg)));
+  await dialogButton('지우기');
+  await route('home');
+  check('작품째 사라짐', !(await texts('.feed .tk-title')).includes('지울 게임'));
 });
 
 await step('필터 · 탭 · 보기 방식', async () => {
