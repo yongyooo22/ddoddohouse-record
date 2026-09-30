@@ -1,119 +1,265 @@
-// 홈 — 요약, 종류별 바로가기, 이번 달 멤버, 최근 기록
+// 메인 화면 — 기록장 이름 + 새 기록, 분류 탭, 제목 검색, 연도·평점 필터, 카드형/목록형, 작품별 묶기
 import { h, icon } from '../dom.js';
-import { TYPES, TYPE_KEYS, APP_NAME, WEEKDAYS } from '../constants.js';
-import { state, recordsSorted, memberInfo, isFirstLoad, loadFailed } from '../store.js';
-import { overview } from '../stats.js';
-import { avatar, emptyState, loadingState, loadErrorState } from '../ui.js';
-import { recordCard, sectionHead } from './bits.js';
+import * as repo from '../repo.js';
+import * as prefs from '../prefs.js';
+import { GENRES, GENRE_KEYS, RATING_FILTERS } from '../constants.js';
+import { filterEntries, groupByWork, yearsOf } from '../query.js';
+import { fmtMonth, monthKey } from '../format.js';
+import { emptyState, nextId } from '../ui.js';
+import { playCard, workCard, playRow, workRow } from './cards.js';
+import { loadSamples, removeSamplesWithConfirm } from './sample-actions.js';
 
-function greeting(d) {
-  const hr = d.getHours();
-  if (hr >= 5 && hr < 11) return '좋은 아침이에요';
-  if (hr >= 11 && hr < 17) return '즐거운 오후예요';
-  if (hr >= 17 && hr < 22) return '좋은 저녁이에요';
-  return '늦은 밤이에요';
-}
+const PAGE = 48;
 
-function monthTopMembers(records, now) {
-  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const counts = new Map();
-  for (const r of records) {
-    if (!r || String(r.date || '').slice(0, 7) !== ym) continue;
-    for (const id of Array.isArray(r.members) ? r.members : []) counts.set(id, (counts.get(id) || 0) + 1);
+// 화면을 옮겨 다녀도 쓰던 조건을 그대로 (앱을 다시 열면 초기화)
+const f = { genre: '', q: '', year: '', rating: '' };
+let shown = PAGE;
+
+const hasFilter = () => !!(f.q || f.year || f.rating);
+
+export function mount(root) {
+  let io = null;
+
+  // ── 머리 ──
+  const bookName = h('span', { class: 'brand-name' });
+  const header = h('header', { class: 'topbar' },
+    h('div', { class: 'topbar-inner container' },
+      h('a', { class: 'brand', href: '#/', 'aria-label': '처음 화면' },
+        h('span', { class: 'brand-mark', 'aria-hidden': 'true' }, icon('ticket')),
+        h('h1', { class: 'brand-title' }, bookName)),
+      h('div', { class: 'topbar-actions' },
+        h('a', { class: 'icon-btn', href: '#/settings', 'aria-label': '설정', title: '설정' }, icon('gear')),
+        h('a', { class: 'btn btn-primary btn-new', href: '#/new', id: 'new-record' }, icon('plus'), h('span', { text: '새 기록' })))));
+
+  // ── 분류 탭 ──
+  const tabDefs = [{ key: '', label: '전체' }, ...GENRE_KEYS.map((k) => ({ key: k, label: GENRES[k].label, cls: GENRES[k].cls }))];
+  const tabs = tabDefs.map((t) => {
+    const count = h('span', { class: 'gtab-count' });
+    const b = h('button', { type: 'button', class: ['gtab', t.cls], dataset: { genre: t.key } },
+      t.key ? h('span', { class: 'gtab-dot', 'aria-hidden': 'true' }) : null,
+      h('span', { class: 'gtab-label', text: t.label }), count);
+    b.addEventListener('click', () => {
+      if (f.genre === t.key) return;
+      f.genre = t.key;
+      shown = PAGE;
+      renderAll();
+    });
+    b.countEl = count;
+    return b;
+  });
+  const tabBar = h('div', { class: 'gtabs', role: 'group', 'aria-label': '분류' }, tabs);
+
+  // ── 검색 · 필터 ──
+  const searchId = nextId('q');
+  const search = h('input', {
+    type: 'search', id: searchId, class: 'search-input', placeholder: '제목 검색 (초성도 돼요)', value: f.q,
+    autocomplete: 'off', enterkeyhint: 'search', 'aria-label': '제목 검색', maxlength: '80',
+  });
+  const clearQ = h('button', { type: 'button', class: 'search-clear', 'aria-label': '검색어 지우기', hidden: !f.q }, icon('x'));
+  let qTimer = 0;
+  search.addEventListener('input', () => {
+    clearTimeout(qTimer);
+    clearQ.hidden = !search.value;
+    qTimer = setTimeout(() => { f.q = search.value.trim(); shown = PAGE; renderFeed(); }, 120);
+  });
+  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') search.blur(); });
+  clearQ.addEventListener('click', () => {
+    search.value = '';
+    clearQ.hidden = true;
+    f.q = '';
+    shown = PAGE;
+    renderFeed();
+    search.focus();
+  });
+
+  const yearSel = h('select', { class: 'select', 'aria-label': '연도로 거르기' });
+  yearSel.addEventListener('change', () => { f.year = yearSel.value; shown = PAGE; renderFeed(); });
+  const ratingSel = h('select', { class: 'select', 'aria-label': '평점으로 거르기' },
+    RATING_FILTERS.map((r) => h('option', { value: r.key, text: r.label, selected: r.key === f.rating })));
+  ratingSel.addEventListener('change', () => { f.rating = ratingSel.value; shown = PAGE; renderFeed(); });
+
+  const groupBtn = h('button', { type: 'button', class: 'toggle', 'aria-pressed': String(prefs.getGroup()), title: '같은 작품의 기록을 하나로 묶어 봐요' },
+    icon('stack'), h('span', { text: '작품별' }));
+  groupBtn.addEventListener('click', () => {
+    prefs.setGroup(!prefs.getGroup());
+    groupBtn.setAttribute('aria-pressed', String(prefs.getGroup()));
+    shown = PAGE;
+    renderFeed();
+  });
+
+  const viewBtns = [['card', 'grid', '카드형'], ['list', 'list', '목록형']].map(([key, ic, label]) => {
+    const b = h('button', { type: 'button', class: 'vt-btn', 'aria-label': label, title: label, dataset: { view: key } }, icon(ic), h('span', { class: 'vt-label', text: label }));
+    b.addEventListener('click', () => { prefs.setView(key); syncView(); renderFeed(); });
+    return b;
+  });
+  const viewToggle = h('div', { class: 'viewtoggle', role: 'group', 'aria-label': '보기 방식' }, viewBtns);
+  function syncView() {
+    for (const b of viewBtns) b.setAttribute('aria-pressed', String(b.dataset.view === prefs.getView()));
   }
-  return [...counts.entries()]
-    .filter(([id]) => !memberInfo(id).missing)
-    .sort((a, b) => b[1] - a[1])
-    .map(([memberId, count]) => ({ memberId, count }));
-}
+  syncView();
 
-function render(root, ctx) {
-  const now = new Date();
-  const records = state.records;
-  let ov;
-  try { ov = overview(records, state.members, now); } catch { ov = null; }
-  const total = ov ? ov.total : records.length;
-  const thisMonth = ov ? ov.thisMonth : 0;
-  const byType = (ov && ov.byType) || {};
+  const toolbar = h('div', { class: 'toolbar' },
+    h('div', { class: 'search' }, h('label', { class: 'search-ico', htmlFor: searchId, 'aria-hidden': 'true' }, icon('search')), search, clearQ),
+    h('div', { class: 'filters' }, yearSel, ratingSel));
 
-  const head = h('header', { class: 'home-head' },
-    h('div', { class: 'home-hello' },
-      h('p', { class: 'kicker', text: APP_NAME }),
-      h('h1', { class: 'home-title', text: greeting(now) }),
-      h('p', { class: 'home-date', text: `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 ${WEEKDAYS[now.getDay()]}요일` })),
-    h('a', { class: 'icon-btn icon-btn-soft', href: '#/settings', 'aria-label': '설정' }, icon('gear')));
+  const sampleNote = h('div', { class: 'sample-note', hidden: true });
+  const resultLine = h('div', { class: 'result-line', role: 'status' });
+  const feedHead = h('div', { class: 'feed-head' }, resultLine, h('div', { class: 'feed-opts' }, groupBtn, viewToggle));
+  const feed = h('div', { class: 'feed' });
+  const more = h('div', { class: 'feed-more' });
+  const controls = h('div', { class: 'controls' }, tabBar, toolbar);
 
-  // 첫 로딩 중이거나 불러오기에 실패했으면 0개·빈 안내 대신 그 상태를 보여 줌 (기록이 사라진 것처럼 보이지 않게)
-  if (!records.length && (isFirstLoad() || loadFailed())) {
-    root.replaceChildren(h('div', { class: 'page page-home' }, head,
-      isFirstLoad() ? loadingState() : loadErrorState(ctx && ctx.refresh)));
-    return;
+  root.append(header, h('div', { class: 'container home-body' }, controls, sampleNote, feedHead, feed, more));
+
+  function renderTabs() {
+    const plays = repo.playsList();
+    const counts = { '': plays.length };
+    for (const k of GENRE_KEYS) counts[k] = 0;
+    for (const p of plays) {
+      const w = repo.getWork(p.workId);
+      if (w) counts[w.genre] += 1;
+    }
+    for (const b of tabs) {
+      const on = b.dataset.genre === f.genre;
+      b.setAttribute('aria-pressed', String(on));
+      b.countEl.textContent = String(counts[b.dataset.genre] || 0);
+    }
   }
 
-  const cover = h('section', { class: 'cover', 'aria-label': '기록 요약' },
-    h('div', { class: 'cover-main' },
-      h('p', { class: 'cover-label', text: '지금까지 함께 남긴 기록' }),
-      h('p', { class: 'cover-num' }, h('span', { class: 'cover-big', text: String(total) }), h('span', { class: 'cover-unit', text: '개' })),
-      h('p', { class: 'cover-month' }, h('span', { class: 'cover-pill', text: `이번 달 ${thisMonth}개` }))),
-    h('ul', { class: 'cover-types' }, TYPE_KEYS.map((k) =>
-      h('li', { class: `cover-type ${TYPES[k].cls}` },
-        h('span', { class: 'cover-dot', 'aria-hidden': 'true' }),
-        h('span', { class: 'cover-tlabel', text: TYPES[k].short }),
-        h('span', { class: 'cover-tnum', text: String(byType[k] || 0) })))));
-
-  const shortcuts = h('nav', { class: 'shortcuts', 'aria-label': '종류별 기록' }, TYPE_KEYS.map((k) =>
-    h('a', { class: `shortcut ${TYPES[k].cls}`, href: `#/records?type=${k}` },
-      h('span', { class: 'shortcut-ico', 'aria-hidden': 'true' }, icon(TYPES[k].icon)),
-      h('span', { class: 'shortcut-label', text: TYPES[k].short }),
-      h('span', { class: 'shortcut-count', text: `${byType[k] || 0}회` }))));
-
-  // 이번 달 가장 많이 함께한 멤버
-  const tops = monthTopMembers(records, now);
-  let mate;
-  if (tops.length) {
-    const best = tops[0];
-    const ties = tops.filter((t) => t.count === best.count);
-    const info = memberInfo(best.memberId);
-    mate = h('section', { class: 'card mate' },
-      h('p', { class: 'mate-label', text: '이번 달 가장 많이 함께한 멤버' }),
-      h('div', { class: 'mate-row' },
-        h('a', { class: 'mate-main', href: `#/member/${encodeURIComponent(best.memberId)}` },
-          avatar(info, 'lg'),
-          h('span', { class: 'mate-text' },
-            h('span', { class: 'mate-name', text: ties.length > 1 ? `${info.name} 외 ${ties.length - 1}명` : info.name }),
-            h('span', { class: 'mate-count', text: `${best.count}번 함께했어요` }))),
-        tops.length > 1
-          ? h('ol', { class: 'mate-others', 'aria-label': '다음 순위' }, tops.slice(1, 4).map((t) =>
-            h('li', { class: 'mate-other' }, avatar(t.memberId, 'xs'),
-              h('span', { class: 'mate-other-name', text: memberInfo(t.memberId).name }),
-              h('span', { class: 'mate-other-n', text: `${t.count}` }))))
-          : null));
-  } else {
-    mate = h('section', { class: 'card mate mate-empty' },
-      h('p', { class: 'mate-label', text: '이번 달 가장 많이 함께한 멤버' }),
-      h('p', { class: 'muted', text: '이번 달 기록이 아직 없어요. 첫 기록을 남겨 볼까요?' }));
+  function renderYears() {
+    const plays = f.genre ? repo.playsList().filter((p) => (repo.getWork(p.workId) || {}).genre === f.genre) : repo.playsList();
+    const years = yearsOf(plays);
+    if (f.year && !years.includes(f.year)) years.unshift(f.year);
+    yearSel.replaceChildren(h('option', { value: '', text: '전체 연도' }),
+      ...years.map((y) => h('option', { value: y, text: `${y}년`, selected: y === f.year })));
+    yearSel.value = f.year;
   }
 
-  const recent = recordsSorted().slice(0, 5);
-  const recentSec = h('section', { class: 'home-recent' },
-    sectionHead('최근 기록', { action: records.length ? h('a', { class: 'link-more', href: '#/records' }, '전체 보기', icon('chevron')) : null }),
-    recent.length
-      ? h('div', { class: 'rlist' }, recent.map((r) => recordCard(r, { showMonth: true })))
-      : emptyState({
-        icon: 'book', title: '아직 기록이 없어요',
-        text: '보드게임, 머더미스터리, 방탈출 — 오늘 한 놀이를 첫 장에 적어 보세요.',
-        action: h('a', { class: 'btn btn-primary', href: '#/new' }, icon('plus'), h('span', { text: '첫 기록 남기기' })),
+  function renderSampleNote() {
+    const n = repo.sampleCount();
+    sampleNote.hidden = n === 0;
+    if (!n) { sampleNote.replaceChildren(); return; }
+    sampleNote.replaceChildren(
+      icon('info'),
+      h('span', { class: 'sample-note-text', text: `예시 기록 ${n}개가 섞여 있어요` }),
+      h('button', { type: 'button', class: 'btn btn-small btn-ghost', onClick: () => removeSamplesWithConfirm() }, '예시 지우기'));
+  }
+
+  function resetFilters() {
+    f.q = ''; f.year = ''; f.rating = '';
+    search.value = '';
+    clearQ.hidden = true;
+    ratingSel.value = '';
+    shown = PAGE;
+    renderAll();
+  }
+
+  function renderFeed() {
+    if (io) { io.disconnect(); io = null; }
+    const all = repo.playsList();
+    const newLink = h('a', { class: 'btn btn-primary', href: f.genre ? `#/new?genre=${f.genre}` : '#/new' }, icon('plus'), h('span', { text: '첫 기록 남기기' }));
+    document.getElementById('new-record')?.setAttribute('href', f.genre ? `#/new?genre=${f.genre}` : '#/new');
+
+    // 기록이 하나도 없음 → 짧은 안내만
+    if (!all.length) {
+      controls.hidden = true;
+      feedHead.hidden = true;
+      more.replaceChildren();
+      feed.className = 'feed';
+      feed.replaceChildren(emptyState({
+        icon: 'ticket',
+        title: '아직 남긴 기록이 없어요',
+        text: '보드게임·머더미스터리·방탈출을 하고 나서 제목과 날짜만 적어도 한 장의 티켓으로 남아요.',
+        actions: [newLink, h('button', { type: 'button', class: 'btn btn-ghost', onClick: () => loadSamples() }, '예시 기록 둘러보기')],
       }));
+      return;
+    }
+    controls.hidden = false;
+    feedHead.hidden = false;
 
-  const tip = !state.members.length
-    ? h('a', { class: 'tip', href: '#/members' }, icon('users'),
-      h('span', { text: '멤버를 먼저 등록하면 기록에서 함께한 사람을 고를 수 있어요' }), icon('chevron'))
-    : null;
+    const entries = filterEntries(all, repo.workMap(), f);
+    const group = prefs.getGroup();
+    const view = prefs.getView();
+    const items = group ? groupByWork(entries) : entries;
+    const genreLabel = f.genre ? `${GENRES[f.genre].label} ` : '';
+    const countText = group ? `작품 ${items.length}개 · 기록 ${entries.length}개` : `${genreLabel}기록 ${entries.length}개`;
+    resultLine.replaceChildren(...[
+      h('span', { text: hasFilter() ? `찾은 ${countText}` : countText }),
+      hasFilter() ? h('button', { type: 'button', class: 'link-btn', onClick: resetFilters }, '조건 지우기') : null,
+    ].filter(Boolean));
 
-  root.replaceChildren(h('div', { class: 'page page-home' }, head, cover, tip, shortcuts, mate, recentSec));
-}
+    if (!items.length) {
+      feed.className = 'feed';
+      more.replaceChildren();
+      if (hasFilter()) {
+        feed.replaceChildren(emptyState({
+          icon: 'search', title: '조건에 맞는 기록이 없어요', text: '검색어나 연도·평점 조건을 바꿔 보세요.',
+          actions: [h('button', { type: 'button', class: 'btn btn-ghost', onClick: resetFilters }, '조건 지우기')],
+        }));
+      } else {
+        const g = GENRES[f.genre];
+        feed.replaceChildren(emptyState({
+          icon: g ? g.icon : 'ticket', title: `아직 ${g ? g.label : ''} 기록이 없어요`,
+          actions: [h('a', { class: 'btn btn-primary', href: `#/new?genre=${f.genre}` }, icon('plus'), h('span', { text: `${g ? g.label : ''} 기록 남기기` }))],
+        }));
+      }
+      return;
+    }
 
-export function mount(root, ctx) {
-  render(root, ctx);
-  return { update: () => render(root, ctx) };
+    const slice = items.slice(0, shown);
+    const ords = repo.ordinals();
+    feed.className = `feed feed-${view}`;
+    if (view === 'card') {
+      feed.replaceChildren(...slice.map((it) => (group ? workCard(it) : playCard(it.play, it.work, { ordinal: ords.get(it.play.id) || 0 }))));
+    } else {
+      // 목록형은 달마다 묶어서 (날짜 칸에는 월.일만)
+      const sections = [];
+      let cur = null;
+      for (const it of slice) {
+        const date = group ? it.latest.date : it.play.date;
+        const mk = monthKey(date);
+        if (!cur || cur.key !== mk) {
+          cur = { key: mk, rows: [] };
+          sections.push(cur);
+        }
+        cur.rows.push(group ? workRow(it) : playRow(it.play, it.work, { ordinal: ords.get(it.play.id) || 0 }));
+      }
+      feed.replaceChildren(...sections.map((s) => h('section', { class: 'month' },
+        h('h2', { class: 'month-head', text: fmtMonth(s.key) }),
+        h('div', { class: 'rows' }, s.rows))));
+    }
+
+    more.replaceChildren();
+    if (items.length > shown) {
+      const btn = h('button', { type: 'button', class: 'btn btn-ghost btn-more' }, `더 보기 (${items.length - shown}개 남음)`);
+      const loadMore = () => { shown += PAGE; renderFeed(); };
+      btn.addEventListener('click', loadMore);
+      more.append(btn);
+      if (typeof IntersectionObserver === 'function') {
+        io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadMore(); }, { rootMargin: '600px 0px' });
+        io.observe(btn);
+      }
+    }
+  }
+
+  function renderAll() {
+    bookName.textContent = repo.state.bookName;
+    renderTabs();
+    renderYears();
+    renderSampleNote();
+    renderFeed();
+  }
+
+  renderAll();
+
+  return {
+    update() {
+      document.title = repo.state.bookName;
+      renderAll();
+    },
+    destroy() {
+      if (io) io.disconnect();
+      clearTimeout(qTimer);
+    },
+  };
 }

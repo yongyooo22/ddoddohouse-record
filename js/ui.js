@@ -1,23 +1,23 @@
-// 재사용 UI 컴포넌트 (모두 DOM API로 생성, 사용자 값은 textContent로만)
-import { h, icon, starShape, dotShape } from './dom.js';
-import { TYPES } from './constants.js';
-import { memberInfo } from './store.js';
+// 재사용 UI 부품 (모두 DOM API로 생성, 사용자 값은 textContent로만)
+import { h, icon, starShape } from './dom.js';
+import { GENRES, FEAR_LABELS, DIFFICULTY_LABELS } from './constants.js';
 import { goBack } from './nav.js';
 
 let uid = 0;
 export const nextId = (p = 'u') => `${p}${++uid}`;
+
+export const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // ── 토스트 ──
 const MAX_TOASTS = 3;
 
 /**
  * 잠깐 뜨는 알림. action: {label, onClick} — 알림 안의 버튼 (예: 되돌리기). 눌리면 알림은 바로 닫힘
- * 같은 내용의 알림이 이미 떠 있으면 새로 쌓지 않고 그 알림을 조금 더 보여 줌 (여러 장이 한꺼번에 실패할 때 등)
+ * 같은 내용의 알림이 이미 떠 있으면 새로 쌓지 않고 그 알림을 조금 더 보여 줌
  */
 export function toast(message, kind = 'info', ms = 2800, { action = null } = {}) {
   const box = document.getElementById('toasts');
   if (!box) return;
-  // 성공 알림이 뜨면 앞서 남은 오류 알림은 더 이상 맞지 않으므로 치움 (예: 입력 오류 → 고쳐서 저장 성공)
   if (kind === 'ok') box.querySelectorAll('.toast-error').forEach((t) => t.remove());
   const live = [...box.querySelectorAll('.toast:not(.is-out)')];
   const same = !action && live.find((t) => t.dataset.kind === kind && t.dataset.msg === message && !t.querySelector('.toast-btn'));
@@ -25,29 +25,27 @@ export function toast(message, kind = 'info', ms = 2800, { action = null } = {})
     clearTimeout(el.timer);
     el.classList.remove('is-in');
     el.classList.add('is-out');
-    setTimeout(() => el.remove(), 300);
+    setTimeout(() => el.remove(), 250);
   };
   if (same) {
     clearTimeout(same.timer);
     same.timer = setTimeout(() => dismiss(same), ms);
     return;
   }
-  // 한꺼번에 너무 많이 쌓여 화면을 가리지 않도록 오래된 것부터 치움
   live.slice(0, Math.max(0, live.length - (MAX_TOASTS - 1))).forEach((t) => t.remove());
   const el = h('div', { class: `toast toast-${kind}`, role: kind === 'error' ? 'alert' : 'status', dataset: { kind, msg: message } },
-    icon(kind === 'error' ? 'info' : kind === 'ok' ? 'check' : 'sparkle'),
+    icon(kind === 'error' ? 'alert' : kind === 'ok' ? 'check' : 'info'),
     h('span', { class: 'toast-text', text: message }),
     action ? h('button', {
       type: 'button', class: 'toast-btn',
       onClick: () => { dismiss(el); action.onClick(); },
     }, action.label) : null);
-  if (action) el.classList.add('has-action');
   box.appendChild(el);
   requestAnimationFrame(() => el.classList.add('is-in'));
   el.timer = setTimeout(() => dismiss(el), ms);
 }
 
-// ── 다이얼로그 (bottom sheet 스타일) ──
+// ── 다이얼로그 (휴대폰에서는 아래에서 올라오는 시트) ──
 /**
  * actions: [{label, value, kind:'primary'|'danger'|'ghost', handler?: async () => boolean(false면 유지)}]
  * 반환: 누른 action 의 value (닫기/ESC 는 null)
@@ -58,7 +56,7 @@ export function openDialog({ title, body, actions = [{ label: '확인', value: t
     const dlg = h('dialog', { class: ['dlg', cls], 'aria-labelledby': titleId });
     let done = false;
     const buttons = actions.map((a) => {
-      const b = h('button', { type: 'button', class: `btn btn-${a.kind || 'ghost'}` }, a.label);
+      const b = h('button', { type: 'button', class: `btn btn-${a.kind || 'ghost'}` }, a.icon ? icon(a.icon) : null, h('span', { text: a.label }));
       b.addEventListener('click', async () => {
         if (done) return;
         if (a.handler) {
@@ -73,10 +71,9 @@ export function openDialog({ title, body, actions = [{ label: '확인', value: t
       return b;
     });
     const inner = h('div', { class: 'dlg-inner' },
-      h('div', { class: 'dlg-grip', 'aria-hidden': 'true' }),
       h('h2', { class: 'dlg-title', id: titleId, text: title || '' }),
       body ? h('div', { class: 'dlg-body' }, body) : null,
-      h('div', { class: 'dlg-actions' }, buttons));
+      buttons.length ? h('div', { class: `dlg-actions${buttons.length > 2 ? ' is-stack' : ''}` }, buttons) : null);
     dlg.appendChild(inner);
     document.body.appendChild(dlg);
 
@@ -87,7 +84,6 @@ export function openDialog({ title, body, actions = [{ label: '확인', value: t
       dlg.remove();
       resolve(v);
     }
-    // 밖에서 닫혀도(잠금 등 closeAllDialogs) 기다리는 쪽이 '취소'로 받게
     dlg.addEventListener('close', () => close(null));
     dlg.addEventListener('cancel', (e) => {
       e.preventDefault();
@@ -102,7 +98,6 @@ export function openDialog({ title, body, actions = [{ label: '확인', value: t
   });
 }
 
-/** 열려 있는 다이얼로그를 모두 닫고 없앰 (잠글 때 — 사진·기록이 잠금 화면 위에 남지 않게) */
 export function closeAllDialogs() {
   for (const d of document.querySelectorAll('dialog')) {
     try { d.close(); } catch { /* 무시 */ }
@@ -113,7 +108,7 @@ export function closeAllDialogs() {
 export async function confirmDialog(title, message, { ok = '확인', cancel = '취소', danger = false } = {}) {
   const v = await openDialog({
     title,
-    body: message ? h('p', { class: 'dlg-text', text: message }) : null,
+    body: message ? (typeof message === 'string' ? h('p', { class: 'dlg-text', text: message }) : message) : null,
     actions: [
       { label: cancel, value: false, kind: 'ghost' },
       { label: ok, value: true, kind: danger ? 'danger' : 'primary' },
@@ -122,102 +117,110 @@ export async function confirmDialog(title, message, { ok = '확인', cancel = '�
   return v === true;
 }
 
+/** 선택 목록 시트: items [{label, desc?, value, icon?, danger?}] → 고른 value (취소 null) */
+export function choiceSheet(title, items, { text } = {}) {
+  let closeFn = null;
+  const list = h('div', { class: 'choice-list' },
+    text ? h('p', { class: 'dlg-text', text }) : null,
+    items.map((it) => h('button', {
+      type: 'button', class: `choice${it.danger ? ' is-danger' : ''}`,
+      onClick: () => { if (closeFn) closeFn(it.value); },
+    }, it.icon ? icon(it.icon) : null,
+    h('span', { class: 'choice-text' },
+      h('span', { class: 'choice-label', text: it.label }),
+      it.desc ? h('span', { class: 'choice-desc', text: it.desc }) : null))));
+  return openDialog({
+    title,
+    cls: 'dlg-choice',
+    body: list,
+    actions: [{ label: '취소', value: null, kind: 'ghost' }],
+    bind: (close) => { closeFn = close; },
+  });
+}
+
 // ── 상단 바 ──
 export function appBar({ title, back, actions = [], cls = '' }) {
   return h('header', { class: ['appbar', cls] },
     back
       ? h('button', { type: 'button', class: 'icon-btn', 'aria-label': '뒤로', onClick: () => goBack(back) }, icon('back'))
-      : h('span', { class: 'appbar-spacer' }),
+      : null,
     h('h1', { class: 'appbar-title', text: title }),
     h('div', { class: 'appbar-actions' }, actions));
 }
 
-// ── 종류 배지 ──
-export function typeBadge(type, { short = true } = {}) {
-  const t = TYPES[type];
-  if (!t) return h('span', { class: 'badge', text: '기록' });
-  return h('span', { class: `badge ${t.cls}` }, icon(t.icon), h('span', { text: short ? t.short : t.label }));
+// ── 장르 태그 · 상태 표시 · 예시 표시 ──
+export function genreTag(genre) {
+  const g = GENRES[genre];
+  if (!g) return h('span', { class: 'gtag', text: '기록' });
+  return h('span', { class: `gtag ${g.cls}` }, icon(g.icon), h('span', { text: g.label }));
 }
 
-export function typeIcon(type, cls = '') {
-  const t = TYPES[type];
-  return h('span', { class: `type-ico ${t ? t.cls : ''} ${cls}`, 'aria-hidden': 'true' }, icon(t ? t.icon : 'book'));
+/** 장르 아이콘 타일 (표지가 없을 때) */
+export function genreIcon(genre, cls = '') {
+  const g = GENRES[genre];
+  return h('span', { class: ['gicon', g ? g.cls : '', cls], 'aria-hidden': 'true' }, icon(g ? g.icon : 'ticket'));
 }
 
-// ── 도장 ──
-export function stamp(text, kind = 'ink', { tilt = true } = {}) {
-  return h('span', { class: `stamp stamp-${kind}${tilt ? '' : ' stamp-flat'}` }, text);
+/** 방탈출 성공·실패 작은 표시 */
+export function resultTag(result) {
+  if (result !== 'success' && result !== 'fail') return null;
+  const ok = result === 'success';
+  return h('span', { class: `rtag ${ok ? 'is-success' : 'is-fail'}` },
+    h('span', { class: 'rtag-dot', 'aria-hidden': 'true' }),
+    h('span', { text: ok ? '탈출 성공' : '탈출 실패' }));
 }
 
-// ── 아바타 ──
-function initial(name) {
-  const cp = Array.from(String(name || '?').trim());
-  return cp[0] || '?';
-}
-
-export function avatar(id, size = 'md') {
-  const m = typeof id === 'string' ? memberInfo(id) : id;
-  return h('span', { class: `av av-${size} mc-${m.color}`, 'aria-hidden': 'true' }, m.missing ? '?' : (m.emoji || initial(m.name)));
-}
-
-export function avatarRow(ids, { max = 6, size = 'sm' } = {}) {
-  const list = Array.isArray(ids) ? ids : [];
-  const names = list.map((id) => memberInfo(id).name);
-  const row = h('span', { class: 'av-row', role: 'img', 'aria-label': names.length ? `함께한 멤버: ${names.join(', ')}` : '멤버 없음' });
-  list.slice(0, max).forEach((id) => row.appendChild(avatar(id, size)));
-  if (list.length > max) row.appendChild(h('span', { class: `av av-${size} av-more`, 'aria-hidden': 'true', text: `+${list.length - max}` }));
-  return row;
-}
-
-/** 아바타 + 이름 */
-export function memberTag(id, { size = 'xs', extra } = {}) {
-  const m = memberInfo(id);
-  return h('span', { class: `mtag${m.missing ? ' is-gone' : ''}` }, avatar(m, size), h('span', { class: 'mtag-name', text: m.name }), extra || null);
+export function sampleTag() {
+  return h('span', { class: 'stag', title: '예시 기록 — 설정에서 한 번에 지울 수 있어요', text: '예시' });
 }
 
 // ── 별점 (읽기 전용) ──
-function glyphFor(kind) {
-  return kind === 'dot' ? dotShape : starShape;
-}
-
-function ratingUnits(value, kind) {
-  const shape = glyphFor(kind);
+function ratingUnits(value) {
   const units = [];
   for (let i = 0; i < 5; i++) {
     const f = Math.max(0, Math.min(1, value - i));
-    const u = h('span', { class: `r-unit${f >= 1 ? ' is-full' : f >= 0.5 ? ' is-half' : ''}` },
-      shape('r-bg'), h('span', { class: 'r-fg' }, shape('r-fill')));
-    units.push(u);
+    units.push(h('span', { class: `r-unit${f >= 1 ? ' is-full' : f >= 0.5 ? ' is-half' : ''}` },
+      starShape('r-bg'), h('span', { class: 'r-fg' }, starShape('r-fill'))));
   }
   return units;
 }
 
-export function starsView(value, { size = 'sm', num = true, kind = 'star', label = '별점' } = {}) {
+/** 별 다섯 개 + 숫자. 미평가면 '미평가' 글자 */
+export function starsView(value, { size = 'sm', num = true, label = '평점', compact = false } = {}) {
   const v = Number(value) || 0;
-  return h('span', { class: `stars stars-${size} glyph-${kind}`, role: 'img', 'aria-label': v > 0 ? `${label} ${v}점 (5점 만점)` : `${label} 없음` },
-    h('span', { class: 'stars-units' }, ratingUnits(v, kind)),
-    num ? h('span', { class: 'stars-num', text: v > 0 ? v.toFixed(1) : '–' }) : null);
+  if (v <= 0) return h('span', { class: `stars stars-${size} is-none`, text: '미평가' });
+  if (compact) {
+    return h('span', { class: `stars stars-${size} is-compact`, role: 'img', 'aria-label': `${label} ${v}점 (5점 만점)` },
+      starShape('r-one'), h('span', { class: 'stars-num', text: v.toFixed(1) }));
+  }
+  return h('span', { class: `stars stars-${size}`, role: 'img', 'aria-label': `${label} ${v}점 (5점 만점)` },
+    h('span', { class: 'stars-units' }, ratingUnits(v)),
+    num ? h('span', { class: 'stars-num', text: v.toFixed(1) }) : null);
 }
 
-// ── 별점 입력 (0.5 단위, 탭/드래그/키보드) ──
-export function ratingInput({ value = 0, onChange, label = '별점', kind = 'star', size = 'lg', clearable = true, hint } = {}) {
+/** 평균 평점 (작품별 묶음) */
+export function avgView(avg) {
+  const v = Number(avg);
+  if (!(v > 0)) return starsView(null);
+  return h('span', { class: 'stars stars-sm is-compact is-avg', role: 'img', 'aria-label': `평균 평점 ${v.toFixed(1)}점 (5점 만점)` },
+    h('span', { class: 'avg-label', text: '평균' }), starShape('r-one'), h('span', { class: 'stars-num', text: v.toFixed(1) }));
+}
+
+// ── 별점 입력 (0.5 단위, 탭/드래그/키보드, 미평가 허용) ──
+export function ratingInput({ value = null, onChange, label = '평점', size = 'lg', id } = {}) {
   let v = Number(value) || 0;
   const units = [];
-  const shape = glyphFor(kind);
   for (let i = 0; i < 5; i++) {
-    units.push(h('span', { class: 'r-unit' }, shape('r-bg'), h('span', { class: 'r-fg' }, shape('r-fill'))));
+    units.push(h('span', { class: 'r-unit' }, starShape('r-bg'), h('span', { class: 'r-fg' }, starShape('r-fill'))));
   }
   const track = h('div', {
-    class: 'rating-track', role: 'slider', tabindex: '0', 'aria-label': label,
+    class: 'rating-track', role: 'slider', tabindex: '0', 'aria-label': label, id,
     'aria-valuemin': '0', 'aria-valuemax': '5',
   }, units);
   const out = h('span', { class: 'rating-out', 'aria-hidden': 'true' });
-  const clearBtn = clearable
-    ? h('button', { type: 'button', class: 'rating-clear', 'aria-label': `${label} 지우기` }, icon('x'))
-    : null;
-  const wrap = h('div', { class: `rating-input rating-${size} glyph-${kind}` }, track, out, clearBtn);
+  const clearBtn = h('button', { type: 'button', class: 'rating-clear', 'aria-label': `${label} 지우기 (미평가)` }, icon('x'));
+  const wrap = h('div', { class: `rating-input rating-${size}` }, track, out, clearBtn);
 
-  const vtext = (x) => (x > 0 ? `${x}점` : hint || '미평가');
   function paint() {
     units.forEach((u, i) => {
       const f = Math.max(0, Math.min(1, v - i));
@@ -225,22 +228,21 @@ export function ratingInput({ value = 0, onChange, label = '별점', kind = 'sta
       u.classList.toggle('is-half', f === 0.5);
     });
     track.setAttribute('aria-valuenow', String(v));
-    track.setAttribute('aria-valuetext', vtext(v));
-    // 작은 게이지도 따로 준 안내(예: 공포도 '없음/미평가')가 있으면 보여 줌
-    out.textContent = v > 0 ? v.toFixed(1) : (hint || (size === 'sm' ? '–' : '미평가'));
+    track.setAttribute('aria-valuetext', v > 0 ? `${v}점` : '미평가');
+    out.textContent = v > 0 ? v.toFixed(1) : '미평가';
     out.classList.toggle('is-empty', v === 0);
-    if (clearBtn) clearBtn.hidden = v === 0;
+    clearBtn.hidden = v === 0;
   }
   function set(nv) {
     const x = Math.max(0, Math.min(5, Math.round(Number(nv) * 2) / 2));
     if (x === v) return;
     v = x;
     paint();
-    if (onChange) onChange(v);
+    if (onChange) onChange(v > 0 ? v : null);
   }
   function valueAt(clientX) {
     const first = units[0].getBoundingClientRect();
-    if (clientX < first.left) return 0;
+    if (clientX < first.left) return 0.5;
     for (let i = 0; i < units.length; i++) {
       const r = units[i].getBoundingClientRect();
       const next = units[i + 1] ? units[i + 1].getBoundingClientRect().left : Infinity;
@@ -262,14 +264,15 @@ export function ratingInput({ value = 0, onChange, label = '별점', kind = 'sta
   track.addEventListener('pointermove', (e) => {
     if (pointerId !== e.pointerId) return;
     if (!dragging && Math.abs(e.clientX - startX) > 6 && Math.abs(e.clientX - startX) > Math.abs(e.clientY - startY)) dragging = true;
-    if (dragging) set(Math.max(0.5, valueAt(e.clientX)));
+    if (dragging) set(valueAt(e.clientX));
   });
   track.addEventListener('pointerup', (e) => {
     if (pointerId !== e.pointerId) return;
     pointerId = null;
+    // 같은 별을 다시 누르면 미평가로
     if (!dragging) {
       const nv = valueAt(e.clientX);
-      set(nv === v ? 0 : Math.max(0.5, nv));
+      set(nv === v ? 0 : nv);
     }
     dragging = false;
   });
@@ -281,113 +284,154 @@ export function ratingInput({ value = 0, onChange, label = '별점', kind = 'sta
     else if (e.key === 'End') { set(5); e.preventDefault(); }
     else if (/^[0-5]$/.test(e.key)) { set(Number(e.key)); e.preventDefault(); }
   });
-  if (clearBtn) clearBtn.addEventListener('click', () => { set(0); track.focus(); });
+  clearBtn.addEventListener('click', () => { set(0); track.focus(); });
   paint();
   wrap.setValue = (nv) => { v = Math.max(0, Math.min(5, Math.round(Number(nv) * 2) / 2)) || 0; paint(); };
   return wrap;
 }
 
-// ── 세그먼트 (네이티브 라디오) ──
-export function segmented({ options, value, onChange, label, cls = '', name }) {
+// ── 단계 고르기 (체감 난이도 1~5, 공포도 0~5) — 같은 칸을 다시 누르면 비움 ──
+export function levelPicker({ value = null, onChange, label, kind = 'difficulty' }) {
+  const labels = kind === 'fear' ? FEAR_LABELS : DIFFICULTY_LABELS;
+  const min = kind === 'fear' ? 0 : 1;
+  let v = value === null || value === undefined ? null : Number(value);
+  const out = h('span', { class: 'level-out', 'aria-hidden': 'true' });
+  const btns = [];
+  for (let i = min; i <= 5; i++) {
+    const b = h('button', {
+      type: 'button', class: `level-btn${i === 0 ? ' is-zero' : ''}`, 'aria-label': `${label} ${i === 0 ? '없음' : `${i}단계`} (${labels[i]})`,
+      dataset: { level: String(i) },
+    }, i === 0 ? h('span', { class: 'level-zero', text: '없음' }) : h('span', { class: 'level-dot' }));
+    b.addEventListener('click', () => {
+      v = v === i ? null : i;
+      paint();
+      if (onChange) onChange(v);
+    });
+    btns.push(b);
+  }
+  function paint() {
+    for (const b of btns) {
+      const i = Number(b.dataset.level);
+      b.setAttribute('aria-pressed', v === i ? 'true' : 'false');
+      b.classList.toggle('is-on', v !== null && i > 0 && i <= v);
+    }
+    out.textContent = v === null ? '기록 안 함' : labels[v];
+    out.classList.toggle('is-empty', v === null);
+  }
+  paint();
+  return h('div', { class: `level level-${kind}`, role: 'group', 'aria-label': label }, h('div', { class: 'level-btns' }, btns), out);
+}
+
+/** 단계 보기 (●●●○○ 보통) */
+export function levelView(value, { kind = 'difficulty', label } = {}) {
+  if (value === null || value === undefined) return null;
+  const labels = kind === 'fear' ? FEAR_LABELS : DIFFICULTY_LABELS;
+  const v = Number(value);
+  const dots = [];
+  for (let i = 1; i <= 5; i++) dots.push(h('span', { class: `lv-dot${i <= v ? ' is-on' : ''}` }));
+  return h('span', { class: 'lv', role: 'img', 'aria-label': `${label} ${labels[v]}${v > 0 ? ` (5단계 중 ${v})` : ''}` },
+    h('span', { class: 'lv-dots', 'aria-hidden': 'true' }, dots),
+    h('span', { class: 'lv-label', 'aria-hidden': 'true', text: labels[v] }));
+}
+
+// ── 세그먼트 (네이티브 라디오). allowNone: 고른 것을 다시 누르면 선택 해제 ──
+export function segmented({ options, value, onChange, label, cls = '', name, allowNone = false }) {
   const n = name || nextId('seg');
   const wrap = h('div', { class: ['seg', cls], role: 'radiogroup', 'aria-label': label || '' });
+  let cur = value || null;
+  const inputs = [];
   for (const o of options) {
     const id = `${n}-${o.key}`;
-    const input = h('input', { type: 'radio', class: 'seg-input', name: n, id, value: o.key, checked: o.key === value });
-    input.addEventListener('change', () => { if (input.checked && onChange) onChange(o.key); });
+    const input = h('input', { type: 'radio', class: 'seg-input', name: n, id, value: o.key, checked: o.key === cur, disabled: !!o.disabled });
+    input.addEventListener('change', () => {
+      if (input.checked) { cur = o.key; if (onChange) onChange(o.key); }
+    });
     const lab = h('label', { class: ['seg-item', o.cls], htmlFor: id },
       o.icon ? icon(o.icon) : null, h('span', { text: o.label }));
+    if (allowNone) {
+      // 이미 고른 칸을 다시 누르면 해제 (라디오는 원래 해제가 안 되므로)
+      lab.addEventListener('click', (e) => {
+        if (cur === o.key) {
+          e.preventDefault();
+          input.checked = false;
+          cur = null;
+          if (onChange) onChange(null);
+        }
+      });
+    }
+    inputs.push(input);
     wrap.append(input, lab);
   }
+  wrap.setValue = (v) => { cur = v || null; for (const i of inputs) i.checked = i.value === cur; };
+  wrap.setDisabled = (d) => { for (const i of inputs) i.disabled = d; wrap.classList.toggle('is-disabled', d); };
   return wrap;
 }
 
-// ── 칩 토글 ──
-export function chip({ label, pressed = false, onToggle, cls = '', lead, title }) {
-  const b = h('button', { type: 'button', class: ['chip', cls], 'aria-pressed': pressed ? 'true' : 'false', title },
-    lead || null, h('span', { class: 'chip-label', text: label }));
-  b.addEventListener('click', () => {
-    const now = b.getAttribute('aria-pressed') !== 'true';
-    if (onToggle && onToggle(now) === false) return;
-    b.setAttribute('aria-pressed', now ? 'true' : 'false');
-  });
-  return b;
-}
-
-// ── 스위치 ──
-export function switchRow({ checked = false, onChange, label, desc, icon: ic }) {
-  const input = h('input', { type: 'checkbox', role: 'switch', class: 'switch-input', checked });
-  input.addEventListener('change', () => onChange && onChange(input.checked));
-  return h('label', { class: 'switch-row' },
-    ic ? h('span', { class: 'switch-ico' }, icon(ic)) : null,
-    h('span', { class: 'switch-text' },
-      h('span', { class: 'switch-label', text: label }),
-      desc ? h('span', { class: 'switch-desc', text: desc }) : null),
-    input,
-    h('span', { class: 'switch-ui', 'aria-hidden': 'true' }));
-}
-
-// ── 스테퍼 ──
-export function stepper({ value = 0, min = 0, max = 99, onChange, label, unit = '' }) {
-  let v = Number(value) || 0;
+// ── 숫자 스테퍼 (비워 둘 수 있음) ──
+export function stepper({ value = null, min = 0, max = 99, onChange, label, unit = '', placeholder = '–' }) {
+  let v = value === null || value === undefined || value === '' ? null : Number(value);
   const input = h('input', {
-    type: 'number', inputmode: 'numeric', class: 'stepper-input', min: String(min), max: String(max),
-    value: String(v), 'aria-label': label,
+    type: 'text', inputmode: 'numeric', pattern: '[0-9]*', class: 'stepper-input', 'aria-label': label,
+    value: v === null ? '' : String(v), placeholder, autocomplete: 'off',
   });
-  const set = (nv) => {
-    const x = Math.max(min, Math.min(max, Math.round(Number(nv) || 0)));
-    v = x;
-    input.value = String(x);
-    minus.disabled = x <= min;
-    plus.disabled = x >= max;
-    if (onChange) onChange(x);
+  const emit = () => { if (onChange) onChange(v); };
+  const sync = () => {
+    input.value = v === null ? '' : String(v);
+    minus.disabled = v === null || v <= min;
+    plus.disabled = v !== null && v >= max;
   };
-  const minus = h('button', { type: 'button', class: 'stepper-btn', 'aria-label': `${label} 줄이기`, onClick: () => set(v - 1) }, '−');
-  const plus = h('button', { type: 'button', class: 'stepper-btn', 'aria-label': `${label} 늘리기`, onClick: () => set(v + 1) }, '+');
-  input.addEventListener('change', () => set(input.value));
-  minus.disabled = v <= min;
-  plus.disabled = v >= max;
-  return h('div', { class: 'stepper' }, minus, input, unit ? h('span', { class: 'stepper-unit', text: unit }) : null, plus);
+  const set = (nv) => {
+    v = nv === null ? null : Math.max(min, Math.min(max, Math.round(nv)));
+    sync();
+    emit();
+  };
+  const minus = h('button', { type: 'button', class: 'stepper-btn', 'aria-label': `${label} 줄이기`, onClick: () => set(v === null ? min : v - 1) }, h('span', { 'aria-hidden': 'true', text: '−' }));
+  const plus = h('button', { type: 'button', class: 'stepper-btn', 'aria-label': `${label} 늘리기`, onClick: () => set(v === null ? Math.max(min, 1) : v + 1) }, h('span', { 'aria-hidden': 'true', text: '+' }));
+  input.addEventListener('change', () => {
+    const raw = input.value.trim();
+    if (!raw) set(null);
+    else if (/^\d+$/.test(raw)) set(Number(raw));
+    else sync();
+  });
+  sync();
+  const box = h('div', { class: 'stepper' }, minus, input, unit ? h('span', { class: 'stepper-unit', text: unit }) : null, plus);
+  box.setValue = (nv) => { v = nv === null || nv === undefined ? null : Number(nv); sync(); };
+  return box;
 }
 
 // ── 빈 화면 ──
-export function emptyState({ icon: ic = 'book', title, text, action }) {
+export function emptyState({ icon: ic = 'ticket', title, text, actions = [] }) {
   return h('div', { class: 'empty' },
     h('div', { class: 'empty-ico', 'aria-hidden': 'true' }, icon(ic)),
     h('p', { class: 'empty-title', text: title }),
     text ? h('p', { class: 'empty-text', text }) : null,
-    action || null);
-}
-
-/** 첫 데이터를 받는 중 (빈 화면 대신) */
-export function loadingState(text = '기록을 불러오는 중…') {
-  return h('div', { class: 'loading-state', role: 'status' },
-    h('span', { class: 'spinner', 'aria-hidden': 'true' }),
-    h('p', { text }));
-}
-
-/** 한 번도 못 받았는데 불러오기에 실패함 ("기록 없음"과 구분) */
-export function loadErrorState(retry) {
-  return emptyState({
-    icon: 'wifiOff', title: '기록을 불러오지 못했어요',
-    text: '인터넷 연결을 확인하고 다시 시도해 주세요. 서버에 저장된 기록은 그대로 있어요.',
-    action: retry
-      ? h('button', { type: 'button', class: 'btn btn-soft', onClick: () => { Promise.resolve(retry()).catch(() => {}); } }, icon('refresh'), h('span', { text: '다시 시도' }))
-      : null,
-  });
+    actions.length ? h('div', { class: 'empty-actions' }, actions) : null);
 }
 
 // ── 라벨 있는 필드 ──
-export function field(label, control, { hint, id, cls = '', counter } = {}) {
+export function field(label, control, { hint, id, cls = '', counter, optional = false, error = null } = {}) {
   const fid = id || nextId('f');
   if (control && control.tagName && ['INPUT', 'TEXTAREA', 'SELECT'].includes(control.tagName) && !control.id) control.id = fid;
   const labelEl = control && control.id
-    ? h('label', { class: 'field-label', htmlFor: control.id, text: label })
-    : h('span', { class: 'field-label', text: label });
+    ? h('label', { class: 'field-label', htmlFor: control.id }, label, optional ? h('span', { class: 'field-opt', text: ' 선택' }) : null)
+    : h('span', { class: 'field-label' }, label, optional ? h('span', { class: 'field-opt', text: ' 선택' }) : null);
+  const hintId = hint ? nextId('hint') : null;
+  if (hintId && control && control.setAttribute) control.setAttribute('aria-describedby', hintId);
   return h('div', { class: ['field', cls] },
     h('div', { class: 'field-head' }, labelEl, counter || null),
     control,
-    hint ? h('p', { class: 'field-hint', text: hint }) : null);
+    hint ? h('p', { class: 'field-hint', id: hintId, text: hint }) : null,
+    h('p', { class: 'field-error', role: 'alert', hidden: !error, text: error || '' }));
+}
+
+/** 필드 아래 오류 글자 보이기/숨기기 */
+export function setFieldError(fieldEl, msg) {
+  if (!fieldEl) return;
+  const e = fieldEl.querySelector(':scope > .field-error');
+  if (!e) return;
+  e.textContent = msg || '';
+  e.hidden = !msg;
+  fieldEl.classList.toggle('has-error', !!msg);
 }
 
 /** 글자 수 카운터 연결 */
@@ -397,48 +441,68 @@ export function counterFor(input, max) {
     const n = Array.from(input.value).length;
     c.textContent = `${n}/${max}`;
     c.classList.toggle('is-near', n > max * 0.9);
+    c.classList.toggle('is-over', n > max);
   };
   input.addEventListener('input', upd);
   upd();
+  c.update = upd;
   return c;
 }
 
-// ── 점수 막대 ──
-export function scoreBars(items, { cls = '' } = {}) {
-  return h('div', { class: ['scorebars', cls] }, items.map(({ label, value }) => {
-    const v = Number(value) || 0;
-    const fill = h('span', { class: 'sb-fill' });
-    fill.style.width = `${(v / 5) * 100}%`;
-    return h('div', { class: 'sb-row' },
-      h('span', { class: 'sb-label', text: label }),
-      h('span', { class: 'sb-track', role: 'img', 'aria-label': v > 0 ? `${label} ${v}점` : `${label} 미평가` }, fill),
-      h('span', { class: `sb-val${v > 0 ? '' : ' is-empty'}`, text: v > 0 ? v.toFixed(1) : '–' }));
-  }));
+/** textarea 높이를 내용에 맞춤 */
+export function autoGrow(ta, { min = 3 } = {}) {
+  ta.rows = min;
+  const fit = () => {
+    ta.style.height = 'auto';
+    ta.style.height = `${Math.min(ta.scrollHeight + 2, 640)}px`;
+  };
+  ta.addEventListener('input', fit);
+  requestAnimationFrame(fit);
+  return ta;
 }
 
-// 이번 실행 동안 펼친 스포일러 (백그라운드 새로고침으로 화면을 다시 그려도 다시 가려지지 않게)
-const revealedSpoilers = new Set();
-
-/** 스포일러 가림 블록: 탭하면 보임. key 를 주면 펼친 상태를 기억 */
-export function spoilerBlock(content, { label = '스포일러 보기', inline = false, key = null } = {}) {
-  const inner = h(inline ? 'span' : 'div', { class: 'spoiler-content' }, content);
-  const box = h(inline ? 'span' : 'div', { class: `spoiler${inline ? ' spoiler-inline' : ''}` }, inner);
-  if (key && revealedSpoilers.has(key)) {
-    box.classList.add('is-revealed');
-    return box;
+// ── 접히는 영역 (추가 기록 · 스포일러) ──
+/**
+ * 버튼을 누르면 펼쳐짐. build() 는 처음 펼칠 때 한 번만 부름 → 접혀 있는 동안 내용이 DOM 에 없음
+ * (스포일러가 화면 찾기·스크린리더·인쇄로 새지 않게)
+ */
+export function fold({ label, sub, open = false, build, cls = '', icon: ic = null, onToggle }) {
+  const bodyId = nextId('fold');
+  // sub: 글자 또는 (펼쳤는지) => 글자
+  const subText = (o) => (typeof sub === 'function' ? sub(o) : sub);
+  const subEl = sub ? h('span', { class: 'fold-sub', text: subText(false) }) : null;
+  const btn = h('button', { type: 'button', class: 'fold-btn', 'aria-expanded': 'false', 'aria-controls': bodyId },
+    ic ? icon(ic, 'fold-ico') : null,
+    h('span', { class: 'fold-text' }, h('span', { class: 'fold-label', text: label }), subEl),
+    icon('down', 'fold-caret'));
+  const body = h('div', { class: 'fold-body', id: bodyId, hidden: true });
+  const box = h('section', { class: ['fold', cls] }, btn, body);
+  let built = false;
+  function setOpen(o) {
+    if (o && !built) {
+      built = true;
+      body.append(build());
+    }
+    body.hidden = !o;
+    btn.setAttribute('aria-expanded', o ? 'true' : 'false');
+    box.classList.toggle('is-open', o);
+    if (subEl) subEl.textContent = subText(o);
+    if (onToggle) onToggle(o);
   }
-  inner.setAttribute('aria-hidden', 'true');
-  inner.inert = true; // 가려진 안의 링크에 키보드 초점이 가지 않게
-  const btn = h('button', { type: 'button', class: 'spoiler-btn' }, icon('eye'), h('span', { text: label }));
-  box.appendChild(btn);
-  btn.addEventListener('click', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (key) revealedSpoilers.add(key);
-    box.classList.add('is-revealed');
-    inner.removeAttribute('aria-hidden');
-    inner.inert = false;
-    btn.remove();
-  });
+  btn.addEventListener('click', () => setOpen(body.hidden));
+  if (open) setOpen(true);
+  box.setOpen = setOpen;
+  box.isOpen = () => !body.hidden;
+  box.isBuilt = () => built;
+  box.setSub = (fnOrText) => { sub = fnOrText; if (subEl) subEl.textContent = subText(!body.hidden); };
   return box;
+}
+
+// ── 한 번만 보이는 도장 (방탈출 저장 직후) ──
+export function stampOnce(target, text, kind) {
+  if (!target || reducedMotion()) return;
+  const s = h('span', { class: `save-stamp is-${kind}`, 'aria-hidden': 'true' }, h('span', { text }));
+  target.appendChild(s);
+  s.addEventListener('animationend', () => s.remove(), { once: true });
+  setTimeout(() => s.remove(), 2400);
 }

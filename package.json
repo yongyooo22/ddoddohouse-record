@@ -1,8 +1,8 @@
 {
   "name": "ddoddohouse-record",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "또또하우스 기록장 — 보드게임·머더미스터리·방탈출 모임 기록",
+  "description": "또또하우스 기록장 — 보드게임·머더미스터리·방탈출 플레이 기록 개인 티켓북 (브라우저 저장)",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -12,9 +12,6 @@
     "test": "node --test tests/*.test.mjs",
     "e2e": "node tests/e2e.mjs",
     "bump-sw": "node scripts/bump-sw.mjs"
-  },
-  "dependencies": {
-    "@upstash/redis": "^1.38.0"
   },
   "devDependencies": {
     "playwright-core": "~1.61.1"

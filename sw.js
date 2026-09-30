@@ -1,7 +1,8 @@
-// 또또하우스 기록장 서비스 워커 — 정적 셸만 캐시. /api/* 는 절대 캐시하지 않음 (항상 네트워크 직행)
+// 또또하우스 기록장 서비스 워커 — 앱 파일(정적 셸)만 캐시해서 오프라인에서도 열리게.
+// 기록·사진은 여기가 아니라 브라우저 IndexedDB 에 있음 (서버로 보내지 않음).
 // 배포 전에 npm run bump-sw 로 CACHE_VERSION 을 올리면 새 파일이 바로 반영돼요.
 // (깜빡해도 정적 파일은 뒤에서 새로 받아 두므로 한 번 더 열면 반영돼요)
-const CACHE_VERSION = 'ddh-v4';
+const CACHE_VERSION = 'ddh-v5';
 const CACHE = `ddoddohouse-record-${CACHE_VERSION}`;
 
 const PRECACHE = [
@@ -9,28 +10,31 @@ const PRECACHE = [
   '/index.html',
   '/manifest.json',
   '/css/app.css',
-  '/js/main.js',
-  '/js/api.js',
-  '/js/store.js',
-  '/js/dom.js',
-  '/js/ui.js',
-  '/js/nav.js',
-  '/js/format.js',
-  '/js/constants.js',
-  '/js/stats.js',
-  '/js/images.js',
+  '/js/backup.js',
   '/js/compress.js',
-  '/js/views/bits.js',
-  '/js/views/lock.js',
-  '/js/views/home.js',
-  '/js/views/list.js',
-  '/js/views/detail.js',
+  '/js/constants.js',
+  '/js/db.js',
+  '/js/dom.js',
+  '/js/format.js',
+  '/js/images.js',
+  '/js/main.js',
+  '/js/model.js',
+  '/js/nav.js',
+  '/js/prefs.js',
+  '/js/query.js',
+  '/js/repo.js',
+  '/js/sample-art.js',
+  '/js/samples.js',
+  '/js/ui.js',
+  '/js/views/cards.js',
   '/js/views/form.js',
-  '/js/views/form-sections.js',
-  '/js/views/stats.js',
-  '/js/views/members.js',
-  '/js/views/settings.js',
+  '/js/views/home.js',
   '/js/views/photos.js',
+  '/js/views/play.js',
+  '/js/views/sample-actions.js',
+  '/js/views/settings.js',
+  '/js/views/work-form.js',
+  '/js/views/work.js',
   '/icon-192.png',
   '/icon-512.png',
   '/icon-maskable-512.png',
@@ -62,10 +66,6 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
-  // API 는 서비스 워커를 거치지 않고 네트워크로 (인증 헤더가 붙은 응답을 절대 저장하지 않음)
-  if (url.pathname.startsWith('/api/')) return;
-  // 브라우저 캐시 비우기 신호(Clear-Site-Data)는 브라우저가 직접 받아야 함 — 저장하지도 가로채지도 않음
-  if (url.pathname === '/clear-cache.txt') return;
 
   // 페이지(HTML)는 네트워크 우선 → 새 배포가 바로 반영, 오프라인이면 캐시
   if (req.mode === 'navigate' || url.pathname === '/' || url.pathname === '/index.html') {

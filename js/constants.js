@@ -1,113 +1,88 @@
-// 또또하우스 기록장 — 공용 상수 (종류, 라벨, 태그 칩, 팔레트)
+// 공용 상수 — 장르, 라벨, 입력 한도, 저장소 이름 (DOM 없이 node 에서도 import 가능)
 
-export const APP_NAME = '또또하우스 기록장';
-export const APP_VERSION = '1.0.0';
+export const DEFAULT_BOOK_NAME = '또또하우스 기록장';
+export const APP_VERSION = '2.0.0';
 
-export const TYPE_KEYS = ['boardgame', 'murdermystery', 'escaperoom'];
+export const GENRE_KEYS = ['boardgame', 'murdermystery', 'escaperoom'];
 
-export const TYPES = {
+export const GENRES = {
   boardgame: {
-    key: 'boardgame', label: '보드게임', short: '보드게임', icon: 'dice', cls: 't-boardgame',
-    titleLabel: '게임 이름', titlePlaceholder: '예) 테라포밍 마스',
-    desc: '승패, 점수, 순위를 남겨요',
+    key: 'boardgame', label: '보드게임', icon: 'dice', cls: 'g-bg',
+    titleLabel: '게임 이름', titlePlaceholder: '예) 스플렌더',
+    section: '보드게임 기록',
   },
   murdermystery: {
-    key: 'murdermystery', label: '머더미스터리', short: '머미', icon: 'magnifier', cls: 't-murdermystery',
-    titleLabel: '시나리오 이름', titlePlaceholder: '예) 붉은 저택의 초대',
-    desc: '역할, 범인, 평점을 남겨요',
+    key: 'murdermystery', label: '머더미스터리', icon: 'magnifier', cls: 'g-mm',
+    titleLabel: '작품 이름', titlePlaceholder: '예) 붉은 저택의 초대',
+    section: '머더미스터리 기록',
   },
   escaperoom: {
-    key: 'escaperoom', label: '방탈출', short: '방탈출', icon: 'door', cls: 't-escaperoom',
-    titleLabel: '테마 이름', titlePlaceholder: '예) 잊혀진 연구소',
-    desc: '성공 여부, 남은 시간, 힌트를 남겨요',
+    key: 'escaperoom', label: '방탈출', icon: 'door', cls: 'g-er',
+    titleLabel: '테마명', titlePlaceholder: '예) 시계탑의 비밀',
+    section: '방탈출 기록',
   },
 };
 
-export const typeOf = (key) => TYPES[key] || null;
-
-// 종류별 추천 태그 (저장은 # 없이)
-export const TAG_SUGGESTIONS = {
-  boardgame: ['전략', '파티', '협력', '추리', '가족', '경매', '덱빌딩', '일꾼놓기', '타일', '카드', '2인추천', '입문추천'],
-  murdermystery: ['추리중심', 'RP중심', '감성', '반전', '호러', '코믹', '피폐', '잔혹', '성인', '입문추천', '고인물용', '밸런스좋음'],
-  escaperoom: ['스토리맛집', '인테리어맛집', '장치많음', '자물쇠많음', '공포', '감성', '코믹', '활동성높음', '문제퀄리티', '입문추천', '헬난이도'],
-};
+export const genreOf = (key) => GENRES[key] || null;
 
 export const LIMITS = {
-  title: 80, oneLiner: 100, review: 5000, tag: 15, tags: 10, members: 20,
-  place: 40, expansion: 60, publisher: 40, store: 40, gm: 20, character: 30,
-  brand: 40, branch: 40, genre: 20, memberName: 20, photos: 4,
+  title: 80,
+  store: 40,
+  branch: 40,
+  oneLiner: 100,
+  review: 5000,
+  companion: 20,
+  companions: 20,
+  photos: 8,
+  expansions: 100,
+  impression: 1000,
+  role: 40,
+  culprit: 40,
+  ending: 2000,
+  puzzles: 5000,
+  memo: 5000,
+  bookName: 30,
 };
 
-export const BG_MODES = [
-  { key: 'competitive', label: '경쟁' },
-  { key: 'coop', label: '협력' },
-  { key: 'team', label: '팀전' },
-];
-
 export const MM_FORMATS = [
-  { key: 'store', label: '매장형' },
-  { key: 'box', label: '보드게임형' },
+  { key: 'store', label: '매장' },
+  { key: 'home', label: '집·박스' },
   { key: 'online', label: '온라인' },
 ];
 
-export const MM_OUTCOMES = [
-  { key: 'win', label: '승' },
-  { key: 'lose', label: '패' },
-  { key: 'draw', label: '무' },
+export const ER_RESULTS = [
+  { key: 'success', label: '성공' },
+  { key: 'fail', label: '실패' },
 ];
 
-export const MM_SCORES = [
-  { key: 'story', label: '스토리' },
-  { key: 'deduction', label: '추리' },
-  { key: 'roleplay', label: '롤플레이' },
-  { key: 'balance', label: '밸런스' },
-  { key: 'production', label: '연출·구성물' },
-];
+export const DIFFICULTY_LABELS = ['', '쉬움', '무난', '보통', '어려움', '매우 어려움'];
+export const FEAR_LABELS = ['없음', '약함', '조금', '보통', '무서움', '매우 무서움'];
 
-export const ER_SCORES = [
-  { key: 'story', label: '스토리' },
-  { key: 'interior', label: '인테리어' },
-  { key: 'puzzle', label: '문제' },
-  { key: 'device', label: '장치·연출' },
+// 평점 필터: 값 → 라벨
+export const RATING_FILTERS = [
+  { key: '', label: '전체 평점' },
+  { key: '4.5', label: '4.5점 이상' },
+  { key: '4', label: '4점 이상' },
+  { key: '3', label: '3점 이상' },
+  { key: 'low', label: '3점 미만' },
+  { key: 'none', label: '미평가' },
 ];
-
-export const CULPRIT_RESULTS = [
-  { key: 'caught', label: '검거 성공' },
-  { key: 'escaped', label: '범인 도주' },
-];
-
-// 멤버 팔레트 (실제 색은 CSS 변수 --m-c1 … --m-c10, 라이트/다크 각각 정의)
-export const PALETTE = [
-  { key: 'c1', label: '장미' },
-  { key: 'c2', label: '귤' },
-  { key: 'c3', label: '겨자' },
-  { key: 'c4', label: '풀잎' },
-  { key: 'c5', label: '청록' },
-  { key: 'c6', label: '하늘' },
-  { key: 'c7', label: '남색' },
-  { key: 'c8', label: '보라' },
-  { key: 'c9', label: '분홍' },
-  { key: 'c10', label: '모카' },
-];
-export const PALETTE_KEYS = PALETTE.map((p) => p.key);
-
-export const EMOJI_SUGGESTIONS = ['🐻', '🐰', '🦊', '🐱', '🐶', '🐼', '🐯', '🐧', '🦉', '🐸', '🍀', '🌙', '⭐', '🔥', '🍓', '🎩'];
 
 export const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
-// 서버 검증 오류 필드명 → 사람이 읽는 이름
-export const FIELD_LABELS = {
-  date: '날짜', title: '제목', members: '함께한 멤버', rating: '별점', oneLiner: '한줄평', review: '후기',
-  tags: '태그', type: '종류', place: '장소', playTimeMin: '플레이 시간', mode: '방식', results: '결과',
-  expansion: '확장판', publisher: '제작사', format: '형태', store: '매장', gm: 'GM', playerCount: '인원',
-  roles: '역할', character: '캐릭터', culpritResult: '범인 검거 결과', scores: '세부 점수', difficulty: '난이도',
-  brand: '브랜드', branch: '지점', genre: '장르', timeLimitMin: '제한 시간', remainingSec: '남은 시간',
-  hints: '힌트', fear: '공포도', activity: '활동성', name: '이름', emoji: '이모지', color: '색', photos: '사진',
+// IndexedDB — 기록·사진이 실제로 저장되는 곳
+export const DB_NAME = 'ddoddohouse-record';
+export const DB_VERSION = 1;
+
+// localStorage — 이 기기에서만 쓰는 화면 설정과 작성 중인 초안
+export const PREFS = {
+  theme: 'ddh2:theme',
+  view: 'ddh2:view',
+  group: 'ddh2:group',
+  draft: 'ddh2:draft',
+  lastGenre: 'ddh2:lastGenre',
 };
 
-export const STORAGE = {
-  key: 'ddh:key',
-  cache: 'ddh:cache',
-  draft: 'ddh:draft',
-  theme: 'ddh:theme',
-};
+// 백업 파일 형식
+export const BACKUP_APP = 'ddoddohouse-record';
+export const BACKUP_VERSION = 2;
