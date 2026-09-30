@@ -722,32 +722,44 @@ body.is-locked .toasts { bottom: calc(24px + env(safe-area-inset-bottom)); }
 .home-recent { display: flex; flex-direction: column; }
 
 /* ── 기록 카드 ──────────────────────────────────────── */
+/* 위: [대표 사진] 종류 → 제목 → 날짜 / 점선 아래: 별점 | 한줄평 (카드 전체 너비), 핵심 정보 · 멤버.
+   사진이 없으면 사진 칸을 접고 글자가 카드 너비를 다 씀 */
 .rlist { display: flex; flex-direction: column; gap: 10px; }
 .rcard {
-  position: relative; display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 12px;
-  padding: 14px 14px 14px 12px; overflow: hidden;
+  --thumb: clamp(64px, 18vw, 80px);
+  position: relative; display: flex; flex-direction: column;
+  padding: 14px 14px 14px 16px; overflow: hidden;
   background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow-1);
   transition: transform .12s;
 }
 .rcard::before { content: ""; position: absolute; left: 0; top: 16px; bottom: 16px; width: 4px; border-radius: 0 4px 4px 0; background: var(--tc); }
 .rcard:active { transform: scale(.99); }
-.rcard-date { display: flex; flex-direction: column; align-items: center; padding: 2px 8px 0 0; border-right: 1px dashed var(--line-2); }
-.d-mon { color: var(--ink-3); font-size: 11px; font-weight: 800; }
-.d-day { font-size: 23px; font-weight: 900; line-height: 1.1; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
-.d-wd { color: var(--ink-3); font-size: 12px; font-weight: 800; }
-.is-sun .d-wd { color: var(--st-escaped); }
-.is-sat .d-wd { color: var(--st-caught); }
-.rcard-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.rcard-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.rcard.has-stamp .rcard-top { padding-right: 76px; }
-.rcard-title { font-size: 17px; font-weight: 800; letter-spacing: -.03em; line-height: 1.35; }
+.rcard-head { display: flex; align-items: flex-start; gap: 12px; }
+.rcard-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+/* 글자가 사진보다 짧으면 사진 높이 가운데에, 길면(긴 제목) 사진과 위를 맞춤 */
+.rcard-photo + .rcard-main { min-height: var(--thumb); justify-content: center; }
+/* 도장은 종류 줄 오른쪽 끝 — 배지가 많으면 배지만 줄바꿈되어 도장과 제목이 겹치지 않음 */
+.rcard-top { display: flex; align-items: flex-start; gap: 6px; }
+.rcard-tags { flex: 1; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.rcard-title { font-size: 18px; font-weight: 800; letter-spacing: -.03em; line-height: 1.35; }
 .card-link { color: inherit; text-decoration: none; }
 .card-link::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: 18px; }
 .card-link:focus-visible { outline: none; }
 .card-link:focus-visible::after { outline: 2.5px solid var(--focus); outline-offset: -3px; }
-.rcard-line { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; min-width: 0; }
-.rcard-one { color: var(--ink-2); font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.rcard-info { display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ink-2); font-size: 13px; }
+.rcard-date { display: flex; flex-wrap: wrap; gap: 0 4px; color: var(--ink-3); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.is-sun .rcard-wd { color: var(--st-escaped); }
+.is-sat .rcard-wd { color: var(--st-caught); }
+.rcard-body { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 12px; padding-top: 11px; border-top: 1px dashed var(--line-2); }
+/* ★ 4.5 | 한줄평 — 한줄평이 두 줄이 되어도 별점은 첫 줄 높이에 */
+.rcard-line { flex: 1 1 auto; display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+.rcard-line > .stars { --sz: 15px; flex: none; height: 21px; gap: 5px; }
+.rcard-line .stars-num { font-size: 14px; }
+.rcard-line > .stars:not(:last-child)::after { content: ""; width: 1px; height: 12px; margin-left: 5px; background: var(--line-2); }
+.rcard-line:has(> .spoiler:not(.is-revealed)) { align-items: center; } /* 가린 한줄평은 버튼과 가운데 맞춤 */
+.rcard-one { flex: 1 1 auto; min-width: 0; color: var(--ink-2); font-size: 14px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* 핵심 정보(왼쪽) · 함께한 멤버(오른쪽 아래) */
+.rcard-meta { flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; min-width: 0; }
+.rcard-info { flex: 1 1 auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 5px 12px; color: var(--ink-2); font-size: 13px; }
 .ki { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 100%; }
 .ki .ico { width: 16px; height: 16px; color: var(--ink-3); }
 .ki-win .ico { color: var(--st-win); }
@@ -757,9 +769,9 @@ body.is-locked .toasts { bottom: calc(24px + env(safe-area-inset-bottom)); }
 .ki-soft { color: var(--ink-3); }
 .ki-roles { width: 100%; }
 .ki-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.rcard-foot { display: flex; align-items: center; gap: 8px; margin-top: 2px; }
-.rcard-stamp { position: absolute; top: 12px; right: 12px; pointer-events: none; }
-.rcard-stamp .stamp { font-size: 12px; padding: 3px 8px; }
+.rcard-foot { display: flex; align-items: center; margin-left: auto; }
+.rcard-stamp { flex: none; pointer-events: none; }
+.rcard-stamp .stamp { font-size: 11.5px; padding: 3px 7px; }
 .rcard .spoiler { z-index: 2; }
 
 /* 스포일러 */
@@ -1209,16 +1221,13 @@ body.is-locked .toasts { bottom: calc(24px + env(safe-area-inset-bottom)); }
 .ph-sheet-row .btn { flex: 1 1 0; min-width: 0; padding: 0 8px; }
 .save-btn.is-waiting { background: color-mix(in srgb, var(--ink) 78%, var(--paper)); }
 
-/* 목록 카드: 오른쪽에 붙인 사진 (그 위에 도장) */
-.rcard.has-photo { grid-template-columns: 42px minmax(0, 1fr) 76px; }
-.rcard.has-photo .rcard-top { padding-right: 0; }
-.rcard-side { position: relative; align-self: start; padding-top: 2px; }
-.rcard-photo { position: relative; width: 76px; height: 76px; padding: 3px; border-radius: 10px; background: var(--photo-frame); box-shadow: var(--photo-shadow); transform: rotate(2.5deg); }
-.rcard-photo .pimg { border-radius: 7px; }
-.rcard-pn { position: absolute; top: 7px; right: 7px; display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px 1px 4px; border-radius: 999px; background: rgba(24, 19, 14, .62); color: #FFFFFF; font-size: 10.5px; font-weight: 800; line-height: 1.5; }
+/* 목록 카드: 왼쪽 정사각형 칸의 대표 사진 — 원본 비율 그대로 잘리지 않게 칸 안에 맞춤 (남는 곳은 사진 테두리 색) */
+.rcard-photo { position: relative; flex: none; width: var(--thumb); height: var(--thumb); padding: 3px; border-radius: 12px; background: var(--photo-frame); box-shadow: var(--photo-shadow); }
+.rcard-photo .pimg { border-radius: 9px; }
+.rcard-photo .pimg img { object-fit: contain; }
+.rcard-photo .pimg.is-ready { background: transparent; }
+.rcard-pn { position: absolute; top: 6px; right: 6px; display: inline-flex; align-items: center; gap: 2px; padding: 1px 6px 1px 4px; border-radius: 999px; background: rgba(24, 19, 14, .62); color: #FFFFFF; font-size: 10.5px; font-weight: 800; line-height: 1.5; }
 .rcard-pn .ico { width: 11px; height: 11px; stroke-width: 2.2; }
-.rcard-side .rcard-stamp { top: 58px; right: auto; left: 50%; transform: translateX(-50%); }
-.rcard-side .stamp { background: color-mix(in srgb, var(--surface) 90%, transparent); }
 
 /* 상세: 붙여 둔 사진 (넘기기 + 썸네일 줄) */
 .dgallery { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
@@ -1338,18 +1347,11 @@ html.vw-open, html.vw-open body { overflow: hidden; }
   .ph-suggest-thumb { width: 50px; height: 50px; }
   .ph-suggest-actions { flex-direction: column-reverse; align-items: stretch; }
   .ph-badge { padding: 0 7px 0 5px; font-size: 11.5px; }
-  /* 사진 있는 카드: 사진은 위 두 줄(종류·제목) 옆에만 두고, 그 아래 줄은 사진 밑까지 넓게 (카드가 길어지지 않게) */
-  .rcard.has-photo { grid-template-columns: 42px minmax(0, 1fr) 52px; gap: 0 10px; }
-  .rcard.has-photo .rcard-body { display: contents; }
-  .rcard.has-photo .rcard-date { grid-column: 1; grid-row: 1 / span 6; }
-  .rcard.has-photo .rcard-body > * { grid-column: 2 / 4; margin-top: 6px; }
-  .rcard.has-photo .rcard-body > .rcard-top { grid-column: 2; grid-row: 1; margin-top: 0; }
-  .rcard.has-photo .rcard-body > .rcard-title { grid-column: 2; grid-row: 2; }
-  .rcard.has-photo .rcard-body > .rcard-foot { margin-top: 8px; }
-  .rcard.has-photo .rcard-side { grid-column: 3; grid-row: 1 / span 2; }
-  .rcard-photo { width: 52px; height: 52px; }
-  .rcard-side .rcard-stamp { top: 36px; }
-  .rcard-side .stamp { font-size: 11px; padding: 2px 6px; }
+  /* 기록 카드: 사진(64px)과 제목은 그대로 나란히, 여백만 줄여 글자 칸을 넓게 */
+  .rcard { padding: 12px 12px 12px 14px; }
+  .rcard-head { gap: 10px; }
+  .rcard-title { font-size: 17px; }
+  .rcard-stamp .stamp { font-size: 11px; padding: 2px 6px; }
   .shortcuts { gap: 8px; }
   .shortcut { padding: 12px 10px; }
   .grid-3 { grid-template-columns: 1fr 1fr; }

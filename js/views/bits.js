@@ -1,7 +1,7 @@
 // 기록 카드 등 여러 화면에서 쓰는 조각
 import { h, icon } from '../dom.js';
 import { TYPES, BG_MODES } from '../constants.js';
-import { dayParts, fmtRemaining, fmtDate } from '../format.js';
+import { dayParts, fmtRemaining, fmtDate, fmtDateDot } from '../format.js';
 import { erOrdinals, memberInfo, photosOf } from '../store.js';
 import { typeBadge, starsView, avatarRow, stamp, memberTag, spoilerBlock } from '../ui.js';
 import { cardPhoto } from './photos.js';
@@ -106,10 +106,15 @@ export function ordinalLabel(r) {
   return n ? h('span', { class: 'ordinal', text: `${n}번째 방탈출` }) : null;
 }
 
-/** 목록/홈 기록 카드 */
-export function recordCard(r, { showMonth = false } = {}) {
+/**
+ * 목록/홈 기록 카드
+ * 위: [대표 사진] 종류 → 제목 → 날짜 (사진이 없으면 사진 칸 없이 글자가 넓게)
+ * 점선 아래: 별점 | 한줄평 (카드 전체 너비), 핵심 정보 · 함께한 멤버
+ */
+export function recordCard(r) {
   const t = TYPES[r.type];
   const dp = dayParts(r.date);
+  const rating = Number(r.rating) > 0 ? starsView(r.rating, { size: 'xs', compact: true }) : null;
   const one = r.oneLiner
     ? (r.spoiler
       ? spoilerBlock(h('span', { text: r.oneLiner }), { label: '스포일러', inline: true, key: spoilerKey(r, 'one') })
@@ -118,28 +123,29 @@ export function recordCard(r, { showMonth = false } = {}) {
   const st = recordStamp(r);
   const photo = cardPhoto(r);
   const nPhotos = photosOf(r).length;
-  return h('article', { class: ['rcard', t ? t.cls : '', st ? 'has-stamp' : '', photo ? 'has-photo' : ''] },
-    h('div', { class: `rcard-date${dp.dow === 0 ? ' is-sun' : dp.dow === 6 ? ' is-sat' : ''}`, 'aria-hidden': 'true' },
-      showMonth ? h('span', { class: 'd-mon', text: dp.month }) : null,
-      h('span', { class: 'd-day', text: dp.day }),
-      h('span', { class: 'd-wd', text: dp.wd ? `(${dp.wd})` : '' })),
-    h('div', { class: 'rcard-body' },
-      h('div', { class: 'rcard-top' }, typeBadge(r.type), ordinalLabel(r),
-        r.spoiler ? h('span', { class: 'mini-flag', text: '스포' }) : null),
-      h('h3', { class: 'rcard-title' },
-        // 날짜 칸은 보기용(aria-hidden)이라 링크 이름에 날짜를 함께 넣어 스크린리더도 날짜를 듣게
-        h('a', {
-          class: 'card-link', href: `#/record/${encodeURIComponent(r.id)}`,
-          'aria-label': `${r.title || '(제목 없음)'}, ${fmtDate(r.date)}${nPhotos ? `, 사진 ${nPhotos}장` : ''}`,
-        }, r.title || '(제목 없음)')),
-      (Number(r.rating) > 0 || one)
-        ? h('div', { class: 'rcard-line' }, Number(r.rating) > 0 ? starsView(r.rating, { size: 'xs' }) : null, one)
-        : null,
-      keyInfo(r),
-      arr(r.members).length ? h('div', { class: 'rcard-foot' }, avatarRow(r.members, { max: 7, size: 'xs' })) : null),
-    // 사진이 있으면 오른쪽에 붙인 사진 위에 도장이 찍힘
-    photo ? h('div', { class: 'rcard-side' }, photo, st ? h('div', { class: 'rcard-stamp' }, st) : null) : null,
-    !photo && st ? h('div', { class: 'rcard-stamp' }, st) : null);
+  const info = keyInfo(r);
+  const foot = arr(r.members).length ? h('div', { class: 'rcard-foot' }, avatarRow(r.members, { max: 7, size: 'xs' })) : null;
+  const line = rating || one ? h('div', { class: 'rcard-line' }, rating, one) : null;
+  // 핵심 정보가 있으면 [정보 … 멤버] 한 줄, 없으면 멤버만 별점 줄 오른쪽에 (자리가 모자라면 다음 줄 오른쪽)
+  const meta = info ? h('div', { class: 'rcard-meta' }, info, foot) : foot;
+  return h('article', { class: ['rcard', t ? t.cls : '', photo ? 'has-photo' : ''] },
+    h('div', { class: 'rcard-head' },
+      photo,
+      h('div', { class: 'rcard-main' },
+        h('div', { class: 'rcard-top' },
+          h('div', { class: 'rcard-tags' }, typeBadge(r.type), ordinalLabel(r),
+            r.spoiler ? h('span', { class: 'mini-flag', text: '스포' }) : null),
+          st ? h('div', { class: 'rcard-stamp' }, st) : null),
+        h('h3', { class: 'rcard-title' },
+          // 날짜 줄은 보기용(aria-hidden)이라 링크 이름에 날짜를 함께 넣어 스크린리더도 날짜를 듣게
+          h('a', {
+            class: 'card-link', href: `#/record/${encodeURIComponent(r.id)}`,
+            'aria-label': `${r.title || '(제목 없음)'}, ${fmtDate(r.date)}${nPhotos ? `, 사진 ${nPhotos}장` : ''}`,
+          }, r.title || '(제목 없음)')),
+        h('p', { class: `rcard-date${dp.dow === 0 ? ' is-sun' : dp.dow === 6 ? ' is-sat' : ''}`, 'aria-hidden': 'true' },
+          h('span', { text: fmtDateDot(r.date) || '날짜 없음' }),
+          dp.wd ? h('span', { class: 'rcard-wd', text: `(${dp.wd})` }) : null))),
+    line || meta ? h('div', { class: 'rcard-body' }, line, meta) : null);
 }
 
 /** 섹션 제목 */

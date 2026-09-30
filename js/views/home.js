@@ -98,7 +98,7 @@ function render(root, ctx) {
   const recentSec = h('section', { class: 'home-recent' },
     sectionHead('최근 기록', { action: records.length ? h('a', { class: 'link-more', href: '#/records' }, '전체 보기', icon('chevron')) : null }),
     recent.length
-      ? h('div', { class: 'rlist' }, recent.map((r) => recordCard(r, { showMonth: true })))
+      ? h('div', { class: 'rlist' }, recent.map((r) => recordCard(r)))
       : emptyState({
         icon: 'book', title: '아직 기록이 없어요',
         text: '보드게임, 머더미스터리, 방탈출 — 오늘 한 놀이를 첫 장에 적어 보세요.',

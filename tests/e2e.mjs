@@ -207,6 +207,51 @@ async function texts(sel) {
 async function cardTitles() {
   return texts('.page-list .rcard .card-link');
 }
+// 기록 카드 조각의 위치 (배치·겹침 검사용, 화면 px) — 브라우저에서 실행
+const cardParts = (card) => {
+  const rect = (b) => ({ l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height });
+  const box = (el) => (el ? rect(el.getBoundingClientRect()) : null);
+  const q = (s) => card.querySelector(s);
+  const cs = getComputedStyle(card);
+  const cb = card.getBoundingClientRect();
+  const titleText = document.createRange();
+  titleText.selectNodeContents(q('.card-link'));
+  const img = q('.rcard-photo img');
+  const body = q('.rcard-body');
+  return {
+    left: cb.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft), // 카드 내용 칸의 왼쪽·오른쪽 끝
+    right: cb.right - parseFloat(cs.borderRightWidth) - parseFloat(cs.paddingRight),
+    photo: box(q('.rcard-photo')), main: box(q('.rcard-main')), fit: img ? getComputedStyle(img).objectFit : '',
+    badges: [...card.querySelectorAll('.rcard-tags > *')].map(box), stamp: box(q('.rcard-stamp .stamp')),
+    title: box(q('.rcard-title')), titleLines: [...titleText.getClientRects()].map(rect),
+    date: box(q('.rcard-date')), dateText: (q('.rcard-date') || {}).textContent || '',
+    body: box(body), bodyBorder: body ? getComputedStyle(body).borderTopStyle : '',
+    rate: box(q('.rcard-line > .stars')), one: box(q('.rcard-line > .rcard-one')),
+  };
+};
+async function cardLayouts(sel) {
+  return Promise.all((await page.$$(sel)).map((el) => el.evaluate(cardParts)));
+}
+const boxesOverlap = (a, b) => !!(a && b) && a.l < b.r - 0.5 && b.l < a.r - 0.5 && a.t < b.b - 0.5 && b.t < a.b - 0.5;
+/** 카드 안에서 겹치는 곳: 사진·도장 ↔ 배지·제목 글자·날짜, 제목 ↔ 날짜, 점선 아래 칸 ↔ 위 칸, 제목이 카드 밖으로 */
+function cardOverlaps(c) {
+  const out = [];
+  for (const [name, list] of [['배지', c.badges], ['제목', c.titleLines], ['날짜', [c.date]]]) {
+    for (const x of list) {
+      if (boxesOverlap(c.photo, x)) out.push(`사진↔${name}`);
+      if (boxesOverlap(c.stamp, x)) out.push(`도장↔${name}`);
+    }
+  }
+  if (boxesOverlap(c.title, c.date)) out.push('제목↔날짜');
+  if (c.body && c.body.t < Math.max(c.date.b, c.photo ? c.photo.b : -Infinity) - 0.5) out.push('아래 칸↔위 칸');
+  if (c.titleLines.some((x) => x.r > c.right + 0.5)) out.push('제목이 카드 밖으로');
+  return out;
+}
+async function cardsOverlapFree(label, sel = '.page-list .rcard') {
+  const all = await cardLayouts(sel);
+  const bad = all.map((c, i) => ({ i, o: cardOverlaps(c) })).filter((x) => x.o.length);
+  return check(`${label}: 카드 안 겹침 없음 (${all.length}개)`, all.length > 0 && !bad.length, JSON.stringify(bad));
+}
 /** 가로 막대 행: [{ name, val, sub }] */
 async function hbRows(scope) {
   return page.$$eval(`${scope} .hb-row`, (els) => els.map((e) => ({
@@ -704,6 +749,7 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
     (await page.$eval(`${mmCard} .ki-roles .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true' && getComputedStyle(e).filter.includes('blur'))));
   // 버튼 옆의 흐린 글자를 눌러도 반응 없는 게 아니라 카드가 열림 (카드 링크가 받음)
   const hitsCard = await page.$eval(`${mmCard} .ki-roles .spoiler-inline`, (el) => {
+    el.scrollIntoView({ block: 'center' }); // elementFromPoint 는 화면 안의 점만 봄
     const btn = el.querySelector('.spoiler-btn').getBoundingClientRect();
     const r = el.getBoundingClientRect();
     const x = Math.min(r.right - 4, btn.right + 30);
@@ -720,6 +766,17 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   check('방탈출 카드: 남은 시간·힌트·브랜드', erInfo.includes('12:34 남김') && erInfo.includes('힌트 2') && erInfo.includes('키이스케이프 홍대점'), erInfo);
   check('방탈출 카드: 누적 번호', (await text(`${cardOf('잊혀진 연구소')} .ordinal`)) === '2번째 방탈출' && (await text(`${cardOf('저주받은 인형의 집')} .ordinal`)) === '1번째 방탈출');
   check('실패 방탈출: 탈출 실패 도장', (await text(`${cardOf('저주받은 인형의 집')} .stamp`)) === '탈출 실패');
+  // 카드 배치: 위 [사진] 종류 → 제목 → 날짜, 점선 아래 별점 | 한줄평 (카드 전체 너비). 사진이 없으면 사진 칸을 접음
+  const [lay] = await cardLayouts(cardOf('저주받은 인형의 집'));
+  check('카드: 사진이 없으면 사진 칸 없이 글자가 카드 너비를 다 씀', !lay.photo && Math.abs(lay.title.l - lay.left) < 1 && Math.abs(lay.main.r - lay.right) < 1, JSON.stringify(lay));
+  check('카드: 종류 → 제목 → 날짜 순서', lay.badges[0].b <= lay.title.t + 0.5 && lay.title.b <= lay.date.t + 0.5, JSON.stringify(lay));
+  check('카드: 날짜는 YYYY.MM.DD(요일) 모양', lay.dateText === `${PAST.replaceAll('-', '.')}(${'일월화수목금토'[new Date(`${PAST}T12:00:00Z`).getUTCDay()]})`, lay.dateText);
+  check('카드: 점선 아래에 별점 | 한줄평 (카드 전체 너비)', lay.bodyBorder === 'dashed' && lay.body.t >= lay.date.b &&
+    Math.abs(lay.body.l - lay.left) < 1 && Math.abs(lay.body.r - lay.right) < 1 && Math.abs(lay.rate.l - lay.left) < 1 && lay.rate.r < lay.one.l, JSON.stringify(lay));
+  check('카드: 별점은 별 하나 + 숫자', (await text(`${cardOf('저주받은 인형의 집')} .rcard-line .stars-num`)) === '3.0' &&
+    (await page.$$(`${cardOf('저주받은 인형의 집')} .rcard-line .r-unit`)).length === 1 &&
+    (await page.getAttribute(`${cardOf('저주받은 인형의 집')} .rcard-line .stars`, 'aria-label')) === '별점 3점 (5점 만점)');
+  await cardsOverlapFree('기록 목록');
   const groups = await texts('.page-list .mgroup-head .mg-month');
   check('월별 그룹 2개', groups.length === 2, groups.join(','));
   // 스포일러 한줄평: 목록에서 탭하면 이동 없이 보임
@@ -947,6 +1004,7 @@ await step('홈 요약 · 멤버 프로필', async () => {
   check('이번 달 3개', (await text('.cover-pill')) === '이번 달 3개');
   check('종류별 1·1·2', JSON.stringify(await texts('.cover-tnum')) === '["1","1","2"]', JSON.stringify(await texts('.cover-tnum')));
   check('최근 기록 4개', (await page.$$('.page-home .rcard')).length === 4);
+  await cardsOverlapFree('홈 최근 기록', '.page-home .rcard');
   check('이번 달 함께한 멤버 3번', (await text('.mate-count')) === '3번 함께했어요', await text('.mate-count'));
   await noOverflow('홈');
   await shot('23-home');
@@ -1132,6 +1190,7 @@ await step('좁은 화면 (320px) 가로 넘침', async () => {
   for (const [hash, sel] of screens) {
     await go(hash, sel);
     await noOverflow(`320px ${hash}`);
+    if (sel === '.page-list' || sel === '.page-home') await cardsOverlapFree(`320px ${hash}`, `${sel} .rcard`);
     if (hash === `#/edit/${encodeURIComponent(ids.er)}`) await shot('320-form-escaperoom');
     if (hash === `#/record/${encodeURIComponent(ids.mm)}`) await shot('320-detail-murdermystery');
     if (sel === '.page-form') {
@@ -1949,12 +2008,22 @@ await step('사진: 저장 → 상세 갤러리 · 전체화면 뷰어 · 목록
   check('목록 카드: 대표 사진 썸네일', !!thumbOk && (await page.getAttribute(`${card} .rcard-photo .pimg`, 'data-photo')) === photoIds.order[0]);
   check('목록 카드: 사진 수 표시 · 링크 이름에 사진 수', (await text(`${card} .rcard-pn`)) === '4' && /사진 4장/.test(await page.getAttribute(`${card} .card-link`, 'aria-label')));
   const plain = '.page-list .rcard:has(.card-link:text-is("잊혀진 연구소"))';
-  check('사진 없는 카드는 예전 모습', !!(await page.$(plain)) && !(await page.$(`${plain} .rcard-photo`)) && !(await page.$eval(plain, (e) => e.classList.contains('has-photo'))));
+  check('사진 없는 카드는 사진 칸 없음', !!(await page.$(plain)) && !(await page.$(`${plain} .rcard-photo`)) && !(await page.$eval(plain, (e) => e.classList.contains('has-photo'))));
   check('사진 썸네일을 눌러도 기록이 열림', await page.$eval(`${card} .rcard-photo`, (el) => {
     const b = el.getBoundingClientRect();
     const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
     return !!hit && hit.classList.contains('card-link');
   }));
+  // 위: 왼쪽 정사각형 사진 칸(64~80px) + 오른쪽 종류·제목·날짜 / 점선 아래 칸은 사진 밑에서 카드 전체 너비
+  const [pl] = await cardLayouts(card);
+  check('사진 카드: 왼쪽에 64~80px 정사각형 사진 칸', !!pl.photo && Math.abs(pl.photo.w - pl.photo.h) < 0.5 && pl.photo.w >= 64 && pl.photo.w <= 80 &&
+    Math.abs(pl.photo.l - pl.left) < 1, JSON.stringify(pl.photo));
+  check('사진 카드: 사진 오른쪽에 종류·제목·날짜 (제목과 나란히)', pl.photo.r <= pl.main.l && pl.badges[0].l >= pl.photo.r && pl.date.l >= pl.photo.r &&
+    pl.photo.t < pl.title.b && pl.title.t < pl.photo.b, JSON.stringify(pl));
+  check('사진 카드: 원본 비율 그대로, 잘리지 않게 칸 안에 맞춤', pl.fit === 'contain', pl.fit);
+  check('사진 카드: 점선 아래 칸은 사진 밑, 카드 전체 너비', !!pl.body && pl.bodyBorder === 'dashed' && pl.body.t >= pl.photo.b &&
+    Math.abs(pl.body.l - pl.left) < 1 && Math.abs(pl.body.r - pl.right) < 1, JSON.stringify(pl.body));
+  await cardsOverlapFree('사진 있는 목록');
   await noOverflow('사진 있는 목록');
   await shot('35-list-photo');
   await tab('home', '.page-home');
@@ -2463,9 +2532,30 @@ await step('사진: 다크 모드 · 320px · 가로 스크롤 없음', async ()
     await go(hash, sel);
     await sleep(150);
     await noOverflow(`320px 사진 ${hash}`);
+    if (sel === '.page-list' || sel === '.page-home') await cardsOverlapFree(`320px 사진 ${hash}`, `${sel} .rcard`);
     if (sel === '.page-form') await shot('320-photo-form');
     if (sel === '.page-list') await shot('320-photo-list');
   }
+  // 320px: 긴 제목 + 사진 + 도장 + 방탈출 번호 — 작은 사진과 제목은 그대로 나란히, 긴 제목은 줄바꿈, 겹침 없음
+  const longTitle = '아주 긴 방탈출 테마 이름 — 잊혀진 시간의 연구소와 사라진 박사의 마지막 실험실';
+  const longRec = (await api('POST', '/api/records', {
+    record: {
+      type: 'escaperoom', date: TODAY, title: longTitle, members: [ids['연경'], ids['영식']], rating: 4, oneLiner: '긴 제목도 겹치지 않게',
+      photos: (await serverRecord(ids.erPhoto)).photos.slice(0, 1), er: { cleared: false, hints: 1, brand: '키이스케이프', branch: '강남점' },
+    },
+  })).data.record;
+  await page.reload();
+  await page.waitForSelector('#tabbar:not([hidden])');
+  await go('#/records', '.page-list');
+  const longCard = `.page-list .rcard:has(.card-link:text-is("${longTitle}"))`;
+  await page.waitForSelector(`${longCard} .rcard-photo`, { timeout: 5000 });
+  const [ll] = await cardLayouts(longCard);
+  check('320px 긴 제목: 사진과 제목이 나란히, 제목은 여러 줄로', ll.photo.r <= ll.main.l && ll.photo.t < ll.title.b && ll.title.t < ll.photo.b &&
+    ll.titleLines.length >= 2 && !!ll.stamp, JSON.stringify(ll));
+  check('320px 긴 제목: 겹침 없음', cardOverlaps(ll).length === 0, cardOverlaps(ll).join(', '));
+  await noOverflow('320px 긴 제목 카드');
+  await shot('320-long-title-card');
+  check('긴 제목 기록 지우기', (await api('DELETE', `/api/records?id=${encodeURIComponent(longRec.id)}`)).status === 200);
   // 320px 에서도 사진 칸 버튼들이 44px 이상 누를 수 있음
   await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
   const targets = await page.$$eval('.fsec-photos .ph-x, .fsec-photos .ph-cover-btn, .fsec-photos .ph-open, .fsec-photos .ph-add', (els) => els.map((el) => {

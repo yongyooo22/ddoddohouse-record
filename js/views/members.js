@@ -216,7 +216,7 @@ function renderProfile(root, id, ctx) {
       h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title', text: '최근 함께한 기록' }),
         total ? h('a', { class: 'link-more', href: `#/records?member=${encodeURIComponent(m.id)}` }, '모두 보기', icon('chevron')) : null),
       recent.length
-        ? h('div', { class: 'rlist' }, recent.map((r) => recordCard(r, { showMonth: true })))
+        ? h('div', { class: 'rlist' }, recent.map((r) => recordCard(r)))
         : h('p', { class: 'muted small pad', text: '기록에서 이 멤버를 고르면 여기에 모여요.' }))));
 }
 

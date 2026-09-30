@@ -44,6 +44,12 @@ export function fmtDate(str, { weekday = true, year = true } = {}) {
   return weekday ? `${base} (${WEEKDAYS[d.getDay()]})` : base;
 }
 
+/** 카드용 짧은 날짜 '2026.09.28' (잘못된 값이면 '') */
+export function fmtDateDot(str) {
+  const d = parseDate(str);
+  return d ? `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}` : '';
+}
+
 export function dayParts(str) {
   const d = parseDate(str);
   if (!d) return { day: '?', wd: '', month: '' };

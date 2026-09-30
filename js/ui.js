@@ -180,22 +180,23 @@ function glyphFor(kind) {
   return kind === 'dot' ? dotShape : starShape;
 }
 
+function ratingUnit(f, shape) {
+  return h('span', { class: `r-unit${f >= 1 ? ' is-full' : f >= 0.5 ? ' is-half' : ''}` },
+    shape('r-bg'), h('span', { class: 'r-fg' }, shape('r-fill')));
+}
+
 function ratingUnits(value, kind) {
   const shape = glyphFor(kind);
   const units = [];
-  for (let i = 0; i < 5; i++) {
-    const f = Math.max(0, Math.min(1, value - i));
-    const u = h('span', { class: `r-unit${f >= 1 ? ' is-full' : f >= 0.5 ? ' is-half' : ''}` },
-      shape('r-bg'), h('span', { class: 'r-fg' }, shape('r-fill')));
-    units.push(u);
-  }
+  for (let i = 0; i < 5; i++) units.push(ratingUnit(Math.max(0, Math.min(1, value - i)), shape));
   return units;
 }
 
-export function starsView(value, { size = 'sm', num = true, kind = 'star', label = '별점' } = {}) {
+/** compact: 모양 하나 + 숫자 (★ 4.5 — 카드처럼 좁은 곳) */
+export function starsView(value, { size = 'sm', num = true, kind = 'star', label = '별점', compact = false } = {}) {
   const v = Number(value) || 0;
   return h('span', { class: `stars stars-${size} glyph-${kind}`, role: 'img', 'aria-label': v > 0 ? `${label} ${v}점 (5점 만점)` : `${label} 없음` },
-    h('span', { class: 'stars-units' }, ratingUnits(v, kind)),
+    h('span', { class: 'stars-units' }, compact ? ratingUnit(v > 0 ? 1 : 0, glyphFor(kind)) : ratingUnits(v, kind)),
     num ? h('span', { class: 'stars-num', text: v > 0 ? v.toFixed(1) : '–' }) : null);
 }
 
