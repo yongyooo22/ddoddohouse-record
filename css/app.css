@@ -53,6 +53,10 @@
   --danger: #B3372F;
   --danger-soft: #FBE7E4;
   --ok: #287047;
+  /* 입장 화면 버튼: 차분한 진초록 + 흰 글자 (7:1 이상) */
+  --accent: #1E5E44;
+  --accent-strong: #174A35;
+  --on-accent: #FFFFFF;
 
   /* 멤버 색 (라이트): 아바타의 흰 글자가 4.5:1 이상 되도록 */
   --m-c1: #C23A4E;
@@ -122,6 +126,9 @@
     --danger: #F08A80;
     --danger-soft: #3A201E;
     --ok: #6CCB94;
+    --accent: #2E7A57;
+    --accent-strong: #286B4C;
+    --on-accent: #FFFFFF;
     --m-c1: #F28B98;
     --m-c2: #F5A55E;
     --m-c3: #E6C14D;
@@ -183,6 +190,9 @@
   --danger: #F08A80;
   --danger-soft: #3A201E;
   --ok: #6CCB94;
+  --accent: #2E7A57;
+  --accent-strong: #286B4C;
+  --on-accent: #FFFFFF;
   --m-c1: #F28B98;
   --m-c2: #F5A55E;
   --m-c3: #E6C14D;
@@ -638,32 +648,56 @@ body.is-locked .toasts { bottom: calc(24px + env(safe-area-inset-bottom)); }
 .tip span { flex: 1; }
 .tip .ico { color: var(--ink-3); }
 
-/* ── 잠금 화면 ──────────────────────────────────────── */
-.lock { display: grid; place-items: center; min-height: calc(100vh - 40px); min-height: calc(100dvh - 40px); padding: 28px 0; }
-.lock-paper {
-  position: relative; width: 100%; max-width: 400px;
-  padding: 34px 22px 22px; text-align: center;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 26px; box-shadow: var(--shadow-2);
-}
-.lock-paper::before {
-  content: ""; position: absolute; top: -12px; left: 50%; width: 104px; height: 26px;
-  transform: translateX(-50%) rotate(-3deg); border-radius: 3px;
-  background: color-mix(in srgb, var(--t-er) 34%, transparent);
-}
-.lock-logo { margin: 0 auto; width: 88px; height: 88px; border-radius: 22px; box-shadow: var(--shadow-1); }
-.lock-kicker { margin: 18px 0 2px; color: var(--ink-3); font-size: 13px; font-weight: 800; letter-spacing: .04em; }
-.lock-title { font-size: 27px; font-weight: 900; letter-spacing: -.04em; }
-.lock-desc { margin: 6px 0 22px; color: var(--ink-2); }
-.lock-notice { display: flex; gap: 8px; align-items: flex-start; margin: -6px 0 16px; padding: 10px 12px; border-radius: 12px; background: var(--t-er-soft); color: var(--t-er-ink); font-size: 13.5px; font-weight: 700; text-align: left; }
+/* ── 입장(잠금) 화면 ────────────────────────────────── */
+/* 담백한 티켓 한 장: 크림색 단색 바탕 · 흰 카드 · 양옆 반원 홈과 얇은 점선 하나 (위 제목 / 아래 입력).
+   점무늬 바탕은 이 화면에서만 끔 */
+body.is-locked { background-image: none; }
+.lock { display: grid; place-items: center; min-height: calc(100vh - 40px); min-height: calc(100dvh - 40px); padding: 24px 4px; }
+.lock-card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-1); }
+.lock-head { display: flex; flex-direction: column; align-items: center; padding: 26px 22px 20px; text-align: center; }
+.lock-ico { width: 30px; height: 30px; margin-bottom: 10px; color: var(--accent); stroke-width: 1.6; }
+.lock-kicker { color: var(--ink-2); font-size: 13px; font-weight: 700; }
+.lock-title { margin-top: 2px; font-size: 26px; font-weight: 900; letter-spacing: -.04em; line-height: 1.25; text-wrap: balance; }
+.lock-desc { margin-top: 6px; color: var(--ink-2); font-size: 15px; }
+.lock-desc span { display: inline-block; }
+/* 절취선: 카드 테두리 위에 바탕색 반원(반지름 10px)을 얹어 홈을 파고, 그 사이를 점선으로.
+   반원의 곧은 쪽이 카드 바깥 테두리와 딱 맞게 (-(여백 14px + 테두리 1px)) */
+.lock-perf { position: relative; margin: 0 14px; border-top: 1px dashed var(--line-2); }
+.lock-perf::before, .lock-perf::after { content: ""; position: absolute; top: -10px; width: 10px; height: 20px; background: var(--paper); border: 1px solid var(--line); }
+.lock-perf::before { left: -15px; border-left: 0; border-radius: 0 10px 10px 0; }
+.lock-perf::after { right: -15px; border-right: 0; border-radius: 10px 0 0 10px; }
+.lock-body { display: flex; flex-direction: column; gap: 18px; padding: 20px 22px 12px; }
+.lock-notice { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--t-er-soft); color: var(--t-er-ink); font-size: 13.5px; font-weight: 700; }
 .lock-notice .ico { width: 18px; height: 18px; margin-top: 1px; }
-.lock-form { display: flex; flex-direction: column; gap: 8px; text-align: left; }
+.lock-form { display: flex; flex-direction: column; }
+.lock-label { margin-bottom: 8px; color: var(--ink); font-size: 14px; font-weight: 700; }
 .lock-input { position: relative; }
-.lock-input .input { padding-right: 52px; }
-.lock-show { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 44px; height: 44px; border: 0; background: transparent; color: var(--ink-3); cursor: pointer; }
+.lock-field { height: 50px; min-height: 50px; padding: 0 50px 0 14px; border-radius: 10px; background: var(--surface-2); }
+.lock-field:focus { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent); }
+.lock-field[aria-invalid="true"] { border-color: var(--danger); }
+.lock-field[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 26%, transparent); }
+.lock-show { position: absolute; right: 3px; top: 50%; transform: translateY(-50%); display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 8px; background: transparent; color: var(--ink-2); cursor: pointer; }
 .lock-show[aria-pressed="true"] { color: var(--ink); }
-.lock-err { min-height: 1.3em; margin-top: 2px; color: var(--danger); font-size: 14px; font-weight: 700; text-align: center; }
-.lock-hint { display: flex; gap: 6px; align-items: flex-start; margin-top: 12px; color: var(--ink-3); font-size: 12.5px; text-align: left; }
-.lock-hint .ico { width: 15px; height: 15px; margin-top: 2px; }
+.lock-show:focus-visible { outline-offset: -2px; }
+/* 오류는 입력 칸 바로 아래 (비어 있으면 높이 0) */
+.lock-err { display: flex; gap: 6px; align-items: flex-start; color: var(--danger); font-size: 13.5px; font-weight: 700; line-height: 1.45; }
+.lock-err:not(:empty) { margin-top: 8px; }
+.lock-err .ico { flex: none; width: 16px; height: 16px; margin-top: 2px; }
+.lock-go { min-height: 50px; margin-top: 12px; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 16px; font-weight: 800; }
+.lock-go:disabled { opacity: .75; }
+.lock-go:focus-visible { outline-offset: 3px; }
+@media (hover: hover) { .lock-go:hover:not(:disabled) { background: var(--accent-strong); } }
+/* 아래 안내: 본문보다 작게, 그래도 또렷하게 (--ink-2) */
+.lock-hint { display: flex; gap: 6px; align-items: flex-start; color: var(--ink-2); font-size: 13px; line-height: 1.55; }
+.lock-hint .ico { flex: none; width: 15px; height: 15px; margin-top: 2.5px; color: var(--ink-3); }
+.lock-foot > .lock-hint + .lock-hint { margin-top: 6px; }
+/* 공용 기기 이용 안내 (펼치기) — 누르는 영역 44px */
+.lock-more-sum { display: block; padding: 12px 0; border-radius: 6px; cursor: pointer; list-style: none; }
+.lock-more-sum::-webkit-details-marker { display: none; }
+.lock-more-sum .lock-hint { align-items: center; font-weight: 700; }
+.lock-more-sum .ico { margin-top: 0; transition: transform .15s; }
+.lock-more[open] .lock-more-sum .ico { transform: rotate(90deg); }
+.lock-more-text { padding: 0 0 8px 21px; color: var(--ink-2); font-size: 13px; line-height: 1.6; }
 
 /* ── 홈 ─────────────────────────────────────────────── */
 .home-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 18px 0 2px; }
@@ -1338,6 +1372,9 @@ html.vw-open, html.vw-open body { overflow: hidden; }
   .seg-type .seg-item[class*="t-"]::before { display: none; }
 }
 @media (max-width: 360px) {
+  /* 입장 화면: 좌우 여백을 조금 줄여 입력 칸의 자리표시 글자가 잘리지 않게 */
+  .lock { padding-inline: 0; }
+  .lock-head, .lock-body { padding-inline: 18px; }
   .ph-grid { gap: 12px 8px; }
   .ph-add-ico { width: 28px; height: 28px; border-radius: 9px; }
   .ph-add-ico .ico { width: 17px; height: 17px; }

@@ -247,6 +247,47 @@ function cardOverlaps(c) {
   if (c.titleLines.some((x) => x.r > c.right + 0.5)) out.push('제목이 카드 밖으로');
   return out;
 }
+/** 계산된 두 색(rgb(…))의 명도 대비 (WCAG) */
+function contrastOf(fg, bg) {
+  const lum = (c) => {
+    const [r, g, b] = (String(c).match(/[\d.]+/g) || []).map(Number);
+    const f = (v) => { const x = v / 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const [a, b] = [lum(fg), lum(bg)].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+}
+/** 입장 화면 조각의 위치·색 (화면 px) */
+async function lockLayout(p = page) {
+  return p.evaluate(() => {
+    const box = (s) => {
+      const el = document.querySelector(s);
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height };
+    };
+    const st = (s) => getComputedStyle(document.querySelector(s));
+    const perf = document.querySelector('.lock-perf');
+    const pr = perf.getBoundingClientRect();
+    const notch = (pseudo) => {
+      const c = getComputedStyle(perf, pseudo);
+      return { content: c.content, l: pr.left + parseFloat(c.left), r: pr.right - parseFloat(c.right), bg: c.backgroundColor };
+    };
+    return {
+      vw: document.documentElement.clientWidth,
+      bodyImage: getComputedStyle(document.body).backgroundImage, bodyBg: getComputedStyle(document.body).backgroundColor,
+      bodySize: parseFloat(getComputedStyle(document.body).fontSize),
+      card: box('.lock-card'), cardBg: st('.lock-card').backgroundColor, cardRadius: parseFloat(st('.lock-card').borderTopLeftRadius),
+      imgs: document.querySelectorAll('.lock img').length, ico: box('.lock-head svg.lock-ico'),
+      kickerSize: parseFloat(st('.lock-kicker').fontSize), titleSize: parseFloat(st('.lock-title').fontSize), descSize: parseFloat(st('.lock-desc').fontSize),
+      desc: box('.lock-desc'), perf: box('.lock-perf'), perfLine: `${st('.lock-perf').borderTopStyle} ${st('.lock-perf').borderTopWidth}`,
+      notchL: notch('::before'), notchR: notch('::after'),
+      label: box('.lock-label'), input: box('#lock-key'), err: box('.lock-err'), btn: box('.lock-go'),
+      btnBg: st('.lock-go').backgroundColor, btnColor: st('.lock-go').color,
+      hintColor: st('.lock-foot .lock-hint').color, hintSize: parseFloat(st('.lock-foot .lock-hint').fontSize),
+    };
+  });
+}
 async function cardsOverlapFree(label, sel = '.page-list .rcard') {
   const all = await cardLayouts(sel);
   const bad = all.map((c, i) => ({ i, o: cardOverlaps(c) })).filter((x) => x.o.length);
@@ -327,9 +368,68 @@ await step('잠금 화면 (키 없음)', async () => {
   check('잠금 화면 표시', !!(await page.$('.lock #lock-key')));
   check('탭바 숨김', await page.$eval('#tabbar', (e) => e.hidden));
   check('앱 이름 표시', (await text('.lock-title')) === '또또하우스 기록장');
-  check('안내 문구', (await text('.lock-desc')).includes('공유받은 링크로 들어와 주세요'));
+  check('안내 문구', (await text('.lock-desc')) === '입장 코드나 초대 링크를 입력해 주세요.');
   await noOverflow('잠금 화면');
   await shot('01-lock');
+  // 담백한 티켓북: 크림색 단색 바탕 · 가운데 흰 카드 · 작은 티켓 아이콘 · 반원 홈과 점선 하나
+  const L = await lockLayout();
+  check('입장 화면: 점무늬 없는 크림색 단색 바탕', L.bodyImage === 'none' && L.bodyBg === 'rgb(247, 244, 238)', `${L.bodyImage} ${L.bodyBg}`);
+  check('입장 카드: 흰 카드가 가운데, 최대 420px, 좌우 여백, 둥글기 줄임', L.card.w <= 420 && L.card.l >= 16 && Math.abs(L.card.l - (L.vw - L.card.r)) < 1 &&
+    L.cardBg === 'rgb(255, 255, 255)' && L.cardRadius <= 16, JSON.stringify({ card: L.card, bg: L.cardBg, radius: L.cardRadius }));
+  check('제목 영역: 공책 그림 대신 작은 티켓 아이콘', L.imgs === 0 && !!L.ico && L.ico.w <= 32, JSON.stringify(L.ico));
+  check('보조 문구는 작게, 기록장 이름이 가장 크게', (await text('.lock-kicker')) === '우리 모임의 놀이 일기' && L.titleSize >= 24 && L.kickerSize < L.descSize && L.descSize < L.titleSize,
+    `${L.kickerSize} ${L.descSize} ${L.titleSize}`);
+  check('티켓 절취선: 제목과 입력 사이에 얇은 점선 하나', (await page.$$('.lock-perf')).length === 1 && L.perfLine === 'dashed 1px' && L.perf.t > L.desc.b && L.perf.b < L.label.t, L.perfLine);
+  check('티켓 절취선: 양옆 반원 홈이 카드 가장자리에 (바탕색)', L.notchL.content !== 'none' && L.notchR.content !== 'none' &&
+    Math.abs(L.notchL.l - L.card.l) < 1 && Math.abs(L.notchR.r - L.card.r) < 1 && L.notchL.bg === L.bodyBg, JSON.stringify([L.notchL, L.notchR, L.card]));
+  check('입력 칸: 라벨 · 자리표시', (await text('label[for="lock-key"]')) === '입장 코드 또는 초대 링크' && (await page.getAttribute('#lock-key', 'placeholder')) === '코드 또는 링크 붙여넣기');
+  check('입력 칸 · 버튼 높이 48~52px', L.input.h >= 48 && L.input.h <= 52 && L.btn.h >= 48 && L.btn.h <= 52, `${L.input.h} ${L.btn.h}`);
+  const [br, bgn, bb] = L.btnBg.match(/\d+/g).map(Number);
+  check('들어가기 버튼: 진초록 바탕 · 흰 글씨 “기록장 들어가기”', (await text('.lock-go')) === '기록장 들어가기' && bgn > br && bgn > bb && bgn < 140 &&
+    L.btnColor === 'rgb(255, 255, 255)' && contrastOf(L.btnColor, L.btnBg) >= 4.5, `${L.btnBg} ${L.btnColor}`);
+  check('하단 안내: 짧게, 본문보다 작지만 또렷하게 (대비 4.5 이상)', (await text('.lock-foot > .lock-hint')) === '입장 코드는 이 기기에 저장돼요.' &&
+    L.hintSize < L.bodySize && contrastOf(L.hintColor, L.cardBg) >= 4.5, `${L.hintSize}px ${L.hintColor}`);
+  check('공용 기기 이용 안내: 처음엔 접혀 있음', (await text('.lock-more summary')) === '공용 기기 이용 안내' &&
+    !(await page.$eval('.lock-more', (e) => e.open)) && !(await page.isVisible('.lock-more-text')));
+  await page.click('.lock-more summary');
+  check('누르면 펼쳐져 안내가 보임', (await page.$eval('.lock-more', (e) => e.open)) && (await page.isVisible('.lock-more-text')) &&
+    (await text('.lock-more-text')) === '입장 코드와 초대 링크는 다른 사람에게 전달하지 마세요. 공용 기기에서는 시크릿(비공개) 창을 이용해 주세요.');
+  await page.click('.lock-more summary');
+  // 기존 기능: 코드 보이기·숨기기
+  await page.click('.lock-show');
+  check('코드 보이기', (await page.$eval('#lock-key', (e) => e.type)) === 'text' && (await page.getAttribute('.lock-show', 'aria-pressed')) === 'true');
+  await page.click('.lock-show');
+  check('코드 숨기기', (await page.$eval('#lock-key', (e) => e.type)) === 'password' && (await page.getAttribute('.lock-show', 'aria-pressed')) === 'false');
+  // 키보드 초점이 또렷하게: 입력 칸 → 보기 버튼 → 들어가기 버튼
+  await page.focus('#lock-key');
+  const ring = await until(async () => { const v = await page.$eval('#lock-key', (e) => getComputedStyle(e).boxShadow); return /\b3px\b/.test(v) && v; }, 2000); // 고리는 0.15초 동안 나타남
+  check('입력 칸 초점 표시 (테두리 + 고리)', !!ring, String(ring));
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  const fo = await page.evaluate(() => { const e = document.activeElement; const c = getComputedStyle(e); return { cls: e.className, style: c.outlineStyle, w: parseFloat(c.outlineWidth) }; });
+  check('키보드 초점: 들어가기 버튼에 뚜렷한 테두리', /lock-go/.test(fo.cls) && fo.style !== 'none' && fo.w >= 2, JSON.stringify(fo));
+  // 빈 값: 입력 칸 바로 아래 오류, 칸을 빨갛게, 칸으로 초점. 다시 입력하면 지워짐
+  await page.fill('#lock-key', '');
+  await page.click('.lock-go');
+  const E = await lockLayout();
+  check('빈 값: 입력 칸 바로 아래 오류 · 칸 빨갛게 · 칸으로 초점', (await text('.lock-err')) === '입장 코드나 초대 링크를 입력해 주세요.' &&
+    (await page.getAttribute('#lock-key', 'aria-invalid')) === 'true' && (await page.evaluate(() => document.activeElement.id)) === 'lock-key' &&
+    E.err.t >= E.input.b && E.err.b <= E.btn.t && (await page.getAttribute('#lock-key', 'aria-describedby')) === 'lock-err', JSON.stringify(E.err));
+  await page.fill('#lock-key', 'x');
+  check('다시 입력하면 오류가 지워짐', (await text('.lock-err')) === '' && (await page.getAttribute('#lock-key', 'aria-invalid')) === null);
+  await page.fill('#lock-key', '');
+  // 다크 테마(기기 설정)에서도 같은 구성, 글씨 대비 유지
+  const cd = await newContext({ colorScheme: 'dark' });
+  const pd = await cd.newPage();
+  watch(pd, '[dark-lock] ');
+  await pd.goto(`${BASE}/`);
+  await pd.waitForSelector('.lock #lock-key');
+  const D = await lockLayout(pd);
+  check('다크 입장 화면: 어두운 단색 바탕 · 버튼과 안내 글씨 대비', D.bodyImage === 'none' && isDarkColor(D.bodyBg) && D.notchL.bg === D.bodyBg &&
+    contrastOf(D.btnColor, D.btnBg) >= 4.5 && contrastOf(D.hintColor, D.cardBg) >= 4.5, JSON.stringify({ bg: D.bodyBg, btn: [D.btnBg, D.btnColor], hint: D.hintColor }));
+  await sleep(200);
+  await pd.screenshot({ path: path.join(SHOTS, 'dark-01-lock.png'), fullPage: true });
+  await cd.close();
 });
 
 await step('잘못된 코드', async () => {
@@ -339,6 +439,10 @@ await step('잘못된 코드', async () => {
     const err = await until(async () => text('.lock-err'), 5000);
     check('오류 문구 표시', /코드가 맞지 않아요/.test(err || ''), err);
   });
+  const W = await lockLayout();
+  check('틀린 코드: 입력 칸 바로 아래 오류 · 칸 빨갛게 · 칸으로 초점 · 버튼 되살아남', W.err.t >= W.input.b && W.err.b <= W.btn.t &&
+    (await page.getAttribute('#lock-key', 'aria-invalid')) === 'true' && (await page.evaluate(() => document.activeElement.id)) === 'lock-key' &&
+    (await text('.lock-go')) === '기록장 들어가기' && !(await page.$eval('.lock-go', (e) => e.disabled)));
   check('여전히 잠금 화면', !!(await page.$('.lock')));
   check('잘못된 코드는 저장 안 됨', (await localKey()) === null);
   await shot('02-lock-error');
@@ -352,6 +456,7 @@ await step('공유 링크 #k= 로 잠금 해제', async () => {
   check('주소창에서 키 제거', !page.url().includes(SECRET) && !page.url().includes('k='), page.url());
   check('키가 localStorage 에 저장', (await localKey()) === SECRET);
   check('탭바 표시', !(await page.$eval('#tabbar', (e) => e.hidden)));
+  check('메인 화면 바탕(점무늬)은 그대로 (입장 화면만 단색)', /radial-gradient/.test(await page.evaluate(() => getComputedStyle(document.body).backgroundImage)));
   const hist = await page.evaluate(() => history.length);
   check('history 항목에도 키 없음', await page.evaluate(() => !location.href.includes('k=')), String(hist));
   await noOverflow('빈 홈');

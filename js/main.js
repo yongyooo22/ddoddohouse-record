@@ -142,7 +142,7 @@ api.onApiError((err) => {
     store.forgetAccess();
     started = false;
     clearHttpImageCache(); // 이 기기 브라우저 캐시에 남은 사진도 (다음 사람이 못 보게)
-    lock('코드가 바뀌었거나 맞지 않아요. 새로 공유받은 링크로 들어와 주세요.');
+    lock('입장 코드가 바뀌었거나 맞지 않아요. 새로 받은 초대 링크로 들어와 주세요.');
   } else if (err.code === 'too_many_attempts') {
     toast('시도가 너무 많아요. 15분쯤 뒤에 다시 해 주세요', 'error', 4500);
   }
