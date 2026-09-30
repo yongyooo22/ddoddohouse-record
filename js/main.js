@@ -3,7 +3,7 @@ import { h, icon } from './dom.js';
 import * as repo from './repo.js';
 import * as prefs from './prefs.js';
 import { onVersionChange } from './db.js';
-import { setRouter, markRendered, navigate } from './nav.js';
+import { setRouter, markRendered, navigate, noteRoute } from './nav.js';
 import { closeAllDialogs, toast } from './ui.js';
 import { closeViewer } from './views/photos.js';
 import * as homeView from './views/home.js';
@@ -80,6 +80,7 @@ function route() {
     if (m) { match = { name, mod, title, params: m.slice(1).map(safeDecode) }; break; }
   }
   if (!match) { navigate('#/', { replace: true }); return; }
+  noteRoute(location.hash || '#/');
 
   if (current && current.destroy) {
     try { current.destroy(); } catch (e) { console.error(e); }

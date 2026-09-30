@@ -6,7 +6,7 @@ import { GENRES, GENRE_KEYS, LIMITS } from '../constants.js';
 import { workLabel } from '../model.js';
 import { sameTitleWorks } from '../query.js';
 import { fmtDate } from '../format.js';
-import { navigate, goBack } from '../nav.js';
+import { navigate, goBack, returnTo } from '../nav.js';
 import { appBar, field, setFieldError, counterFor, segmented, toast, confirmDialog, choiceSheet, emptyState } from '../ui.js';
 import { photoField } from './photos.js';
 
@@ -75,7 +75,7 @@ export function mount(root, ctx) {
       const leftover = [...added].filter((id) => id !== m.cover);
       if (leftover.length) repo.discardImages(leftover).catch(() => {});
       toast('작품 정보를 고쳤어요', 'ok');
-      navigate(back, { replace: true });
+      returnTo(back);
     } catch (e) {
       if (e && e.errors) {
         for (const [k, msg] of Object.entries(e.errors)) setFieldError(fields[k] || fields.title, msg);
@@ -104,6 +104,8 @@ export function mount(root, ctx) {
     try {
       await repo.mergeWork(work.id, target);
       saved = true;
+      // 여기서 새로 올렸지만 쓰지 않게 된 표지 정리 (다른 기록이 쓰는 사진은 남음)
+      if (added.size) repo.discardImages([...added]).catch(() => {});
       toast('작품을 합쳤어요', 'ok');
       navigate(`#/work/${encodeURIComponent(target)}`, { replace: true });
     } catch {
@@ -117,6 +119,7 @@ export function mount(root, ctx) {
     try {
       await repo.deleteWork(work.id);
       saved = true;
+      if (added.size) repo.discardImages([...added]).catch(() => {});
       toast('작품과 기록을 지웠어요', 'ok');
       navigate('#/', { replace: true });
     } catch {

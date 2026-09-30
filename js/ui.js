@@ -254,23 +254,29 @@ export function ratingInput({ value = null, onChange, label = '평점', size = '
     return 5;
   }
 
-  let startX = 0, startY = 0, dragging = false, pointerId = null;
+  // 가로로 끌면 점수 조절, 세로로 쓸면 화면 스크롤(touch-action: pan-y) — 쓸어 넘기다 점수가 바뀌지 않게
+  let startX = 0, startY = 0, dragging = false, moved = false, pointerId = null;
   track.addEventListener('pointerdown', (e) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     pointerId = e.pointerId;
-    startX = e.clientX; startY = e.clientY; dragging = false;
-    try { track.setPointerCapture(e.pointerId); } catch { /* 무시 */ }
+    startX = e.clientX; startY = e.clientY; dragging = false; moved = false;
   });
   track.addEventListener('pointermove', (e) => {
     if (pointerId !== e.pointerId) return;
-    if (!dragging && Math.abs(e.clientX - startX) > 6 && Math.abs(e.clientX - startX) > Math.abs(e.clientY - startY)) dragging = true;
+    const dx = Math.abs(e.clientX - startX);
+    const dy = Math.abs(e.clientY - startY);
+    if (dx > 10 || dy > 10) moved = true;
+    if (!dragging && dx > 6 && dx > dy * 1.2) {
+      dragging = true;
+      try { track.setPointerCapture(e.pointerId); } catch { /* 무시 */ }
+    }
     if (dragging) set(valueAt(e.clientX));
   });
   track.addEventListener('pointerup', (e) => {
     if (pointerId !== e.pointerId) return;
     pointerId = null;
-    // 같은 별을 다시 누르면 미평가로
-    if (!dragging) {
+    // 제자리에서 누른 것만 '탭'으로: 같은 점수를 다시 누르면 미평가로
+    if (!dragging && !moved) {
       const nv = valueAt(e.clientX);
       set(nv === v ? 0 : nv);
     }

@@ -12,7 +12,9 @@ export async function loadSamples() {
   busy = true;
   try {
     const art = await makeSampleArt();
-    await repo.addSamples({ ...buildSamples({ art }) });
+    // 넣을 때마다 새 id (예전 예시 작품을 내 작품으로 남겨 두었어도 덮어쓰지 않게)
+    const tag = Date.now().toString(36);
+    await repo.addSamples({ ...buildSamples({ art, tag }) });
     toast(`예시 기록 ${repo.sampleCount()}개를 넣었어요`, 'ok');
     return true;
   } catch (e) {

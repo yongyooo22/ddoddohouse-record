@@ -163,7 +163,7 @@ const level = (v, min) => (typeof v === 'number' && v > 0 ? Math.max(min, Math.m
  */
 function parseV1(data) {
   const notes = ['예전 버전 백업이에요. 같은 장르·같은 제목(방탈출은 매장·지점까지 같을 때)인 기록은 한 작품으로 묶어요.',
-    '멤버별 점수·순위, 태그, 장소, 세부 점수는 새 기록장에 없는 항목이라 가져오지 않아요. 스포일러로 표시한 후기는 스포일러 메모로 옮겨요.'];
+    '멤버별 점수·순위, 태그, 장소, 세부 점수는 새 기록장에 없는 항목이라 가져오지 않아요. 스포일러로 표시한 기록의 한줄평·후기는 스포일러 메모로 옮겨요.'];
   const members = new Map();
   for (const m of Array.isArray(data.members) ? data.members : []) {
     if (m && isId(m.id) && typeof m.name === 'string') members.set(m.id, cleanLine(m.name).slice(0, LIMITS.companion));
@@ -208,15 +208,16 @@ function parseV1(data) {
       details.difficulty = level(er.difficulty, 1);
       details.fear = level(er.fear, 1);
     }
-    // 예전에는 '후기에 스포일러 있음' 표시만 있었음 → 그런 후기는 통째로 스포일러 메모로
-    if (r.spoiler === true) spoiler.memo = review;
+    // 예전에는 '스포일러 있음' 표시 하나로 한줄평과 후기를 함께 가렸음 → 그런 기록의 한줄평·후기는 통째로 스포일러 메모로
+    const hidden = r.spoiler === true;
+    if (hidden) spoiler.memo = [...[typeof r.oneLiner === 'string' ? r.oneLiner.trim() : '', review.trim()].filter(Boolean).join('\n\n')].slice(0, LIMITS.memo).join('');
     const pr = normalizePlay({
       id: v1Id(r.id),
       workId: work.id,
       date: r.date,
       rating: half(r.rating),
-      oneLiner: r.oneLiner,
-      review: r.spoiler === true ? '' : review,
+      oneLiner: hidden ? '' : r.oneLiner,
+      review: hidden ? '' : review,
       companions: (Array.isArray(r.members) ? r.members : []).map((id) => members.get(id)).filter(Boolean),
       photos: (Array.isArray(r.photos) ? r.photos : []).map(v1Id).filter(Boolean),
       details,

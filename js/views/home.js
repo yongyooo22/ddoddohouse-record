@@ -5,8 +5,8 @@ import * as prefs from '../prefs.js';
 import { GENRES, GENRE_KEYS, RATING_FILTERS } from '../constants.js';
 import { filterEntries, groupByWork, yearsOf } from '../query.js';
 import { fmtMonth, monthKey } from '../format.js';
-import { emptyState, nextId, toast, confirmDialog } from '../ui.js';
-import { legacyCopy, importLegacy, clearLegacy } from '../legacy.js';
+import { emptyState, nextId, toast, confirmDialog, openDialog } from '../ui.js';
+import { legacyCopy, parseLegacy, importLegacy, clearLegacy } from '../legacy.js';
 import { playCard, workCard, playRow, workRow } from './cards.js';
 import { loadSamples, removeSamplesWithConfirm } from './sample-actions.js';
 
@@ -161,9 +161,20 @@ export function mount(root) {
         h('button', {
           type: 'button', class: 'btn btn-small btn-primary',
           onClick: async () => {
+            const parsed = parseLegacy();
+            if (!parsed) { toast('예전 기록 사본을 읽지 못했어요', 'error'); return; }
+            const v = await openDialog({
+              title: '예전 기록을 가져올까요?',
+              body: h('div', {},
+                h('p', { class: 'dlg-text', text: `작품 ${parsed.works.length}개 · 플레이 기록 ${parsed.plays.length}개${parsed.skipped ? ` (형식이 맞지 않는 ${parsed.skipped}개는 건너뜀)` : ''}` }),
+                parsed.notes.map((t) => h('p', { class: 'dlg-note', text: t }))),
+              actions: [{ label: '취소', value: null, kind: 'ghost' }, { label: '가져오기', value: true, kind: 'primary' }],
+            });
+            if (!v) return;
             try {
-              const n = await importLegacy();
-              toast(`예전 기록 ${n}개를 가져왔어요`, 'ok');
+              const res = await importLegacy(parsed);
+              toast(res.cleared ? `예전 기록 ${res.plays}개를 가져왔어요`
+                : `예전 기록 ${res.plays}개를 가져왔어요. 가져오지 못한 ${res.skipped}개가 있어서 사본은 남겨 두었어요`, res.cleared ? 'ok' : 'info', 4500);
             } catch {
               toast('예전 기록을 가져오지 못했어요', 'error');
             }

@@ -25,13 +25,23 @@ export function clearLegacy() {
   for (const k of OLD_KEYS) lsRemove(k);
 }
 
-/** 남은 사본을 새 기록장으로 가져오기 (사진은 서버에만 있었으므로 없음). 가져온 기록 수 */
-export async function importLegacy() {
+/** 남은 사본을 새 구조로 읽어 보기 (가져오기 전 미리보기용). 읽을 수 없으면 null */
+export function parseLegacy() {
   const c = legacyCopy();
-  if (!c) return 0;
+  if (!c) return null;
   const r = parseBackup(JSON.stringify({ app: BACKUP_APP, version: 1, records: c.records, members: c.members }));
-  if (!r.ok) throw new Error(r.reason);
-  const res = await repo.importData({ ...r, images: [] }, { mode: 'merge' });
-  clearLegacy();
-  return res.plays;
+  return r.ok ? r : null;
+}
+
+/**
+ * 남은 사본을 새 기록장으로 가져오기 (사진은 서버에만 있었으므로 없음).
+ * 형식이 맞지 않아 건너뛴 기록이 있으면 사본을 지우지 않고 남겨 둠 (나중에 지우기로 정리)
+ * @returns {{plays:number, skipped:number, cleared:boolean}}
+ */
+export async function importLegacy(parsed = parseLegacy()) {
+  if (!parsed) return { plays: 0, skipped: 0, cleared: false };
+  const res = await repo.importData({ ...parsed, images: [] }, { mode: 'merge' });
+  const cleared = parsed.skipped === 0;
+  if (cleared) clearLegacy();
+  return { plays: res.plays, skipped: parsed.skipped, cleared };
 }

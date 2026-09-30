@@ -96,7 +96,8 @@ test('예전 버전(모임용 서버) 백업 → 작품·플레이 구조로', (
   assert.equal(r.plays.filter((p) => p.workId === gn.id).length, 2);
   const p1 = r.plays.find((p) => p.id === 'v1_r1');
   assert.equal(p1.review, '', '스포일러로 표시한 후기는 일반 후기에서 뺌');
-  assert.equal(p1.spoiler.memo, '결말이 반전');
+  assert.equal(p1.oneLiner, '', '예전 앱이 함께 가렸던 한줄평도 빼서 카드에 나오지 않게');
+  assert.equal(p1.spoiler.memo, '재밌다\n\n결말이 반전');
   assert.deepEqual(p1.companions, ['민지']);
   assert.deepEqual(p1.photos, ['v1_ph1']);
   assert.equal(p1.details.result, 'success');

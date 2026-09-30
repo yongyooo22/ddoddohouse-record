@@ -105,7 +105,8 @@ test('도우미', () => {
   assert.equal(titleKey('Catan'), titleKey('catan'));
   assert.equal(isValidDate('2024-02-29'), true);
   assert.equal(isValidDate('2023-02-29'), false);
-  assert.equal(isValidDate('1969-12-31'), false);
+  assert.equal(isValidDate('1899-12-31'), false);
+  assert.equal(isValidDate('1950-06-01'), true, '예전 버전처럼 1900년부터');
   assert.equal(cleanLine(' a \n b '), 'a b');
   assert.equal(cleanText(' a \r\n b '), 'a \n b');
   assert.notEqual(newId('p'), newId('p'));

@@ -24,6 +24,21 @@ export function goBack(fallback = '#/') {
   else navigate(fallback, { replace: true });
 }
 
+// 바로 앞 화면의 주소 (저장 후 같은 화면이 history 에 두 번 쌓이지 않게 — 앞 화면이면 뒤로 가기)
+let prevHash = null;
+let curHash = null;
+export function noteRoute(hash) {
+  if (hash === curHash) return;
+  prevHash = curHash;
+  curHash = hash;
+}
+
+/** 저장 뒤 target 으로: 바로 앞 화면이 target 이면 뒤로 가기, 아니면 지금 항목을 target 으로 바꿈 */
+export function returnTo(target) {
+  if (prevHash === target && depth > 1 && history.length > 1) history.back();
+  else navigate(target, { replace: true });
+}
+
 // 저장 직후 상세 화면에서 도장을 한 번만 보여 주기 위한 표시 (새로고침하면 사라짐)
 let justSaved = null;
 export function markJustSaved(id) { justSaved = id; }

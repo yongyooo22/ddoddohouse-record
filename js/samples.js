@@ -60,19 +60,24 @@ const PLAYS = [
   },
 ];
 
-/** 예시 작품·기록 (검증을 거친 값, 모두 sample: true). covers: {workId|playId → 사진 id} */
-export function buildSamples({ now = new Date().toISOString(), art = {} } = {}) {
+/**
+ * 예시 작품·기록 (검증을 거친 값, 모두 sample: true). art: {원래 작품·기록 id → 사진 id}
+ * tag: 넣을 때마다 id 뒤에 붙이는 표시 — 예전에 넣은 예시 작품을 내 작품으로 남겨 두었어도
+ *      다시 넣는 예시가 그 작품을 덮어쓰지 않게
+ */
+export function buildSamples({ now = new Date().toISOString(), art = {}, tag = '' } = {}) {
+  const idOf = (id) => (tag ? `${id}_${tag}` : id);
   const works = WORKS.map((w) => {
-    const r = normalizeWork({ ...w, cover: art[w.id] || null, sample: true, createdAt: now, updatedAt: now });
+    const r = normalizeWork({ ...w, id: idOf(w.id), cover: art[w.id] || null, sample: true, createdAt: now, updatedAt: now });
     if (!r.ok) throw new Error(`sample work ${w.id}`);
     return r.value;
   });
-  const genre = new Map(works.map((w) => [w.id, w.genre]));
+  const genre = new Map(WORKS.map((w) => [w.id, w.genre]));
   const plays = PLAYS.map((p, i) => {
     // 같은 날짜 안에서도 순서가 흔들리지 않게 만든 시각을 조금씩 다르게
     const t = new Date(Date.parse(now) - i * 1000).toISOString();
     const photos = art[p.id] ? [art[p.id]] : [];
-    const r = normalizePlay({ ...p, photos, sample: true, createdAt: t, updatedAt: t }, genre.get(p.workId));
+    const r = normalizePlay({ ...p, id: idOf(p.id), workId: idOf(p.workId), photos, sample: true, createdAt: t, updatedAt: t }, genre.get(p.workId));
     if (!r.ok) throw new Error(`sample play ${p.id}: ${JSON.stringify(r.errors)}`);
     return r.value;
   });

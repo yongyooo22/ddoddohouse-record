@@ -291,13 +291,19 @@ export async function mergeWork(fromId, toId) {
   if (!from || !to || from.id === to.id || from.genre !== to.genre) throw new ValidationFailed({ merge: '같은 장르의 다른 작품만 합칠 수 있어요' });
   const now = new Date().toISOString();
   const putPlays = playsOfWork(fromId).map((p) => ({ ...p, workId: toId, updatedAt: now }));
-  const putWorks = [];
   const dropImages = [];
+  let target = to;
+  // 합칠 작품에 표지가 없으면 표지를 넘겨 줌
   if (from.cover) {
-    // 합칠 작품에 표지가 없으면 표지를 넘겨 줌
-    if (!to.cover) putWorks.push({ ...to, cover: from.cover, updatedAt: now });
+    if (!to.cover) target = { ...target, cover: from.cover };
     else dropImages.push(from.cover);
   }
+  // 예시 작품으로 내 기록을 옮기면 그 작품은 더 이상 예시가 아님
+  if (to.sample && putPlays.some((p) => !p.sample)) {
+    const { sample, ...rest } = target;
+    target = rest;
+  }
+  const putWorks = target !== to ? [{ ...target, updatedAt: now }] : [];
   await commit({ putWorks, putPlays, delWorks: [fromId], dropImages });
   return putPlays.length;
 }
@@ -336,6 +342,7 @@ export async function putImage({ full, thumb, width, height, sample = false }) {
     height: Number(height) || 0,
     size: f.byteLength + t.byteLength,
     createdAt: new Date().toISOString(),
+    storedAt: Date.now(),
   };
   if (sample) rec.sample = true;
   await db.run(['images'], 'readwrite', (s) => { s.images.put(rec); });
@@ -366,16 +373,27 @@ export async function discardImages(ids) {
 
 /**
  * 어떤 기록에도 쓰이지 않는 사진 정리. keep: 작성 중인 초안의 사진.
- * 다른 탭에서 쓰는 중인 폼의 사진을 지우지 않도록, 올린 지 graceMs 가 지난 것만.
+ * 다른 탭에서 쓰는 중인 폼·가져오는 중인 백업의 사진을 지우지 않도록, 이 브라우저에 저장한 지 graceMs 가 지난 것만.
  */
 export async function cleanupOrphanImages({ keep = [], graceMs = 24 * 3600 * 1000 } = {}) {
   const keys = await db.getAllKeys('images');
   const used = referencedImages();
   for (const k of keep) used.add(k);
   const now = Date.now();
-  const del = keys.filter((id) => !used.has(id) && now - imageTime(id) > graceMs);
+  const candidates = keys.filter((id) => !used.has(id));
+  if (!candidates.length) return 0;
+  // 후보(보통 몇 장)만 읽어서 저장 시각 확인 — 예전에 저장한 사진은 id 에 담긴 시각으로
+  const recs = await db.run(['images'], 'readonly', (st) => {
+    const reqs = candidates.map((id) => st.images.get(id));
+    return () => reqs.map((r) => r.result || null);
+  });
+  const del = candidates.filter((id, i) => {
+    const r = recs[i];
+    const t = (r && Number(r.storedAt)) || imageTime(id);
+    return now - t > graceMs;
+  });
   if (!del.length) return 0;
-  await db.run(['images'], 'readwrite', (s) => { for (const id of del) s.images.delete(id); });
+  await db.run(['images'], 'readwrite', (st) => { for (const id of del) st.images.delete(id); });
   imagesDeleted(del);
   return del.length;
 }
@@ -386,8 +404,11 @@ export async function imageCount() {
 
 // ── 예시 기록 ──
 
-/** 예시 작품·기록·사진 넣기 (모두 sample: true) */
-export async function addSamples({ works, plays, images = [] }) {
+/** 예시 작품·기록·사진 넣기 (모두 sample: true). 이미 있는 id 는 절대 덮어쓰지 않음 */
+export async function addSamples({ works: ws, plays: ps, images = [] }) {
+  const works = ws.filter((w) => !state.works.has(w.id));
+  const workIds = new Set(works.map((w) => w.id));
+  const plays = ps.filter((p) => !state.plays.has(p.id) && workIds.has(p.workId));
   await db.run(['works', 'plays', 'images'], 'readwrite', (s) => {
     for (const im of images) s.images.put(im);
     for (const w of works) s.works.put(w);
@@ -427,39 +448,59 @@ export async function removeSamples() {
 
 /**
  * 백업에서 읽은(검증을 마친) 작품·기록·사진 저장.
- * mode 'merge': 이미 있는 id 는 건너뜀, 'replace': 모두 지우고 백업으로 바꿈
+ * mode 'merge': 이미 있는 id 는 건너뜀, 'replace': 지금 기록을 백업으로 바꿈
+ * keepImages: 바꿀 때도 남길 사진 (작성 중인 초안의 사진)
+ * 'replace' 도 지금 기록을 먼저 지우지 않는다: 사진을 모두 저장한 뒤, 기록 교체는 한 트랜잭션으로
+ * (중간에 공간 부족 등으로 실패해도 원래 기록이 남도록). 쓰이지 않게 된 사진은 마지막에 정리.
  */
-export async function importData({ works, plays, images, bookName }, { mode = 'merge' } = {}) {
+export async function importData({ works, plays, images, bookName }, { mode = 'merge', keepImages = [] } = {}) {
   const replace = mode === 'replace';
+  const localImages = new Set(await db.getAllKeys('images'));
   const haveW = replace ? new Set() : new Set(state.works.keys());
   const haveP = replace ? new Set() : new Set(state.plays.keys());
-  const haveI = replace ? new Set() : new Set(await db.getAllKeys('images'));
   let addW = works.filter((w) => !haveW.has(w.id));
-  let addP = plays.filter((p) => !haveP.has(p.id) && (haveW.has(p.workId) || addW.some((w) => w.id === p.workId)));
+  const addWIds = new Set(addW.map((w) => w.id));
+  let addP = plays.filter((p) => !haveP.has(p.id) && (haveW.has(p.workId) || addWIds.has(p.workId)));
   // 백업에도, 이 브라우저에도 없는 사진(사진 없이 내보낸 백업 등)은 기록에서 뺌
-  const available = new Set([...haveI, ...images.map((im) => im.id)]);
+  const available = new Set([...localImages, ...images.map((im) => im.id)]);
   addW = addW.map((w) => (w.cover && !available.has(w.cover) ? { ...w, cover: null } : w));
   addP = addP.map((p) => (p.photos.some((i) => !available.has(i)) ? { ...p, photos: p.photos.filter((i) => available.has(i)) } : p));
-  const neededImages = new Set();
-  for (const p of addP) for (const i of p.photos || []) neededImages.add(i);
-  for (const w of addW) if (w.cover) neededImages.add(w.cover);
-  const addI = images.filter((im) => neededImages.has(im.id) && !haveI.has(im.id));
-  if (replace) {
-    await db.clearAll();
-    imagesDeleted(null);
+  const needed = new Set();
+  for (const p of addP) for (const i of p.photos || []) needed.add(i);
+  for (const w of addW) if (w.cover) needed.add(w.cover);
+  const now = Date.now();
+  const addI = images.filter((im) => needed.has(im.id) && !localImages.has(im.id)).map((im) => ({ ...im, storedAt: now }));
+  let stale = [];
+  try {
+    // 1) 사진 먼저 (크기가 커서 여러 번에 나눠) — 아직 기존 기록은 그대로
+    for (let i = 0; i < addI.length; i += 10) {
+      const chunk = addI.slice(i, i + 10);
+      await db.run(['images'], 'readwrite', (st) => { for (const im of chunk) st.images.put(im); });
+    }
+    // 2) 기록은 한 번에: 바꾸기면 지우고 넣기를 같은 트랜잭션에서
+    await db.run(['works', 'plays', 'meta', 'deleted'], 'readwrite', (st) => {
+      if (replace) {
+        st.works.clear();
+        st.plays.clear();
+        st.meta.clear();
+        st.deleted.clear();
+      }
+      for (const w of addW) st.works.put(w);
+      for (const p of addP) st.plays.put(p);
+      if (bookName && (replace || state.bookName === DEFAULT_BOOK_NAME)) st.meta.put({ key: 'bookName', value: bookName });
+    });
+    // 3) 바꾸기: 새 기록이 쓰지 않는 예전 사진 정리
+    if (replace) {
+      const used = new Set([...needed, ...keepImages]);
+      stale = [...localImages].filter((id) => !used.has(id));
+      if (stale.length) await db.run(['images'], 'readwrite', (st) => { for (const id of stale) st.images.delete(id); });
+    }
+  } finally {
+    // 성공하든 실패하든 화면은 저장소에 실제로 있는 것으로
+    await loadAll().catch(() => {});
+    imagesDeleted(stale);
+    changed();
   }
-  // 사진은 크기가 커서 여러 번에 나눠 저장
-  for (let i = 0; i < addI.length; i += 10) {
-    const chunk = addI.slice(i, i + 10);
-    await db.run(['images'], 'readwrite', (s) => { for (const im of chunk) s.images.put(im); });
-  }
-  await db.run(['works', 'plays', 'meta'], 'readwrite', (s) => {
-    for (const w of addW) s.works.put(w);
-    for (const p of addP) s.plays.put(p);
-    if (bookName && (replace || state.bookName === DEFAULT_BOOK_NAME)) s.meta.put({ key: 'bookName', value: bookName });
-  });
-  await loadAll();
-  changed();
   return { works: addW.length, plays: addP.length, images: addI.length, skipped: plays.length - addP.length };
 }
 

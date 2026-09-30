@@ -106,7 +106,7 @@ async function importBackup(file) {
     if (!ok) return;
   }
   try {
-    const res = await repo.importData(r, { mode });
+    const res = await repo.importData(r, { mode, keepImages: prefs.draftPhotoIds() });
     toast(`기록 ${res.plays}개${res.images ? `, 사진 ${res.images}장` : ''}을 가져왔어요${res.skipped ? ` (이미 있는 ${res.skipped}개는 건너뜀)` : ''}`, 'ok', 4500);
   } catch (e) {
     toast(e && e.code === 'quota' ? '저장 공간이 부족해 다 가져오지 못했어요' : '가져오지 못했어요', 'error', 4500);
@@ -123,7 +123,7 @@ async function wipe() {
   if (!again) return;
   try {
     await repo.wipeAll();
-    prefs.clearDraft();
+    prefs.clearAllDrafts();
     clearLegacy();
     toast('모든 기록을 지웠어요', 'ok');
   } catch {

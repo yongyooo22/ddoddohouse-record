@@ -192,6 +192,13 @@ async function quickRecord({ genre, title, store, branch, date, rating, oneLiner
   if (rating) await setRating('.form-card .rating-track', rating);
   if (oneLiner) await fill('한 줄 감상', oneLiner);
 }
+/** 메인에서 제목으로 카드 열기 (예시 기록 id 는 넣을 때마다 달라짐) */
+async function openCard(title, n = 0) {
+  await go('#/', 'home');
+  await page.click(`.feed .tk-card:has(.tk-title:text-is("${title}")) >> nth=${n}`);
+  await route('play');
+  await sleep(150);
+}
 async function playIdFromHash() {
   return page.evaluate(() => decodeURIComponent((/#\/play\/([^/?]+)/.exec(location.hash) || [])[1] || ''));
 }
@@ -252,6 +259,16 @@ await step('빠른 기록: 장르·제목·날짜만 (날짜는 오늘로 기본
 
 await step('장르를 고르면 그 장르 항목만', async () => {
   await go('#/new', 'new');
+  // 별 위에서 세로로 쓸어도(스크롤) 평점이 바뀌지 않고, 제자리에서 누르면 바뀜
+  const box = await page.$eval('.form-card .rating-track', (e) => { const r = e.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; });
+  await page.mouse.move(box.x + box.w * 0.7, box.y + box.h / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.w * 0.7, box.y + box.h / 2 + 40, { steps: 6 });
+  await page.mouse.up();
+  check('세로로 쓸면 평점 그대로', (await page.getAttribute('.form-card .rating-track', 'aria-valuenow')) === '0');
+  await page.mouse.click(box.x + box.w * 0.7, box.y + box.h / 2);
+  check('누르면 평점', Number(await page.getAttribute('.form-card .rating-track', 'aria-valuenow')) > 0);
+  await page.click('.rating-clear');
   await pickGenre('방탈출');
   check('방탈출: 매장·지점 칸 보임', await page.isVisible('.field-place'));
   await openExtra();
@@ -423,6 +440,12 @@ await step('수정 · 삭제', async () => {
   await save();
   await route('play');
   check('고친 내용 반영', /다시 생각해도 최고의 테마/.test(await text('.td-oneliner')));
+  // 상세 → 수정 → 저장 뒤 '뒤로'를 한 번 누르면 상세보다 앞 화면으로 (같은 상세가 두 번 쌓이지 않음)
+  const detailHash = await page.evaluate(() => location.hash);
+  await page.goBack();
+  await sleep(250);
+  check('수정 후 뒤로가기가 한 번에 앞 화면으로', (await page.evaluate(() => location.hash)) !== detailHash);
+  await go(detailHash, 'play');
   check('수정 알림', !!(await toastSeen(/기록을 고쳤어요/)));
   await page.click('.spoiler-fold .fold-btn');
   check('스포일러가 그대로', (await text('.spoilers')).includes('0315'));
@@ -521,6 +544,13 @@ await step('작성 중인 기록은 초안으로 남음', async () => {
   await page.fill('.input-title', '아그리콜라');
   await sleep(500);
   await go('#/', 'home');
+  // 작품 화면에서 연 새 기록은 초안을 따로 씀: 아무것도 안 쓰고 나가도 위 초안은 남아 있어야
+  await go(`#/work/${encodeURIComponent(catanWork)}`, 'work');
+  await page.click('.tw-actions a:has-text("플레이 기록 추가")');
+  await route('new');
+  check('작품 화면에서 연 폼에는 다른 초안이 안 섞임', !(await page.$('.form-restored')));
+  await page.click('.form-bar .icon-btn[aria-label="닫기"]');
+  await route('work');
   await go('#/new', 'new');
   check('이어 쓰기 안내', await page.isVisible('.form-restored'));
   check('쓰던 제목 복원', (await page.inputValue('.input-title')) === '아그리콜라');
@@ -600,6 +630,67 @@ await step('백업 내보내기 · 다른 브라우저에서 가져오기', asyn
   await fresh.close();
 });
 
+await step('백업 ‘모두 바꾸기’가 중간에 실패해도 기존 기록은 그대로', async () => {
+  await go('#/', 'home');
+  const before = (await page.$$('.feed .tk-card')).length;
+  const res = await page.evaluate(async (backupText) => {
+    const repo = await import('/js/repo.js');
+    const { parseBackup } = await import('/js/backup.js');
+    const r = parseBackup(backupText);
+    // 이 브라우저에 없는 사진 하나를 쓰도록 바꿔서, 사진 저장 단계에서 '공간 부족'을 흉내 냄
+    const withPhoto = r.plays.find((p) => p.photos.length);
+    r.images[0].id = 'i_e2e_new';
+    withPhoto.photos = ['i_e2e_new'];
+    const orig = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (...a) {
+      if (this.name === 'images') throw new DOMException('full', 'QuotaExceededError');
+      return orig.apply(this, a);
+    };
+    let err = null;
+    try { await repo.importData(r, { mode: 'replace' }); } catch (e) { err = e.code || e.name; } finally { IDBObjectStore.prototype.put = orig; }
+    return { err, plays: repo.playsList().length };
+  }, readFileSync(backupFile, 'utf8'));
+  check('실패를 알림 (공간 부족)', res.err === 'quota', JSON.stringify(res));
+  await page.reload();
+  await route('home');
+  await page.waitForSelector('.feed .tk-card');
+  check('새로고침해도 기존 기록이 모두 남음', (await page.$$('.feed .tk-card')).length === before, `${before}`);
+});
+
+await step('예시를 다시 넣어도 내가 이어 쓴 예시 작품은 그대로', async () => {
+  await go('#/settings', 'settings');
+  await page.click('.settings button:has-text("예시 넣기")');
+  await until(async () => /예시 기록 6개/.test(await text('.settings')), 6000);
+  await go('#/', 'home');
+  await page.click('.feed .tk-card:has(.stag):has(.tk-title:text-is("스플렌더")) >> nth=0');
+  await route('play');
+  await page.click('.work-link');
+  await route('work');
+  const keptWork = await page.evaluate(() => decodeURIComponent((/#\/work\/([^/?]+)/.exec(location.hash) || [])[1] || ''));
+  await page.click('.tw-actions a:has-text("플레이 기록 추가")');
+  await route('new');
+  await fill('한 줄 감상', '내가 이어서 한 판');
+  await save();
+  await route('play');
+  await go('#/', 'home');
+  await page.click('.sample-note button');
+  await until(() => page.$(dlg));
+  await dialogButton('예시 지우기');
+  await until(async () => (await page.$$('.feed .stag')).length === 0, 5000);
+  await go(`#/work/${encodeURIComponent(keptWork)}`, 'work');
+  check('예시를 지워도 내 기록을 더한 작품은 남음', (await page.$$('.tw-plays .tl-row')).length === 1 && !(await page.$('.ticket-work .stag')));
+  await go('#/settings', 'settings');
+  await page.click('.settings button:has-text("예시 넣기")');
+  await until(async () => /예시 기록 6개/.test(await text('.settings')), 6000);
+  await go(`#/work/${encodeURIComponent(keptWork)}`, 'work');
+  check('다시 넣은 예시가 내 작품을 덮어쓰지 않음', (await page.$$('.tw-plays .tl-row')).length === 1 && /내가 이어서 한 판/.test(await text('.tw-plays')) && !(await page.$('.ticket-work .stag')));
+  await go('#/', 'home');
+  await page.click('.sample-note button');
+  await until(() => page.$(dlg));
+  await dialogButton('예시 지우기');
+  await until(async () => (await page.$$('.feed .stag')).length === 0, 5000);
+});
+
 await step('예전 버전(모임용 서버) 백업 가져오기', async () => {
   const v1 = {
     app: 'ddoddohouse-record', version: 1, exportedAt: new Date().toISOString(),
@@ -646,6 +737,9 @@ await step('예전 버전이 이 브라우저에 남긴 기록 사본 가져오�
   await p2.waitForSelector('.legacy-note:not([hidden])');
   check('남은 사본 안내', /기록 사본 1개/.test(squash(await p2.textContent('.legacy-note'))));
   await p2.click('.legacy-note button:has-text("가져오기")');
+  await p2.waitForSelector('dialog.dlg[open]');
+  check('가져오기 전에 미리보기', /플레이 기록 1개/.test(squash(await p2.textContent('dialog.dlg[open]'))));
+  await p2.click('dialog.dlg[open] .dlg-actions button:has-text("가져오기")');
   await p2.waitForSelector('.feed .tk-card');
   check('사본 기록을 가져옴', squash(await p2.textContent('.feed')).includes('스컬킹'));
   const left = await p2.evaluate(() => [localStorage.getItem('ddh:key'), localStorage.getItem('ddh:cache')]);
@@ -724,9 +818,11 @@ await step('데스크톱 화면', async () => {
   await sleep(200);
   await shot('d-02-list');
   await page.click('.vt-btn[data-view="card"]');
-  await go('#/play/p_sample_redmansion', 'play');
+  await openCard('붉은 저택의 초대');
   await shot('d-03-detail');
-  await go('#/work/w_sample_splendor', 'work');
+  await openCard('스플렌더');
+  await page.click('.work-link');
+  await route('work');
   await shot('d-04-work');
   await go('#/new', 'new');
   await shot('d-05-form');
@@ -738,7 +834,7 @@ await step('데스크톱 화면', async () => {
   const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   check('어둡게 테마', /rgb\(27, 26, 23\)/.test(bg), bg);
   await shot('d-07-dark');
-  await go('#/play/p_sample_clock_gn', 'play');
+  await openCard('시계탑의 비밀');
   await shot('d-08-dark-detail');
 });
 

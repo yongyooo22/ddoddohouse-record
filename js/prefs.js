@@ -31,27 +31,58 @@ export const setGroup = (on) => (on ? lsSet(PREFS.group, '1') : lsRemove(PREFS.g
 export const getLastGenre = () => lsGet(PREFS.lastGenre) || '';
 export const setLastGenre = (g) => lsSet(PREFS.lastGenre, g);
 
-// ── 새 기록 초안 (앱을 닫았다 열어도 이어 쓰기) ──
-export function getDraft() {
-  const raw = lsGet(PREFS.draft);
-  if (!raw) return null;
+// ── 작성 중인 초안 (앱을 닫았다 열어도 이어 쓰기) ──
+// 폼을 연 곳마다 따로 보관: 'new'(새 기록), 'new:work:<작품 id>'(작품 화면에서 연 새 기록), 'edit:<기록 id>'
+const MAX_DRAFTS = 12;
+
+function readDrafts() {
+  const raw = lsGet(PREFS.drafts);
+  if (!raw) return {};
   try {
     const d = JSON.parse(raw);
-    return d && typeof d === 'object' && d.model && typeof d.model === 'object' ? d : null;
+    return d && typeof d === 'object' && !Array.isArray(d) ? d : {};
   } catch {
-    return null;
+    return {};
   }
 }
-export function setDraft(d) {
-  try { return lsSet(PREFS.draft, JSON.stringify(d)); } catch { return false; }
-}
-export const clearDraft = () => lsRemove(PREFS.draft);
 
-/** 초안이 붙잡고 있는 사진 id (사진 정리 때 지우지 않도록) */
+function writeDrafts(all) {
+  const keys = Object.keys(all);
+  if (!keys.length) { lsRemove(PREFS.drafts); return true; }
+  try { return lsSet(PREFS.drafts, JSON.stringify(all)); } catch { return false; }
+}
+
+export function getDraft(key) {
+  const d = readDrafts()[key];
+  return d && typeof d === 'object' && d.model && typeof d.model === 'object' ? d : null;
+}
+
+export function setDraft(key, d) {
+  const all = readDrafts();
+  all[key] = d;
+  // 너무 많이 쌓이면 오래된 초안부터 정리
+  const keys = Object.keys(all).sort((a, b) => String(all[b].savedAt || '').localeCompare(String(all[a].savedAt || '')));
+  for (const k of keys.slice(MAX_DRAFTS)) delete all[k];
+  return writeDrafts(all);
+}
+
+export function clearDraft(key) {
+  const all = readDrafts();
+  if (!(key in all)) return;
+  delete all[key];
+  writeDrafts(all);
+}
+
+export const clearAllDrafts = () => lsRemove(PREFS.drafts);
+
+/** 모든 초안이 붙잡고 있는 사진 id (사진 정리 때 지우지 않도록) */
 export function draftPhotoIds() {
-  const d = getDraft();
-  const photos = d && d.model && Array.isArray(d.model.photos) ? d.model.photos : [];
-  return photos.filter((x) => typeof x === 'string');
+  const ids = [];
+  for (const d of Object.values(readDrafts())) {
+    const photos = d && d.model && Array.isArray(d.model.photos) ? d.model.photos : [];
+    for (const x of photos) if (typeof x === 'string') ids.push(x);
+  }
+  return ids;
 }
 
 /** 이 기기의 화면 설정·초안 모두 지우기 */

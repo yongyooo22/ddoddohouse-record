@@ -79,7 +79,7 @@ export const PREFS = {
   theme: 'ddh2:theme',
   view: 'ddh2:view',
   group: 'ddh2:group',
-  draft: 'ddh2:draft',
+  drafts: 'ddh2:drafts',
   lastGenre: 'ddh2:lastGenre',
 };
 

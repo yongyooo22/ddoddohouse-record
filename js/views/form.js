@@ -7,7 +7,7 @@ import { GENRES, GENRE_KEYS, LIMITS, MM_FORMATS, ER_RESULTS } from '../constants
 import { hasExtra, hasSpoiler, placeLabel, workLabel, isValidDate } from '../model.js';
 import { sameTitleWorks, suggestWorks } from '../query.js';
 import { todayStr, yesterdayStr, fmtDate, fmtMinutes } from '../format.js';
-import { navigate, goBack, markJustSaved } from '../nav.js';
+import { navigate, goBack, markJustSaved, returnTo } from '../nav.js';
 import {
   field, setFieldError, counterFor, autoGrow, segmented, ratingInput, levelPicker, stepper, fold,
   toast, openDialog, choiceSheet, genreIcon, nextId, emptyState, appBar,
@@ -160,12 +160,13 @@ export function mount(root, ctx) {
       emptyState({ icon: 'ticket', title: '기록을 찾을 수 없어요', actions: [h('a', { class: 'btn btn-ghost', href: '#/' }, '처음 화면으로')] })));
     return {};
   }
-  const draftKey = editing ? `edit:${play.id}` : 'new';
   const presetWork = !editing && ctx.query.work ? repo.getWork(ctx.query.work) : null;
-  const draft = prefs.getDraft();
+  // 초안은 폼을 연 곳마다 따로 (다른 곳에서 쓰던 초안을 덮어쓰거나 지우지 않게)
+  const draftKey = editing ? `edit:${play.id}` : presetWork ? `new:work:${presetWork.id}` : 'new';
+  const draft = prefs.getDraft(draftKey);
   let restored = false;
   let model;
-  if (draft && draft.key === draftKey && !presetWork) {
+  if (draft) {
     model = sanitize(draft.model);
     restored = true;
   } else if (editing) {
@@ -188,8 +189,8 @@ export function mount(root, ctx) {
   }
   function saveDraft() {
     if (finished) return;
-    if (isDirty()) prefs.setDraft({ key: draftKey, model, savedAt: new Date().toISOString() });
-    else if ((prefs.getDraft() || {}).key === draftKey) prefs.clearDraft();
+    if (isDirty()) prefs.setDraft(draftKey, { model, savedAt: new Date().toISOString() });
+    else prefs.clearDraft(draftKey);
   }
 
   // ── 장르 ──
@@ -329,7 +330,7 @@ export function mount(root, ctx) {
   fields.branch = fields.store;
 
   // ── 날짜 ──
-  const dateInput = h('input', { type: 'date', class: 'input input-date', value: model.date, min: '1970-01-01', max: '2100-12-31', required: true });
+  const dateInput = h('input', { type: 'date', class: 'input input-date', value: model.date, min: '1900-01-01', max: '2100-12-31', required: true });
   const setDate = (v) => { model.date = v; dateInput.value = v; setFieldError(fields.date, ''); paintQuick(); changed(); };
   dateInput.addEventListener('input', () => setDate(dateInput.value));
   dateInput.addEventListener('change', () => setDate(dateInput.value));
@@ -569,13 +570,15 @@ export function mount(root, ctx) {
       const r = await repo.savePlay(input, { newWork });
       finished = true;
       clearTimeout(draftTimer);
-      if ((prefs.getDraft() || {}).key === draftKey) prefs.clearDraft();
+      prefs.clearDraft(draftKey);
       prefs.setLastGenre(r.work.genre);
       // 이번에 올렸다가 뺀 사진 정리
       const leftover = [...added].filter((id) => !r.play.photos.includes(id));
       if (leftover.length) repo.discardImages(leftover).catch(() => {});
       markJustSaved(r.play.id);
-      navigate(`#/play/${encodeURIComponent(r.play.id)}`, { replace: true });
+      // 수정: 상세에서 왔으면 그 화면으로 돌아감 (같은 상세가 history 에 두 번 쌓이지 않게)
+      if (editing) returnTo(`#/play/${encodeURIComponent(r.play.id)}`);
+      else navigate(`#/play/${encodeURIComponent(r.play.id)}`, { replace: true });
       toast(editing ? '기록을 고쳤어요' : '기록했어요', 'ok');
       if (r.removedWorkId) toast('기록이 없어진 작품은 정리했어요', 'info', 3200);
       // 첫 기록: 브라우저가 공간이 모자랄 때 이 사이트 데이터를 먼저 지우지 않도록 요청
@@ -592,7 +595,7 @@ export function mount(root, ctx) {
   async function discardAll() {
     finished = true;
     clearTimeout(draftTimer);
-    if ((prefs.getDraft() || {}).key === draftKey) prefs.clearDraft();
+    prefs.clearDraft(draftKey);
     // 저장된 기록이 쓰는 사진은 repo 가 남기므로, 폼에 있던 사진을 모두 넘겨도 안전
     const ids = [...added, ...model.photos];
     if (ids.length) await repo.discardImages(ids).catch(() => {});
@@ -603,7 +606,7 @@ export function mount(root, ctx) {
     if (!isDirty()) { await discardAll(); goBack(back); return; }
     const v = await openDialog({
       title: editing ? '고친 내용을 버릴까요?' : '작성을 그만둘까요?',
-      body: h('p', { class: 'dlg-text', text: editing ? '저장하지 않은 수정 내용이 있어요.' : '지금까지 쓴 내용은 이 기기에 임시로 남겨 둘 수 있어요. 다음에 ‘새 기록’을 누르면 이어서 써요.' }),
+      body: h('p', { class: 'dlg-text', text: editing ? '저장하지 않은 수정 내용이 있어요.' : `지금까지 쓴 내용은 이 기기에 임시로 남겨 둘 수 있어요. 다음에 ${presetWork ? '이 작품 화면에서 ‘플레이 기록 추가’를' : '‘새 기록’을'} 누르면 이어서 써요.` }),
       actions: editing
         ? [{ label: '계속 고치기', value: 'stay', kind: 'ghost' }, { label: '버리기', value: 'discard', kind: 'danger' }]
         : [{ label: '계속 쓰기', value: 'stay', kind: 'ghost' }, { label: '임시 저장하고 나가기', value: 'keep', kind: 'ghost' }, { label: '버리기', value: 'discard', kind: 'danger' }],
@@ -614,7 +617,8 @@ export function mount(root, ctx) {
 
   async function restart() {
     await discardAll();
-    navigate(editing ? `#/play/${encodeURIComponent(play.id)}/edit` : '#/new', { replace: true });
+    const again = editing ? `#/play/${encodeURIComponent(play.id)}/edit` : presetWork ? `#/new?work=${encodeURIComponent(presetWork.id)}` : '#/new';
+    navigate(again, { replace: true });
   }
 
   // ── 조립 ──

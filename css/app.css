@@ -771,7 +771,7 @@ a.row:focus-visible { outline-offset: -3px; border-radius: 10px; }
 
 /* 별점 입력 */
 .rating-input { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.rating-track { display: flex; gap: 4px; padding: 4px 2px; touch-action: none; cursor: pointer; border-radius: 8px; }
+.rating-track { display: flex; gap: 4px; padding: 4px 2px; touch-action: pan-y; cursor: pointer; border-radius: 8px; }
 .rating-lg .r-unit { width: 36px; height: 36px; }
 .rating-lg .r-fg > svg { width: 36px; }
 .rating-sm .r-unit { width: 28px; height: 28px; }
