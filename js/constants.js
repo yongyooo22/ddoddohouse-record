@@ -110,4 +110,5 @@ export const STORAGE = {
   cache: 'ddh:cache',
   draft: 'ddh:draft',
   theme: 'ddh:theme',
+  view: 'ddh:view', // 기록 목록: 카드로 보기 / 목록으로 보기
 };

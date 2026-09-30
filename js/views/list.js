@@ -1,6 +1,6 @@
-// 기록 목록 — 종류 세그먼트, 검색, 정렬, 멤버/태그 필터, 월별 그룹
+// 기록 목록 — 종류 탭, 검색, 연도·평점·정렬, 카드/목록 보기, 멤버/태그 필터, 월별 그룹(넓은 화면에서는 한 판으로)
 import { h, icon } from '../dom.js';
-import { TYPES, TYPE_KEYS } from '../constants.js';
+import { TYPES, TYPE_KEYS, STORAGE } from '../constants.js';
 import { state, recordsSorted, membersSorted, allTags, memberInfo, isFirstLoad, loadFailed } from '../store.js';
 import { norm, monthKey, fmtMonth } from '../format.js';
 import { segmented, chip, avatar, emptyState, loadingState, loadErrorState } from '../ui.js';
@@ -8,8 +8,10 @@ import { recordCard, bgOf, mmOf, erOf } from './bits.js';
 
 const PAGE = 60;
 
-// 화면을 떠났다 돌아와도 필터 유지
-const filters = { type: 'all', q: '', sort: 'new', members: [], tags: [], open: false };
+const readView = () => { try { return localStorage.getItem(STORAGE.view) === 'list' ? 'list' : 'grid'; } catch { return 'grid'; } };
+
+// 화면을 떠났다 돌아와도 필터 유지 (보기 방식은 이 기기에 기억)
+const filters = { type: 'all', q: '', sort: 'new', year: '', minRating: '', members: [], tags: [], open: false, view: readView() };
 
 function haystack(r) {
   const parts = [r.title, r.oneLiner, r.review, ...(Array.isArray(r.tags) ? r.tags : [])];
@@ -31,6 +33,8 @@ function applyFilters() {
   const q = norm(filters.q);
   let list = recordsSorted().filter((r) =>
     (filters.type === 'all' || r.type === filters.type) &&
+    (!filters.year || String(r.date || '').startsWith(`${filters.year}-`)) &&
+    (!filters.minRating || (Number(r.rating) || 0) >= Number(filters.minRating)) &&
     (!filters.members.length || filters.members.every((id) => Array.isArray(r.members) && r.members.includes(id))) &&
     (!filters.tags.length || filters.tags.every((t) => Array.isArray(r.tags) && r.tags.includes(t))) &&
     matches(r, q));
@@ -48,7 +52,7 @@ export function mount(root, ctx) {
   // (탭으로 돌아온 경우에는 쓰던 필터를 그대로 둠)
   const typeQ = q.type && (q.type === 'all' || TYPE_KEYS.includes(q.type)) ? q.type : null;
   if ((typeQ || q.tag || q.member) && !ctx.restored) {
-    Object.assign(filters, { type: typeQ || 'all', q: '', sort: 'new', members: [], tags: [], open: false });
+    Object.assign(filters, { type: typeQ || 'all', q: '', sort: 'new', year: '', minRating: '', members: [], tags: [], open: false });
     if (q.tag) { filters.tags = [q.tag]; filters.open = true; }
     if (q.member) { filters.members = [q.member]; filters.open = true; }
   }
@@ -56,8 +60,8 @@ export function mount(root, ctx) {
   let limit = PAGE;
 
   const seg = segmented({
-    label: '종류', value: filters.type, cls: 'seg-type',
-    options: [{ key: 'all', label: '전체' }, ...TYPE_KEYS.map((k) => ({ key: k, label: TYPES[k].short, cls: TYPES[k].cls }))],
+    label: '종류', value: filters.type, cls: 'seg-type seg-tabs',
+    options: [{ key: 'all', label: '전체' }, ...TYPE_KEYS.map((k) => ({ key: k, label: TYPES[k].label, cls: TYPES[k].cls }))],
     onChange: (v) => { filters.type = v; limit = PAGE; renderResults(); },
   });
 
@@ -72,8 +76,36 @@ export function mount(root, ctx) {
   });
 
   const sortSel = h('select', { class: 'select select-sm', 'aria-label': '정렬' },
-    [['new', '최신순'], ['old', '오래된순'], ['rating', '별점순']].map(([v, l]) => h('option', { value: v, selected: filters.sort === v }, l)));
+    [['new', '최근 플레이순'], ['old', '오래된 플레이순'], ['rating', '별점 높은순']].map(([v, l]) => h('option', { value: v, selected: filters.sort === v }, l)));
   sortSel.addEventListener('change', () => { filters.sort = sortSel.value; limit = PAGE; renderResults(); });
+
+  // 연도: 기록이 있는 해만 (새 기록이 생기면 다시 채움)
+  const yearSel = h('select', { class: 'select select-sm', 'aria-label': '연도' });
+  function paintYears() {
+    const years = [...new Set(state.records.map((r) => String(r.date || '').slice(0, 4)).filter((y) => /^\d{4}$/.test(y)))].sort().reverse();
+    if (filters.year && !years.includes(filters.year)) years.unshift(filters.year);
+    yearSel.replaceChildren(h('option', { value: '', selected: !filters.year }, '전체 연도'),
+      ...years.map((y) => h('option', { value: y, selected: filters.year === y }, `${y}년`)));
+  }
+  yearSel.addEventListener('change', () => { filters.year = yearSel.value; limit = PAGE; renderResults(); });
+
+  const rateSel = h('select', { class: 'select select-sm', 'aria-label': '평점' },
+    [['', '전체 평점'], ['4.5', '4.5점 이상'], ['4', '4점 이상'], ['3', '3점 이상']].map(([v, l]) => h('option', { value: v, selected: filters.minRating === v }, l)));
+  rateSel.addEventListener('change', () => { filters.minRating = rateSel.value; limit = PAGE; renderResults(); });
+
+  // 카드로 보기 / 목록으로 보기 (넓은 화면에서만 보임 — 휴대폰은 늘 한 줄)
+  const viewBtns = [['grid', '카드로 보기'], ['list', '목록으로 보기']].map(([v, label]) =>
+    h('button', { type: 'button', class: 'vt-btn', 'aria-label': label, dataset: { view: v }, onClick: () => setView(v) }, icon(v)));
+  const viewToggle = h('div', { class: 'view-toggle', role: 'group', 'aria-label': '보기 방식' }, viewBtns);
+  function paintView() {
+    for (const b of viewBtns) b.setAttribute('aria-pressed', b.dataset.view === filters.view ? 'true' : 'false');
+    results.classList.toggle('is-list', filters.view === 'list');
+  }
+  function setView(v) {
+    filters.view = v;
+    try { localStorage.setItem(STORAGE.view, v); } catch { /* 무시 */ }
+    paintView();
+  }
 
   const filterBadge = h('span', { class: 'fbadge', hidden: true });
   const filterBtn = h('button', { type: 'button', class: 'btn btn-soft btn-sm', 'aria-expanded': filters.open ? 'true' : 'false', 'aria-controls': 'list-filter' },
@@ -145,7 +177,8 @@ export function mount(root, ctx) {
     filterBadge.hidden = nf === 0;
     filterBadge.textContent = String(nf);
     const scoped = filters.type === 'all' ? '전체' : TYPES[filters.type].short;
-    countEl.textContent = filters.q || nf ? `${scoped} 중 ${list.length}개 찾았어요` : `${scoped} ${list.length}개`;
+    const narrowed = filters.q || nf || filters.year || filters.minRating;
+    countEl.textContent = narrowed ? `${scoped} 중 ${list.length}개 찾았어요` : `${scoped} ${list.length}개`;
 
     const out = [];
     const ac = activeChips();
@@ -200,20 +233,26 @@ export function mount(root, ctx) {
 
   const view = h('div', { class: 'page page-list' },
     h('header', { class: 'page-head' },
-      h('h1', { class: 'page-title', text: '기록' }),
+      h('h1', { class: 'page-title', text: '나의 플레이 기록' }),
       h('a', { class: 'icon-btn icon-btn-soft', href: '#/new', 'aria-label': '새 기록' }, icon('plus'))),
+    h('p', { class: 'page-sub', text: '즐거웠던 순간을 한 장씩 모아요' }),
     seg,
     h('div', { class: 'list-tools' },
       h('div', { class: 'search-wrap' }, icon('search', 'search-ico'), search),
-      h('div', { class: 'list-tools-row' }, countEl, h('div', { class: 'list-tools-right' }, sortSel, filterBtn))),
+      h('div', { class: 'list-selects' }, yearSel, rateSel, sortSel),
+      viewToggle,
+      filterBtn),
+    countEl,
     panel,
     results);
 
+  paintYears();
+  paintView();
   renderPanel();
   renderResults();
   root.appendChild(view);
 
   return {
-    update() { renderPanel(); renderResults(); },
+    update() { paintYears(); renderPanel(); renderResults(); },
   };
 }

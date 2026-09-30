@@ -82,7 +82,7 @@ export function mount(root, ctx) {
   const view = h('section', { class: 'lock' },
     h('div', { class: 'lock-card' },
       h('header', { class: 'lock-head' },
-        icon('ticket', 'lock-ico'),
+        icon('ticketForest', 'lock-ico'),
         h('p', { class: 'lock-kicker', text: '우리 모임의 놀이 일기' }),
         h('h1', { class: 'lock-title', text: APP_NAME }),
         // 좁은 화면에서도 구절 단위로만 줄바꿈 ('입장 코드나 초대 링크를 / 입력해 주세요.')
@@ -96,7 +96,7 @@ export function mount(root, ctx) {
           standalone() ? h('p', { class: 'lock-hint' }, icon('info'), h('span', { text: '홈 화면 앱은 브라우저와 저장 공간이 달라요. 받은 초대 링크를 통째로 복사해 위 칸에 붙여넣어 주세요.' })) : null,
           h('p', { class: 'lock-hint' }, icon('lock'), h('span', { text: '입장 코드는 이 기기에 저장돼요.' })),
           h('details', { class: 'lock-more' },
-            h('summary', { class: 'lock-more-sum' }, h('span', { class: 'lock-hint' }, icon('chevron'), h('span', { text: '공용 기기 이용 안내' }))),
+            h('summary', { class: 'lock-more-sum' }, h('span', { class: 'lock-hint' }, icon('down'), h('span', { text: '공용 기기 이용 안내' }))),
             h('p', { class: 'lock-more-text', text: '입장 코드와 초대 링크는 다른 사람에게 전달하지 마세요. 공용 기기에서는 시크릿(비공개) 창을 이용해 주세요.' }))))));
   root.appendChild(view);
   setTimeout(() => { if (!ctx.message) input.focus({ preventScroll: true }); }, 50);

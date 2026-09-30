@@ -379,7 +379,7 @@ await step('잠금 화면 (키 없음)', async () => {
   check('입장 화면: 점무늬 없는 크림색 단색 바탕', L.bodyImage === 'none' && L.bodyBg === 'rgb(247, 244, 238)', `${L.bodyImage} ${L.bodyBg}`);
   check('입장 카드: 흰 카드가 가운데, 최대 420px, 좌우 여백, 둥글기 줄임', L.card.w <= 420 && L.card.l >= 16 && Math.abs(L.card.l - (L.vw - L.card.r)) < 1 &&
     L.cardBg === 'rgb(255, 255, 255)' && L.cardRadius <= 16, JSON.stringify({ card: L.card, bg: L.cardBg, radius: L.cardRadius }));
-  check('제목 영역: 공책 그림 대신 작은 티켓 아이콘', L.imgs === 0 && !!L.ico && L.ico.w <= 32, JSON.stringify(L.ico));
+  check('제목 영역: 공책 그림 대신 작은 선 티켓 아이콘', L.imgs === 0 && !!L.ico && L.ico.w <= 60 && L.ico.h <= 40, JSON.stringify(L.ico));
   check('보조 문구는 작게, 기록장 이름이 가장 크게', (await text('.lock-kicker')) === '우리 모임의 놀이 일기' && L.titleSize >= 24 && L.kickerSize < L.descSize && L.descSize < L.titleSize,
     `${L.kickerSize} ${L.descSize} ${L.titleSize}`);
   check('티켓 절취선: 제목과 입력 사이에 얇은 점선 하나', (await page.$$('.lock-perf')).length === 1 && L.perfLine === 'dashed 1px' && L.perf.t > L.desc.b && L.perf.b < L.label.t, L.perfLine);
@@ -459,7 +459,7 @@ await step('공유 링크 #k= 로 잠금 해제', async () => {
   check('주소창에서 키 제거', !page.url().includes(SECRET) && !page.url().includes('k='), page.url());
   check('키가 localStorage 에 저장', (await localKey()) === SECRET);
   check('탭바 표시', !(await page.$eval('#tabbar', (e) => e.hidden)));
-  check('메인 화면 바탕(점무늬)은 그대로 (입장 화면만 단색)', /radial-gradient/.test(await page.evaluate(() => getComputedStyle(document.body).backgroundImage)));
+  check('메인 화면도 점무늬 없는 크림색 단색 바탕', (await page.evaluate(() => getComputedStyle(document.body).backgroundImage)) === 'none' && (await bodyBg()) === 'rgb(247, 244, 238)');
   const hist = await page.evaluate(() => history.length);
   check('history 항목에도 키 없음', await page.evaluate(() => !location.href.includes('k=')), String(hist));
   await noOverflow('빈 홈');
@@ -848,15 +848,14 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   check('기록 5개', titles && titles.length === 5, String(titles));
   const cardOf = (t) => `.page-list .rcard:has(.card-link:text-is("${t}"))`;
   check('보드게임 배지', (await text(`${cardOf('테라포밍 마스')} .badge`)) === '보드게임');
-  check('머미 배지', (await text(`${cardOf('붉은 저택의 초대')} .badge`)) === '머미');
+  check('머미 배지 (카드 종류 태그는 전체 이름)', (await text(`${cardOf('붉은 저택의 초대')} .badge`)) === '머더미스터리');
   check('방탈출 배지', (await text(`${cardOf('잊혀진 연구소')} .badge`)) === '방탈출');
-  check('보드게임 카드: 우승 도장·승자', (await text(`${cardOf('테라포밍 마스')} .stamp`)) === '우승' && (await text(`${cardOf('테라포밍 마스')} .ki-win`)).includes('영식'));
-  // 스포일러 머미 기록: 범인·배역(= 시나리오의 범인 캐릭터)은 카드에서 가림 → 탭하면 보임
+  // 카드는 시안처럼 [사진 · 종류 · 제목 · 날짜 / ★ 별점 | 한줄평]만 — 승자·범인·배역·남은 시간·멤버는 상세 화면에서
+  check('보드게임 카드: 우승 도장', (await text(`${cardOf('테라포밍 마스')} .stamp`)) === '우승');
   const mmCard = cardOf('붉은 저택의 초대');
-  check('머미 카드: 범인·배역 가림', !!(await page.$(`${mmCard} .ki-roles .spoiler:not(.is-revealed) .spoiler-btn:has-text("범인·배역 보기")`)) &&
-    (await page.$eval(`${mmCard} .ki-roles .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true' && getComputedStyle(e).filter.includes('blur'))));
-  // 버튼 옆의 흐린 글자를 눌러도 반응 없는 게 아니라 카드가 열림 (카드 링크가 받음)
-  const hitsCard = await page.$eval(`${mmCard} .ki-roles .spoiler-inline`, (el) => {
+  check('머미 카드: 범인·배역은 카드에 없음 (스포일러 걱정 없음)', !/세바스찬|범인 연경/.test(await text(mmCard)) && !(await page.$(`${mmCard} .avatar, ${mmCard} .av`)), await text(mmCard));
+  // 가린 한줄평: 버튼 옆의 흐린 글자를 눌러도 반응 없는 게 아니라 카드가 열림 (카드 링크가 받음)
+  const hitsCard = await page.$eval(`${mmCard} .rcard-line .spoiler-inline`, (el) => {
     el.scrollIntoView({ block: 'center' }); // elementFromPoint 는 화면 안의 점만 봄
     const btn = el.querySelector('.spoiler-btn').getBoundingClientRect();
     const r = el.getBoundingClientRect();
@@ -865,20 +864,24 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
     return hit ? `${hit.tagName}.${hit.className}` : 'none';
   });
   check('가린 글자 부분을 누르면 카드 링크로', /^A\.card-link/.test(hitsCard), hitsCard);
-  await page.click(`${mmCard} .ki-roles .spoiler-btn`);
-  await sleep(150);
-  const mmInfo = await text(`${mmCard} .rcard-info`);
-  check('머미 카드: 펼치면 범인·역할', mmInfo.includes('범인') && mmInfo.includes('연경') && mmInfo.includes('연경·집사 세바스찬') && page.url().endsWith('#/records'), mmInfo);
   check('머미 카드: 범인 도주 도장', (await text(`${cardOf('붉은 저택의 초대')} .stamp`)) === '범인 도주');
-  const erInfo = await text(`${cardOf('잊혀진 연구소')} .rcard-info`);
-  check('방탈출 카드: 남은 시간·힌트·브랜드', erInfo.includes('12:34 남김') && erInfo.includes('힌트 2') && erInfo.includes('키이스케이프 홍대점'), erInfo);
-  check('방탈출 카드: 누적 번호', (await text(`${cardOf('잊혀진 연구소')} .ordinal`)) === '2번째 방탈출' && (await text(`${cardOf('저주받은 인형의 집')} .ordinal`)) === '1번째 방탈출');
+  check('방탈출 카드: 남은 시간·힌트·N번째는 카드에 없음', !/남김|힌트|번째/.test(await text(cardOf('잊혀진 연구소'))), await text(cardOf('잊혀진 연구소')));
   check('실패 방탈출: 탈출 실패 도장', (await text(`${cardOf('저주받은 인형의 집')} .stamp`)) === '탈출 실패');
   // 카드 배치: 위 [사진] 종류 → 제목 → 날짜, 점선 아래 별점 | 한줄평 (카드 전체 너비). 사진이 없으면 사진 칸을 접음
   const [lay] = await cardLayouts(cardOf('저주받은 인형의 집'));
   check('카드: 사진이 없으면 사진 칸 없이 글자가 카드 너비를 다 씀', !lay.photo && Math.abs(lay.title.l - lay.left) < 1 && Math.abs(lay.main.r - lay.right) < 1, JSON.stringify(lay));
   check('카드: 종류 → 제목 → 날짜 순서', lay.badges[0].b <= lay.title.t + 0.5 && lay.title.b <= lay.date.t + 0.5, JSON.stringify(lay));
-  check('카드: 날짜는 YYYY.MM.DD(요일) 모양', lay.dateText === `${PAST.replaceAll('-', '.')}(${'일월화수목금토'[new Date(`${PAST}T12:00:00Z`).getUTCDay()]})`, lay.dateText);
+  check('카드: 날짜는 YYYY.MM.DD 모양', lay.dateText === PAST.replaceAll('-', '.'), lay.dateText);
+  // 티켓 절취선: 점선 양옆 카드 가장자리에 반원 홈 (바탕색)
+  const notch = await page.$eval(cardOf('저주받은 인형의 집'), (card) => {
+    const body = card.querySelector('.rcard-body');
+    const b = body.getBoundingClientRect();
+    const c = card.getBoundingClientRect();
+    const one = (pseudo) => { const st = getComputedStyle(body, pseudo); return { content: st.content, l: b.left + parseFloat(st.left), r: b.right - parseFloat(st.right), t: b.top + parseFloat(st.top), h: parseFloat(st.height), bg: st.backgroundColor }; };
+    return { card: { l: c.left, r: c.right }, line: b.top, before: one('::before'), after: one('::after'), paper: getComputedStyle(document.body).backgroundColor };
+  });
+  check('카드: 점선 양옆에 반원 홈', notch.before.content !== 'none' && Math.abs(notch.before.l - notch.card.l) < 1 && Math.abs(notch.after.r - notch.card.r) < 1 &&
+    Math.abs(notch.before.t + notch.before.h / 2 - notch.line) < 2 && notch.before.bg === notch.paper, JSON.stringify(notch));
   check('카드: 점선 아래에 별점 | 한줄평 (카드 전체 너비)', lay.bodyBorder === 'dashed' && lay.body.t >= lay.date.b &&
     Math.abs(lay.body.l - lay.left) < 1 && Math.abs(lay.body.r - lay.right) < 1 && Math.abs(lay.rate.l - lay.left) < 1 && lay.rate.r < lay.one.l, JSON.stringify(lay));
   check('카드: 별점은 별 하나 + 숫자', (await text(`${cardOf('저주받은 인형의 집')} .rcard-line .stars-num`)) === '3.0' &&
@@ -896,8 +899,13 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   await noOverflow('기록 목록');
   await shot('15-list');
 
-  // 종류 세그먼트
-  await page.click('.page-list .seg-type .seg-item:has-text("머미")');
+  // N번째 방탈출은 상세 화면에서
+  await go(`#/record/${encodeURIComponent(ids.er0)}`, '.page-detail');
+  check('상세: 1번째 방탈출', (await text('.dhero-top .ordinal')) === '1번째 방탈출', await text('.dhero-top .ordinal'));
+  await go('#/records', '.page-list');
+
+  // 종류 탭 (밑줄 탭, 전체 이름)
+  await page.click('.page-list .seg-type .seg-item:has-text("머더미스터리")');
   let t = await until(async () => { const x = await cardTitles(); return x.length === 1 && x; });
   check('머미 필터 → 1개', t && t[0] === '붉은 저택의 초대', String(t));
   await page.click('.page-list .seg-type .seg-item:has-text("방탈출")');
@@ -917,6 +925,21 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   await search('없는검색어', []);
   check('결과 없음 안내', !!(await page.$('.page-list .empty')));
   await search('', ['테라포밍 마스', '붉은 저택의 초대', '잊혀진 연구소', '저주받은 인형의 집', '삭제할 게임']);
+  // 연도 · 평점 거르기 (서버 기록으로 기대값 계산)
+  const all = (await api('GET', '/api/data')).data.records;
+  const pick = async (label, value, expect) => {
+    await page.selectOption(`.page-list select[aria-label="${label}"]`, value);
+    const got = await until(async () => { const x = await cardTitles(); return JSON.stringify([...x].sort()) === JSON.stringify([...expect].sort()) && x; }, 3000);
+    check(`${label} "${value || '전체'}" → ${expect.length}개`, !!got, `${String(await cardTitles())} vs ${expect}`);
+  };
+  const yr = PAST.slice(0, 4);
+  check('연도 목록: 기록이 있는 해 + 전체', (await page.$$eval('.page-list select[aria-label="연도"] option', (os) => os.map((o) => o.value))).join(',') ===
+    ['', ...[...new Set(all.map((r) => r.date.slice(0, 4)))].sort().reverse()].join(','));
+  await pick('연도', yr, all.filter((r) => r.date.startsWith(`${yr}-`)).map((r) => r.title));
+  await pick('연도', '', all.map((r) => r.title));
+  await pick('평점', '4', all.filter((r) => (Number(r.rating) || 0) >= 4).map((r) => r.title));
+  check('평점 거른 결과는 개수 안내에 “찾았어요”', /찾았어요/.test(await text('.page-list .list-count')), await text('.page-list .list-count'));
+  await pick('평점', '', all.map((r) => r.title));
   // 멤버 필터
   await page.click('.page-list .list-tools button:has-text("필터")');
   await page.click('.page-list .filter-panel .chip-member:has(.chip-label:text-is("민지짱"))');
@@ -1318,7 +1341,7 @@ await step('좁은 화면 (320px) 가로 넘침', async () => {
   await page.setViewportSize(VIEWPORT);
 });
 
-await step('노트북 화면 (1366×768): 위쪽 메뉴 · 여러 줄 카드 · 두 단 · 가로 티켓', async () => {
+await step('노트북 화면 (1366×768): 위쪽 메뉴 · 여러 줄 카드 · 두 단 · 세로 티켓', async () => {
   const cl = await newContext({ viewport: { width: 1366, height: 768 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
   const phone = page;
   page = await cl.newPage();
@@ -1326,15 +1349,15 @@ await step('노트북 화면 (1366×768): 위쪽 메뉴 · 여러 줄 카드 · 
   const rect = (sel) => page.$eval(sel, (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height }; });
   const lefts = (sel) => page.$$eval(sel, (els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().left))).size);
   try {
-    // 입장 화면: 가로 티켓 — 왼쪽 제목, 세로 점선(위아래 반원 홈), 오른쪽 입력. 스크롤 없이 한 화면
+    // 입장 화면: 휴대폰과 같은 세로 티켓(최대 420px)을 화면 가운데에 — 제목 / 점선(양옆 반원 홈) / 입력, 스크롤 없이
     await page.goto(`${BASE}/`);
     await page.waitForSelector('.lock #lock-key');
     const L = await lockLayout();
-    const [hd, bd] = [await rect('.lock-head'), await rect('.lock-body')];
-    check('입장 화면: 가로 티켓 (왼쪽 제목 · 세로 점선 · 오른쪽 입력)', hd.r <= L.perf.l + 1 && L.perf.r <= bd.l + 1 && Math.abs(hd.t - bd.t) < 2 &&
-      L.perf.h > 200 && /dashed/.test(await page.$eval('.lock-perf', (e) => getComputedStyle(e).borderLeftStyle)), JSON.stringify({ hd, perf: L.perf, bd }));
-    check('입장 화면: 세로 점선 위아래에 반원 홈', Math.abs(L.notchL.t - L.card.t) < 1 && Math.abs(L.notchR.b - L.card.b) < 1, JSON.stringify([L.notchL, L.notchR, L.card]));
-    check('입장 화면: 스크롤 없이 한 화면 가운데', (await page.evaluate(() => document.scrollingElement.scrollHeight)) <= 768 && Math.abs((L.card.t + L.card.b) / 2 - 384) < 30);
+    check('입장 화면: 세로 티켓 (제목 아래 점선, 그 아래 입력)', L.card.w <= 420 && L.perf.t > L.desc.b && L.perf.b < L.label.t && L.perfLine === 'dashed 1px' &&
+      Math.abs(L.notchL.l - L.card.l) < 1 && Math.abs(L.notchR.r - L.card.r) < 1, JSON.stringify({ card: L.card, perf: L.perf }));
+    check('입장 화면: 나무 티켓 아이콘', (await page.$eval('.lock-ico', (e) => e.getAttribute('viewBox'))) === '0 0 40 24' && L.ico.w > 40);
+    check('입장 화면: 스크롤 없이 한 화면 가운데', (await page.evaluate(() => document.scrollingElement.scrollHeight)) <= 768 &&
+      Math.abs((L.card.t + L.card.b) / 2 - 384) < 30 && Math.abs((L.card.l + L.card.r) / 2 - 683) < 2, JSON.stringify(L.card));
     await noOverflow('노트북 입장 화면');
     await shot('laptop-lock');
 
@@ -1346,6 +1369,7 @@ await step('노트북 화면 (1366×768): 위쪽 메뉴 · 여러 줄 카드 · 
     const addBtn = await rect('#tabbar .tab-add-btn');
     check('메뉴: 이름과 ‘새 기록’ 글자가 보이고, 새 기록은 오른쪽 끝', await page.isVisible('#tabbar .tabbar-brand') && await page.isVisible('#tabbar .tab-add-label') &&
       (await text('#tabbar .tab-add-label')) === '새 기록' && addBtn.r > 1200 && addBtn.l > (await rect('#tabbar [data-tab="members"]')).r);
+    check('메뉴는 글자만 (아이콘 없음)', !(await page.isVisible('#tabbar [data-tab="records"] .ico')) && (await text('#tabbar [data-tab="records"]')) === '기록');
     // 홈: 요약 카드 옆에 바로가기·멤버, 최근 기록은 한 줄에 3개
     const [cover, side] = [await rect('.page-home .cover'), await rect('.page-home .home-side')];
     check('홈: 요약 카드 옆에 종류 바로가기 · 이번 달 멤버', cover.r <= side.l && Math.abs(cover.t - side.t) < 2, JSON.stringify({ cover, side }));
@@ -1360,14 +1384,26 @@ await step('노트북 화면 (1366×768): 위쪽 메뉴 · 여러 줄 카드 · 
     check('기록 목록: 한 줄에 카드 3개', (await lefts('.page-list .rcard')) === 3);
     const [srch, sort] = [await rect('.page-list .search-wrap'), await rect('.page-list .list-tools select')];
     check('기록 목록: 검색 · 정렬 · 필터가 한 줄', Math.abs((srch.t + srch.b) / 2 - (sort.t + sort.b) / 2) < 4 && srch.r < sort.l, JSON.stringify({ srch, sort }));
+    check('기록 목록: 제목 · 설명 · 밑줄 탭 (전체 이름)', (await text('.page-list .page-title')) === '나의 플레이 기록' && (await text('.page-list .page-sub')) === '즐거웠던 순간을 한 장씩 모아요' &&
+      (await texts('.page-list .seg-tabs .seg-item')).join(',') === '전체,보드게임,머더미스터리,방탈출');
+    check('기록 목록: 월 제목 없이 한 판 (개수 줄도 화면에는 안 보임)', !(await page.isVisible('.page-list .mgroup-head')) && (await rect('.page-list .list-count')).w <= 1);
     await cardsOverlapFree('노트북 기록 목록');
     await noOverflow('노트북 기록 목록');
     await shot('laptop-list');
+    // 카드로 보기 ↔ 목록으로 보기 (이 기기에 기억)
+    await page.click('.page-list .vt-btn[data-view="list"]');
+    check('목록으로 보기: 한 줄에 하나', (await lefts('.page-list .rcard')) === 1 && (await page.getAttribute('.page-list .vt-btn[data-view="list"]', 'aria-pressed')) === 'true' &&
+      (await page.evaluate(() => localStorage.getItem('ddh:view'))) === 'list');
+    await page.reload();
+    await page.waitForSelector('.page-list .rcard');
+    check('보기 방식은 새로 열어도 그대로', (await lefts('.page-list .rcard')) === 1);
+    await page.click('.page-list .vt-btn[data-view="grid"]');
+    check('카드로 보기: 다시 한 줄에 3개', (await lefts('.page-list .rcard')) === 3);
     // 상세: 왼쪽 [사진·요약], 오른쪽 [멤버·종류별·후기…], 위쪽 막대 아래에 붙는 상단 바
     await go(`#/record/${encodeURIComponent(ids.bg)}`, '.page-detail');
     const [lead, rest] = [await rect('.page-detail .dcol-lead'), await rect('.page-detail .dcol-rest')];
     check('상세: 두 단 (요약 | 나머지)', lead.r <= rest.l && Math.abs(lead.t - rest.t) < 2 && lead.w > 400 && rest.w > 400, JSON.stringify({ lead, rest }));
-    check('상세: 상단 바는 위쪽 메뉴 아래에 붙음', (await page.$eval('.page-detail .appbar', (e) => getComputedStyle(e).top)) === '64px');
+    check('상세: 상단 바는 위쪽 메뉴 아래에 붙음', (await page.$eval('.page-detail .appbar', (e) => getComputedStyle(e).top)) === `${nav.h}px`, String(nav.h));
     await noOverflow('노트북 상세');
     await shot('laptop-detail');
     // 폼: 두 단, 저장 버튼은 오른쪽 아래
@@ -2213,8 +2249,7 @@ await step('사진: 저장 → 상세 갤러리 · 전체화면 뷰어 · 목록
   check('사진 카드: 사진 오른쪽에 종류·제목·날짜 (제목과 나란히)', pl.photo.r <= pl.main.l && pl.badges[0].l >= pl.photo.r && pl.date.l >= pl.photo.r &&
     pl.photo.t < pl.title.b && pl.title.t < pl.photo.b, JSON.stringify(pl));
   check('사진 카드: 원본 비율 그대로, 잘리지 않게 칸 안에 맞춤', pl.fit === 'contain', pl.fit);
-  check('사진 카드: 점선 아래 칸은 사진 밑, 카드 전체 너비', !!pl.body && pl.bodyBorder === 'dashed' && pl.body.t >= pl.photo.b &&
-    Math.abs(pl.body.l - pl.left) < 1 && Math.abs(pl.body.r - pl.right) < 1, JSON.stringify(pl.body));
+  check('사진 카드: 별점·한줄평이 없으면 점선 아래 칸도 없음', !pl.body, JSON.stringify(pl.body));
   await cardsOverlapFree('사진 있는 목록');
   await noOverflow('사진 있는 목록');
   await shot('35-list-photo');
@@ -2745,6 +2780,8 @@ await step('사진: 다크 모드 · 320px · 가로 스크롤 없음', async ()
   check('320px 긴 제목: 사진과 제목이 나란히, 제목은 여러 줄로', ll.photo.r <= ll.main.l && ll.photo.t < ll.title.b && ll.title.t < ll.photo.b &&
     ll.titleLines.length >= 2 && !!ll.stamp, JSON.stringify(ll));
   check('320px 긴 제목: 겹침 없음', cardOverlaps(ll).length === 0, cardOverlaps(ll).join(', '));
+  check('320px 사진 카드: 점선 아래 별점 | 한줄평은 사진 밑, 카드 전체 너비', !!ll.body && ll.bodyBorder === 'dashed' && ll.body.t >= ll.photo.b &&
+    Math.abs(ll.body.l - ll.left) < 1 && Math.abs(ll.body.r - ll.right) < 1 && Math.abs(ll.rate.l - ll.left) < 1, JSON.stringify(ll.body));
   await noOverflow('320px 긴 제목 카드');
   await shot('320-long-title-card');
   check('긴 제목 기록 지우기', (await api('DELETE', `/api/records?id=${encodeURIComponent(longRec.id)}`)).status === 200);

@@ -50,12 +50,6 @@ export function fmtDateDot(str) {
   return d ? `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}` : '';
 }
 
-export function dayParts(str) {
-  const d = parseDate(str);
-  if (!d) return { day: '?', wd: '', month: '' };
-  return { day: String(d.getDate()), wd: WEEKDAYS[d.getDay()], month: `${d.getMonth() + 1}월`, dow: d.getDay() };
-}
-
 export function fmtRemaining(sec) {
   if (sec === null || sec === undefined || sec === '' || !Number.isFinite(Number(sec))) return '';
   const n = Math.max(0, Math.round(Number(sec)));

@@ -107,6 +107,15 @@ const ICONS = {
   eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M3.5 3.5l17 17"/><path d="M10.2 5.7A10 10 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a16.6 16.6 0 0 1-2.6 3.5M6.7 6.9C4.1 8.6 2.5 12 2.5 12S6 18.5 12 18.5a9.5 9.5 0 0 0 4.3-1"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
   ticket: '<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M15 8.3v.4M15 11.8v.4M15 15.3v.4"/>',
+  // 입장 화면: 나무 세 그루가 든 티켓 (가로로 긴 아이콘 — VIEWBOX 참고)
+  ticketForest: '<path d="M5 2h30a3 3 0 0 1 3 3v4a3 3 0 0 0 0 6v4a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3v-4a3 3 0 0 0 0-6V5a3 3 0 0 1 3-3z"/>'
+    + '<g fill="currentColor" stroke="none">'
+    + '<path d="M20 5L17.4 9.3H18.7L16.6 13H18.1L16 16.8H24L21.9 13H23.4L21.3 9.3H22.6Z"/><rect x="19.35" y="16.8" width="1.3" height="2.2" rx=".3"/>'
+    + '<path d="M12 8L10 11.3H11L9.3 14.2H10.5L8.8 16.8H15.2L13.5 14.2H14.7L13 11.3H14Z"/><rect x="11.4" y="16.8" width="1.2" height="1.8" rx=".3"/>'
+    + '<path d="M28 8L26 11.3H27L25.3 14.2H26.5L24.8 16.8H31.2L29.5 14.2H30.7L29 11.3H30Z"/><rect x="27.4" y="16.8" width="1.2" height="1.8" rx=".3"/>'
+    + '</g>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  list: '<path d="M4 6.5h16M4 12h16M4 17.5h16"/>',
   lock: '<rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5M14 9l2 2"/>',
   tag: '<path d="M3.5 12.3V4.5a1 1 0 0 1 1-1h7.8l8.2 8.2-9 9z"/><circle cx="8" cy="8" r="1.4"/>',
@@ -124,12 +133,15 @@ const ICONS = {
   swap: '<path d="M7 4.5 3.5 8 7 11.5"/><path d="M3.5 8h13"/><path d="M17 12.5l3.5 3.5-3.5 3.5"/><path d="M20.5 16h-13"/>',
 };
 
+// 정사각형이 아닌 아이콘의 viewBox (나머지는 0 0 24 24)
+const VIEWBOX = { ticketForest: '0 0 40 24' };
+
 const STAR_PATH = 'M12 2.6l2.83 5.95 6.5.8-4.78 4.5 1.22 6.45L12 17.14 6.23 20.3l1.22-6.45L2.67 9.35l6.5-.8z';
 
 /** 아이콘 SVG. 템플릿은 위의 정적 문자열뿐이므로 innerHTML 사용이 안전함 */
 export function icon(name, cls) {
   const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('viewBox', Object.prototype.hasOwnProperty.call(VIEWBOX, name) ? VIEWBOX[name] : '0 0 24 24');
   svg.setAttribute('class', cls ? `ico ${cls}` : 'ico');
   svg.setAttribute('aria-hidden', 'true');
   svg.setAttribute('focusable', 'false');
