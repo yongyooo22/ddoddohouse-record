@@ -17,6 +17,7 @@ const PRECACHE = [
   '/js/dom.js',
   '/js/format.js',
   '/js/images.js',
+  '/js/legacy.js',
   '/js/main.js',
   '/js/model.js',
   '/js/nav.js',

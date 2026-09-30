@@ -1,5 +1,6 @@
 // 앱 아이콘 PNG 생성 (외부 의존성 없음: zlib 로 직접 PNG 인코딩)
-// 디자인: 종이색 둥근 사각형 위에 잉크색 노트, 종류별 색 책갈피 끈 3개(보드게임·머미·방탈출)
+// 디자인: 크림색 둥근 사각형 위에 흰 티켓 한 장 — 양옆 반원 홈과 점선 절취선,
+// 제목 줄 두 개, 아래 칸에 장르 색 점 세 개(보드게임 초록 · 머더미스터리 버건디 · 방탈출 네이비)
 // 실행: node scripts/make-icons.mjs
 import { writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -14,17 +15,16 @@ const hex = (h, a = 1) => {
 };
 
 const C = {
-  paper: hex('#F5EFE4'),
-  paperEdge: hex('#E9E0D2'),
-  shadow: [70, 48, 26, 0.16],
-  cover: hex('#2B2622'),
-  spine: hex('#1D1916'),
-  spineHi: hex('#453D36'),
-  label: hex('#F5EFE4'),
-  labelLine: hex('#BDB2A3'),
-  green: hex('#2E8B62'),
-  wine: hex('#A3314A'),
-  amber: hex('#C57A12'),
+  paper: hex('#F2EBDD'),
+  paperEdge: hex('#E4DACA'),
+  ticket: hex('#FFFDF8'),
+  border: hex('#D3C7B3'),
+  perf: hex('#C7BBA6'),
+  ink: hex('#1F1C18'),
+  ink3: hex('#8C8275'),
+  green: hex('#3A8060'),
+  wine: hex('#9E3A4E'),
+  navy: hex('#3A5594'),
 };
 
 // ── 도형 (512 좌표계) ──
@@ -36,41 +36,34 @@ function inRoundRect(x, y, x0, y0, x1, y1, r) {
   return dx * dx + dy * dy <= r * r;
 }
 
-function inRibbon(x, y, x0, x1, y0, y1, notch) {
-  if (x < x0 || x > x1 || y < y0) return false;
-  const mid = (x0 + x1) / 2;
-  const half = (x1 - x0) / 2;
-  const edge = y1 - notch * (1 - Math.abs(x - mid) / half);
-  return y <= edge;
+const T = { x0: 146, x1: 366, y0: 92, y1: 420, r: 30, perfY: 312, notch: 24 };
+
+/** 티켓 모양 (inset 만큼 안쪽으로 줄인 모양) — 양옆 반원 홈은 파냄 */
+function inTicket(x, y, inset = 0) {
+  if (!inRoundRect(x, y, T.x0 + inset, T.y0 + inset, T.x1 - inset, T.y1 - inset, Math.max(1, T.r - inset))) return false;
+  const nr = T.notch + inset;
+  for (const cx of [T.x0, T.x1]) {
+    const dx = x - cx, dy = y - T.perfY;
+    if (dx * dx + dy * dy <= nr * nr) return false;
+  }
+  return true;
 }
 
-/** 노트 마크 레이어. 좌표는 512 기준, 반환 [r,g,b,a] 또는 null */
+/** 티켓 마크 레이어. 좌표는 512 기준, 반환 [r,g,b,a] 또는 null */
 function mark(x, y) {
-  const X0 = 142, X1 = 370, Y0 = 84, Y1 = 390;
-  // 책갈피 끈 (노트 아래로 삐져나옴)
-  const ribbons = [
-    [198, 222, C.green, 446],
-    [232, 256, C.wine, 462],
-    [266, 290, C.amber, 438],
-  ];
-  let out = null;
-  // 그림자
-  if (inRoundRect(x, y, X0 + 6, Y0 + 12, X1 + 6, Y1 + 12, 30)) out = C.shadow;
-  for (const [a, b, col, end] of ribbons) if (inRibbon(x, y, a, b, Y1 - 20, end, 12)) out = col;
-  // 표지
-  if (inRoundRect(x, y, X0, Y0, X1, Y1, 28)) {
-    out = C.cover;
-    if (x < X0 + 34) out = C.spine;
-    else if (x < X0 + 38) out = C.spineHi;
-    // 라벨
-    if (inRoundRect(x, y, 198, 138, 330, 212, 12)) {
-      out = C.label;
-      if (inRoundRect(x, y, 216, 160, 312, 168, 4)) out = C.labelLine;
-      if (inRoundRect(x, y, 216, 182, 280, 190, 4)) out = C.labelLine;
-    }
-    // 표지 아래쪽 작은 별 (기록/평점)
-    const sx = 264, sy = 300, R = 30, r = 12.5;
-    if (inStar(x - sx, y - sy, R, r)) out = C.amber;
+  if (!inTicket(x, y)) return null;
+  if (!inTicket(x, y, 6)) return C.border;
+  let out = C.ticket;
+  // 제목 줄 두 개
+  if (inRoundRect(x, y, 190, 168, 322, 190, 11)) out = C.ink;
+  if (inRoundRect(x, y, 190, 214, 280, 230, 8)) out = C.ink3;
+  // 절취선 (점선)
+  if (Math.abs(y - T.perfY) <= 3 && x > T.x0 + T.notch + 12 && x < T.x1 - T.notch - 12 && ((x - T.x0) % 22) < 12) out = C.perf;
+  // 아래 칸: 장르 색 점 세 개
+  const dots = [[212, C.green], [256, C.wine], [300, C.navy]];
+  for (const [cx, col] of dots) {
+    const dx = x - cx, dy = y - 366;
+    if (dx * dx + dy * dy <= 15 * 15) out = col;
   }
   return out;
 }

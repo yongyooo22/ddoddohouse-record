@@ -5,7 +5,8 @@ import * as prefs from '../prefs.js';
 import { GENRES, GENRE_KEYS, RATING_FILTERS } from '../constants.js';
 import { filterEntries, groupByWork, yearsOf } from '../query.js';
 import { fmtMonth, monthKey } from '../format.js';
-import { emptyState, nextId } from '../ui.js';
+import { emptyState, nextId, toast, confirmDialog } from '../ui.js';
+import { legacyCopy, importLegacy, clearLegacy } from '../legacy.js';
 import { playCard, workCard, playRow, workRow } from './cards.js';
 import { loadSamples, removeSamplesWithConfirm } from './sample-actions.js';
 
@@ -103,13 +104,14 @@ export function mount(root) {
     h('div', { class: 'filters' }, yearSel, ratingSel));
 
   const sampleNote = h('div', { class: 'sample-note', hidden: true });
+  const legacyNote = h('div', { class: 'legacy-note', hidden: true });
   const resultLine = h('div', { class: 'result-line', role: 'status' });
   const feedHead = h('div', { class: 'feed-head' }, resultLine, h('div', { class: 'feed-opts' }, groupBtn, viewToggle));
   const feed = h('div', { class: 'feed' });
   const more = h('div', { class: 'feed-more' });
   const controls = h('div', { class: 'controls' }, tabBar, toolbar);
 
-  root.append(header, h('div', { class: 'container home-body' }, controls, sampleNote, feedHead, feed, more));
+  root.append(header, h('div', { class: 'container home-body' }, legacyNote, controls, sampleNote, feedHead, feed, more));
 
   function renderTabs() {
     const plays = repo.playsList();
@@ -145,6 +147,40 @@ export function mount(root) {
       h('button', { type: 'button', class: 'btn btn-small btn-ghost', onClick: () => removeSamplesWithConfirm() }, '예시 지우기'));
   }
 
+  // 예전 모임용 기록장(서버 버전)이 이 브라우저에 남긴 기록 사본
+  function renderLegacyNote() {
+    const c = legacyCopy();
+    legacyNote.hidden = !c;
+    if (!c) { legacyNote.replaceChildren(); return; }
+    legacyNote.replaceChildren(
+      icon('info'),
+      h('div', { class: 'legacy-text' },
+        h('p', { class: 'legacy-title', text: `예전 기록장(모임용 서버 버전)의 기록 사본 ${c.records.length}개가 이 브라우저에 남아 있어요` }),
+        h('p', { class: 'legacy-desc', text: '새 기록장으로 가져올 수 있어요. 사진은 서버에만 있어서 이 사본에는 없어요 — 사진까지 옮기려면 예전 앱에서 내보낸 백업 파일을 설정에서 가져오세요.' })),
+      h('div', { class: 'legacy-actions' },
+        h('button', {
+          type: 'button', class: 'btn btn-small btn-primary',
+          onClick: async () => {
+            try {
+              const n = await importLegacy();
+              toast(`예전 기록 ${n}개를 가져왔어요`, 'ok');
+            } catch {
+              toast('예전 기록을 가져오지 못했어요', 'error');
+            }
+            renderAll();
+          },
+        }, '가져오기'),
+        h('button', {
+          type: 'button', class: 'btn btn-small btn-ghost',
+          onClick: async () => {
+            const ok = await confirmDialog('예전 기록 사본을 지울까요?', '이 브라우저에 남은 예전 버전의 기록 사본과 입장 코드를 지워요. 예전 서버에 있던 원본은 건드리지 않아요.', { ok: '지우기', danger: true });
+            if (!ok) return;
+            clearLegacy();
+            renderAll();
+          },
+        }, '지우기')));
+  }
+
   function resetFilters() {
     f.q = ''; f.year = ''; f.rating = '';
     search.value = '';
@@ -168,6 +204,7 @@ export function mount(root) {
       feed.className = 'feed';
       feed.replaceChildren(emptyState({
         icon: 'ticket',
+        ticket: true,
         title: '아직 남긴 기록이 없어요',
         text: '보드게임·머더미스터리·방탈출을 하고 나서 제목과 날짜만 적어도 한 장의 티켓으로 남아요.',
         actions: [newLink, h('button', { type: 'button', class: 'btn btn-ghost', onClick: () => loadSamples() }, '예시 기록 둘러보기')],
@@ -244,6 +281,7 @@ export function mount(root) {
 
   function renderAll() {
     bookName.textContent = repo.state.bookName;
+    renderLegacyNote();
     renderTabs();
     renderYears();
     renderSampleNote();

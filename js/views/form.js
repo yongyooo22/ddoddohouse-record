@@ -410,7 +410,11 @@ export function mount(root, ctx) {
       fields['details.remainingSec'] = field('남은 시간', remain, { optional: true });
       fields['details.result'] = field('탈출 결과', segmented({
         options: ER_RESULTS, value: d().result || null, label: '탈출 결과', allowNone: true, cls: 'seg-result',
-        onChange: (v) => { setD('result')(v); fields['details.remainingSec'].hidden = v === 'fail'; },
+        onChange: (v) => {
+          setD('result')(v);
+          fields['details.remainingSec'].hidden = v === 'fail';
+          if (v === 'fail' && d().remainingSec === 'invalid') d().remainingSec = null;
+        },
       }), { optional: true });
       fields['details.remainingSec'].hidden = d().result === 'fail';
       fields['details.hints'] = field('힌트 수', stepper({ value: d().hints ?? null, min: 0, max: 99, label: '힌트 수', unit: '개', onChange: setD('hints') }), { optional: true });
@@ -533,7 +537,7 @@ export function mount(root, ctx) {
     if (!model.workId && !model.genre) errs.genre = '장르를 골라 주세요';
     if (!model.workId && !model.title.trim()) errs.title = '제목을 적어 주세요';
     if (!isValidDate(model.date)) errs.date = '플레이 날짜를 골라 주세요';
-    if (model.details.remainingSec === 'invalid') errs['details.remainingSec'] = '남은 시간을 분·초 숫자로 적어 주세요 (초는 0~59)';
+    if (model.genre === 'escaperoom' && model.details.result !== 'fail' && model.details.remainingSec === 'invalid') errs['details.remainingSec'] = '남은 시간을 분·초 숫자로 적어 주세요 (초는 0~59)';
     if (Object.keys(errs).length) { showErrors(errs); return; }
 
     saving = true;

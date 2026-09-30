@@ -400,12 +400,20 @@ export function stepper({ value = null, min = 0, max = 99, onChange, label, unit
 }
 
 // ── 빈 화면 ──
-export function emptyState({ icon: ic = 'ticket', title, text, actions = [] }) {
-  return h('div', { class: 'empty' },
+export function emptyState({ icon: ic = 'ticket', title, text, actions = [], ticket = false }) {
+  const main = [
     h('div', { class: 'empty-ico', 'aria-hidden': 'true' }, icon(ic)),
     h('p', { class: 'empty-title', text: title }),
     text ? h('p', { class: 'empty-text', text }) : null,
-    actions.length ? h('div', { class: 'empty-actions' }, actions) : null);
+  ];
+  // 첫 화면: 아직 비어 있는 티켓 한 장 (절취선 아래에 첫 기록 버튼)
+  if (ticket) {
+    return h('div', { class: 'ticket empty-ticket' },
+      h('div', { class: 'empty-main' }, main),
+      h('div', { class: 'perf perf-lg', 'aria-hidden': 'true' }),
+      h('div', { class: 'empty-actions' }, actions));
+  }
+  return h('div', { class: 'empty' }, main, actions.length ? h('div', { class: 'empty-actions' }, actions) : null);
 }
 
 // ── 라벨 있는 필드 ──

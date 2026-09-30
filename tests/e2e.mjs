@@ -214,10 +214,10 @@ await step('보안 헤더 · 첫 화면 (기록 없음)', async () => {
   check('CSP self', /default-src 'self'/.test(hdr['content-security-policy'] || ''));
   check('noindex', /noindex/.test(hdr['x-robots-tag'] || ''));
   await route('home');
-  await page.waitForSelector('.empty');
-  check('빈 화면 안내', /아직 남긴 기록이 없어요/.test(await text('.empty')));
-  check('‘첫 기록 남기기’ 버튼', !!(await page.$('.empty a:has-text("첫 기록 남기기")')));
-  check('예시 둘러보기 버튼', !!(await page.$('.empty button:has-text("예시 기록 둘러보기")')));
+  await page.waitForSelector('.empty-ticket');
+  check('빈 화면 안내', /아직 남긴 기록이 없어요/.test(await text('.empty-ticket')));
+  check('‘첫 기록 남기기’ 버튼', !!(await page.$('.empty-ticket a:has-text("첫 기록 남기기")')));
+  check('예시 둘러보기 버튼', !!(await page.$('.empty-ticket button:has-text("예시 기록 둘러보기")')));
   check('기록이 없으면 탭·검색 숨김', await page.$eval('.controls', (e) => e.hidden));
   check('상단: 기록장 이름 + 새 기록', /또또하우스 기록장/.test(await text('.brand-title')) && !!(await page.$('.topbar a.btn-new:has-text("새 기록")')));
   await noOverflow('빈 화면');
@@ -225,7 +225,7 @@ await step('보안 헤더 · 첫 화면 (기록 없음)', async () => {
 });
 
 await step('빠른 기록: 장르·제목·날짜만 (날짜는 오늘로 기본)', async () => {
-  await page.click('.empty a:has-text("첫 기록 남기기")');
+  await page.click('.empty-ticket a:has-text("첫 기록 남기기")');
   await route('new');
   check('날짜 기본값 = 오늘', (await page.inputValue('.input-date')) === TODAY, await page.inputValue('.input-date'));
   check('추가 기록은 접혀 있음', (await page.getAttribute('.extra-fold > .fold-btn', 'aria-expanded')) === 'false');
@@ -621,6 +621,32 @@ await step('예전 버전(모임용 서버) 백업 가져오기', async () => {
   await fresh.close();
 });
 
+await step('예전 버전이 이 브라우저에 남긴 기록 사본 가져오기', async () => {
+  const fresh = await newContext();
+  const p2 = await fresh.newPage();
+  watch(p2, '[legacy] ');
+  await p2.goto(`${BASE}/`);
+  await p2.waitForSelector('body[data-route="home"]');
+  await p2.evaluate(() => {
+    localStorage.setItem('ddh:key', 'old-secret-key-1234567890');
+    localStorage.setItem('ddh:cache', JSON.stringify({
+      savedAt: '2026-09-29T10:00:00.000Z',
+      members: [{ id: 'm1', name: '민지' }],
+      records: [{ id: 'r9', type: 'boardgame', date: '2026-09-28', title: '스컬킹', members: ['m1'], rating: 4.5, oneLiner: '또 하고 싶다', review: '', spoiler: false, bg: {} }],
+    }));
+  });
+  await p2.reload();
+  await p2.waitForSelector('.legacy-note:not([hidden])');
+  check('남은 사본 안내', /기록 사본 1개/.test(squash(await p2.textContent('.legacy-note'))));
+  await p2.click('.legacy-note button:has-text("가져오기")');
+  await p2.waitForSelector('.feed .tk-card');
+  check('사본 기록을 가져옴', squash(await p2.textContent('.feed')).includes('스컬킹'));
+  const left = await p2.evaluate(() => [localStorage.getItem('ddh:key'), localStorage.getItem('ddh:cache')]);
+  check('예전 입장 코드·사본은 지움', left.every((x) => x === null), JSON.stringify(left));
+  check('안내가 사라짐', await p2.$eval('.legacy-note', (e) => e.hidden));
+  await fresh.close();
+});
+
 await step('작품 정보 수정 · 합치기', async () => {
   // 방탈출 홍대점 작품을 강남점 작품으로 합치기
   await go('#/', 'home');
@@ -644,6 +670,24 @@ await step('작품 정보 수정 · 합치기', async () => {
   await page.click('.search-clear');
 });
 
+await step('오프라인에서도 열림 (서비스 워커)', async () => {
+  await go('#/', 'home');
+  const ready = await page.evaluate(() => Promise.race([
+    navigator.serviceWorker.ready.then(() => true),
+    new Promise((r) => setTimeout(() => r(false), 6000)),
+  ]));
+  check('서비스 워커 준비', ready);
+  await page.waitForTimeout(500);
+  await ctx.setOffline(true);
+  try {
+    await page.reload();
+    await route('home');
+    check('오프라인 새로고침 후에도 기록이 보임', (await page.$$('.feed .tk-card, .feed .row')).length > 0);
+  } finally {
+    await ctx.setOffline(false);
+  }
+});
+
 await step('모든 기록 지우기 → 빈 화면', async () => {
   await go('#/settings', 'settings');
   await page.click('.settings button:has-text("모두 지우기")');
@@ -653,7 +697,7 @@ await step('모든 기록 지우기 → 빈 화면', async () => {
   await dialogButton('지우기');
   await toastSeen(/모든 기록을 지웠어요/);
   await go('#/', 'home');
-  check('빈 화면으로', !!(await page.$('.empty')));
+  check('빈 화면으로', !!(await page.$('.empty-ticket')));
 });
 
 // ── 데스크톱 · 어두운 화면 스크린샷 ─────────────────────────
@@ -664,7 +708,7 @@ await step('데스크톱 화면', async () => {
   watch(page, '[desktop] ');
   await page.goto(`${BASE}/#/`);
   await route('home');
-  await page.click('.empty button:has-text("예시 기록 둘러보기")');
+  await page.click('.empty-ticket button:has-text("예시 기록 둘러보기")');
   await page.waitForSelector('.feed .tk-card');
   await sleep(500);
   await noOverflow('데스크톱 카드형');

@@ -3,9 +3,31 @@ import { h, icon } from '../dom.js';
 import * as repo from '../repo.js';
 import { placeLabel, workLabel } from '../model.js';
 import { sameTitleWorks, avgRating } from '../query.js';
-import { fmtDate, dateParts } from '../format.js';
+import { fmtDate, dateParts, fmtMinutes, fmtRemaining } from '../format.js';
+import { MM_FORMATS } from '../constants.js';
 import { appBar, genreTag, genreIcon, resultTag, sampleTag, starsView, emptyState } from '../ui.js';
 import { photo } from '../images.js';
+
+/** 한 줄 감상이 없을 때 대신 보여 줄 짧은 요약 (스포일러 아닌 장르별 항목만) */
+function detailSummary(p, genre) {
+  const d = p.details || {};
+  const has = (v) => v !== null && v !== undefined && v !== '';
+  const parts = [];
+  if (genre === 'boardgame') {
+    if (has(d.players)) parts.push(`${d.players}명`);
+    if (has(d.myScore)) parts.push(`내 점수 ${d.myScore}점`);
+    if (has(d.myRank)) parts.push(`${d.myRank}위`);
+    if (has(d.durationMin)) parts.push(fmtMinutes(d.durationMin));
+  } else if (genre === 'murdermystery') {
+    const f = MM_FORMATS.find((x) => x.key === d.format);
+    if (f) parts.push(f.label);
+    if (has(d.durationMin)) parts.push(fmtMinutes(d.durationMin));
+  } else if (genre === 'escaperoom') {
+    if (has(d.remainingSec) && d.result !== 'fail') parts.push(`${fmtRemaining(d.remainingSec)} 남김`);
+    if (has(d.hints)) parts.push(`힌트 ${d.hints}개`);
+  }
+  return parts.join(' · ');
+}
 
 function playItem(p, n, work) {
   const { md, wd, year } = dateParts(p.date);
@@ -14,7 +36,8 @@ function playItem(p, n, work) {
     h('a', { class: 'row tl-row', href: `#/play/${encodeURIComponent(p.id)}`, dataset: { id: p.id } },
       h('span', { class: 'row-date' }, h('span', { class: 'row-year', text: year }), h('time', { class: 'row-md', datetime: p.date, text: md }), h('span', { class: 'row-wd', text: wd })),
       h('span', { class: 'row-main' },
-        h('span', { class: 'row-title' }, h('span', { class: 'tl-n', text: `${n}회차` }), p.oneLiner ? h('span', { class: 'tl-line', text: p.oneLiner }) : h('span', { class: 'tl-line is-empty', text: '한 줄 감상 없음' })),
+        h('span', { class: 'row-title' }, h('span', { class: 'tl-n', text: `${n}회차` }),
+          p.oneLiner ? h('span', { class: 'tl-line', text: p.oneLiner }) : h('span', { class: 'tl-line is-empty', text: detailSummary(p, work.genre) || '감상 없이 남긴 기록' })),
         h('span', { class: 'row-meta' },
           work.genre === 'escaperoom' ? resultTag(d.result) : null,
           p.photos && p.photos.length ? h('span', { class: 'mini' }, icon('image'), h('span', { text: `${p.photos.length}` })) : null,

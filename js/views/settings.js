@@ -7,6 +7,7 @@ import { backupHead, backupTail, imageEntry, parseBackup } from '../backup.js';
 import { dateStamp, fmtBytes } from '../format.js';
 import { appBar, segmented, toast, confirmDialog, openDialog, counterFor } from '../ui.js';
 import { loadSamples, removeSamplesWithConfirm } from './sample-actions.js';
+import { clearLegacy } from '../legacy.js';
 
 function section(title, ...children) {
   return h('section', { class: 'set-section' }, h('h2', { class: 'set-title', text: title }), ...children);
@@ -123,6 +124,7 @@ async function wipe() {
   try {
     await repo.wipeAll();
     prefs.clearDraft();
+    clearLegacy();
     toast('모든 기록을 지웠어요', 'ok');
   } catch {
     toast('지우지 못했어요', 'error');
@@ -230,7 +232,7 @@ export function mount(root, ctx) {
               h('p', { class: 'notice-title', text: '기록과 사진은 이 기기의 이 브라우저에만 저장돼요' }),
               h('ul', { class: 'bullets' },
                 bullet('서버로 보내지 않아요. 인터넷이 없어도 쓰고 볼 수 있어요.'),
-                bullet('다른 기기, 같은 기기의 다른 브라우저(예: 크롬과 사파리), 홈 화면에 추가한 앱 아이콘에서는 보이지 않아요. 옮기려면 아래 백업을 써요.', 'info'),
+                bullet('다른 기기나 같은 기기의 다른 브라우저(예: 크롬과 사파리)에서는 보이지 않아요. 아이폰에서는 사파리와 ‘홈 화면에 추가’한 앱도 따로 저장돼요. 옮기려면 아래 백업을 써요.', 'info'),
                 bullet('브라우저에서 방문 기록과 함께 ‘쿠키 및 사이트 데이터’를 지우거나, 시크릿(사생활 보호) 창을 닫으면 기록도 지워져요.', 'alert'),
                 bullet('아이폰·아이패드 사파리는 이 사이트를 7일 넘게 열지 않으면 데이터를 지울 수 있어요. 홈 화면에 추가해 쓰거나 백업을 자주 받아 두세요.', 'alert')))),
           h('dl', { class: 'set-dl' },
