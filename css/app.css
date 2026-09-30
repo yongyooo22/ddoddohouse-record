@@ -1349,6 +1349,8 @@ html.vw-open, html.vw-open body { overflow: hidden; }
 .store-meter.is-warn .store-fill { background: var(--warn); }
 .store-meter.is-full .store-fill { background: var(--danger); }
 .store-sub { margin-top: -6px; color: var(--ink-3); font-size: 12px; }
+.store-off { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn-ink); font-size: 13px; font-weight: 700; line-height: 1.5; }
+.store-off .ico { flex: none; width: 16px; height: 16px; margin-top: 2px; }
 .store-wait { color: var(--ink-3); }
 .store-skel { display: inline-block; min-width: 10em; border-radius: 6px; background: var(--skeleton); }
 

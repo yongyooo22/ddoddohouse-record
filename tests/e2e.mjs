@@ -1482,7 +1482,7 @@ await step('잠금 해제 정보 지우기', async () => {
 const c3 = await newContext();
 page = await c3.newPage();
 watch(page, '[review] ');
-const failCount = async () => Number((await srv.redis.get('ddh:fail:127.0.0.1')) || 0);
+const failCount = async () => Number((await srv.redis.get('boardgame:fail:127.0.0.1')) || 0);
 /** 서버 최신본을 받아 올 때까지 (다른 기기 변경 흉내 뒤) */
 async function syncFromServer() {
   await Promise.all([
@@ -2384,13 +2384,14 @@ await step('사진: 초안에 올린 사진이 남음', async () => {
   await page.waitForSelector('.page-home, .page-detail, .page-list, .page-picker', { timeout: 5000 });
 });
 
-/** 기록에서 빠진 사진의 하루 유예가 지난 것처럼: 빠진 시각(imgtouch)과 올린 시각을 이틀 전으로 */
+/** 기록에서 빠진 사진의 하루 유예가 지난 것처럼: 사진 메타(boardgame:photos)의 올린 시각과 빠진 시각(touchedAt)을 이틀 전으로 */
 async function ageReleased(ids) {
   const old = new Date(Date.now() - 2 * 86400e3).toISOString();
   for (const id of ids) {
-    const raw = await srv.redis.hget('ddh:imgmeta', id);
-    if (raw) await srv.redis.hset('ddh:imgmeta', { [id]: JSON.stringify({ ...JSON.parse(raw), createdAt: old }) });
-    if (await srv.redis.hget('ddh:imgtouch', id)) await srv.redis.hset('ddh:imgtouch', { [id]: old });
+    const raw = await srv.redis.hget('boardgame:photos', id);
+    if (!raw) continue;
+    const m = JSON.parse(raw);
+    await srv.redis.hset('boardgame:photos', { [id]: JSON.stringify({ ...m, createdAt: old, ...(m.touchedAt ? { touchedAt: old } : {}) }) });
   }
 }
 
@@ -2408,7 +2409,7 @@ await step('사진: 기록 수정으로 뺀 사진 → 저장하면 빠진 것�
   await page.waitForSelector('.page-detail', { timeout: 8000 });
   check('서버 기록: 남은 2장, 둘째 장이 대표', JSON.stringify((await serverRecord(ids.catan)).photos) === JSON.stringify(photoIds.order.slice(1, 3)));
   // 바로 지우지 않음: 다른 기기의 저장 안 한 폼(되살리기·가져다 쓴 대표 사진)이 아직 가리킬 수 있어서
-  check('뺀 사진은 하루 동안 남고 빠진 시각이 적힘', (await imgBytes(dropped, 't')).status === 200 && !!(await srv.redis.hget('ddh:imgtouch', dropped)));
+  check('뺀 사진은 하루 동안 남고 빠진 시각이 적힘', (await imgBytes(dropped, 't')).status === 200 && !!JSON.parse((await srv.redis.hget('boardgame:photos', dropped)) || '{}').touchedAt);
   check('상세 갤러리 2장', (await page.$$('.page-detail .dg-slide')).length === 2 && (await text('.page-detail .dg-count')) === '1 / 2');
   await ageReleased([dropped, photoIds.order[0]]);
   check('하루 뒤 정리: 안 쓰는 사진만', (await api('POST', '/api/images?action=gc', {})).data.deleted === 1);
@@ -2447,12 +2448,12 @@ await step('사진: 설정 — 저장 공간 · 사용하지 않는 사진 정�
   const up = await api('POST', '/api/images', { full: made.s3, thumb: made.s3 });
   check('고아 사진 올림', up.status === 200 && up.data.image && up.data.image.id, JSON.stringify(up.data));
   const orphan = up.data.image.id;
-  const meta = JSON.parse(await srv.redis.hget('ddh:imgmeta', orphan));
-  await srv.redis.hset('ddh:imgmeta', { [orphan]: JSON.stringify({ ...meta, createdAt: new Date(Date.now() - 2 * 86400e3).toISOString() }) });
+  const meta = JSON.parse(await srv.redis.hget('boardgame:photos', orphan));
+  await srv.redis.hset('boardgame:photos', { [orphan]: JSON.stringify({ ...meta, createdAt: new Date(Date.now() - 2 * 86400e3).toISOString() }) });
   const stats = await imgStats();
   await go('#/settings', '.page-settings');
   const main = await until(async () => { const t = await text('.set-store .store-main'); return t.includes('장') && t; }, 5000);
-  check('사진 수·용량 / 한도', main && main.includes(`사진 ${stats.count}장`) && /\d+(\.\d)?(KB|MB) \/ 150MB/.test(main), main);
+  check('사진 수·용량 / 한도', main && main.includes(`사진 ${stats.count}장`) && /\d+(\.\d)?(KB|MB) \/ 500MB/.test(main), main);
   check('사용량 막대 (meter)', (await page.getAttribute('.set-store .store-meter', 'role')) === 'meter' && (await page.getAttribute('.set-store .store-meter', 'aria-valuenow')) !== null);
   await noOverflow('설정 (사진 저장 공간)');
   await shot('38-settings-storage');
@@ -2519,7 +2520,7 @@ await step('사진: 코드 없이는 사진을 볼 수 없음 (401)', async () =
   const wrong = await fetch(`${BASE}/api/images?id=${encodeURIComponent(id)}&size=f`, { headers: { 'x-app-key': 'wrong-key-000000000000' } });
   check('틀린 코드 → 401', wrong.status === 401 && !(await wrong.text()).includes('WEBP'));
   check('틀린 코드는 실패 횟수로 셈 (무차별 대입 차단 대상)', (await failCount()) === failsBefore + 1);
-  await srv.redis.del('ddh:fail:127.0.0.1'); // 이 확인으로 쌓인 실패 횟수는 지움 (뒤 단계에 영향 없게)
+  await srv.redis.del('boardgame:fail:127.0.0.1'); // 이 확인으로 쌓인 실패 횟수는 지움 (뒤 단계에 영향 없게)
   // 브라우저에서 주소만으로(<img src>) 부르면 키가 안 붙으므로 못 봄 → 앱은 항상 x-app-key 로 받아 blob: 으로 보여 줌
   await allowing([/status of 401/], async () => {
     const r = await page.evaluate((u) => new Promise((resolve) => {
@@ -2667,10 +2668,42 @@ await step('사진: 빈 새 서버에 백업 가져오기 → 기록·사진 모
       !!(await until(() => page.$eval('.page-detail .dg-slide:first-child img', (e) => !e.hidden && e.complete && e.naturalWidth > 0), 6000)));
     await go('#/settings', '.page-settings');
     check('새 서버 설정: 사진 수', !!(await until(async () => (await text('.set-store .store-main')).includes(`사진 ${json.images.length}장`), 5000)), await text('.set-store .store-main'));
+    const metas = Object.values(await srv2.redis.hgetall('boardgame:photos'));
+    check('새 서버: 사진 파일은 Blob 에, Redis 에는 파일 경로만', srv2.blob.paths().length === json.images.length * 2 &&
+      metas.length === json.images.length && metas.every((v) => v.length < 400 && JSON.parse(v).full.startsWith('boardgame/photos/')));
   } finally {
     await c2.close();
     page = prevPage;
     await srv2.close();
+  }
+});
+
+await step('사진 저장소(Blob)가 연결되지 않은 서버: 기록은 그대로, 설정에 안내, 사진 올리기는 503', async () => {
+  const srv3 = await startDevServer({
+    port: 0,
+    blob: null,
+    logger: { error: (...a) => serverErrors.push(`[srv3] ${a.map(String).join(' ')}`), log() {}, warn() {} },
+  });
+  const c4 = await newContext();
+  const prevPage = page;
+  page = await c4.newPage();
+  watch(page, '[noblob] ');
+  try {
+    await page.goto(`${srv3.url}/#k=${encodeURIComponent(srv3.secret)}`);
+    await page.waitForSelector('.page-home');
+    await go('#/settings', '.page-settings');
+    const note = await until(async () => (await text('.set-store .store-off')) || null, 5000);
+    check('설정: 사진 저장소 연결 안내', !!note && note.includes('Vercel Blob'), String(note));
+    const headers = { 'x-app-key': srv3.secret, 'content-type': 'application/json' };
+    const saved = await fetch(`${srv3.url}/api/records`, { method: 'POST', headers, body: JSON.stringify({ record: { type: 'boardgame', date: TODAY, title: 'Blob 없이', members: [] } }) });
+    check('기록 저장은 그대로', saved.status === 200);
+    const up = await fetch(`${srv3.url}/api/images`, { method: 'POST', headers, body: JSON.stringify({ full: made.s3, thumb: made.s3 }) });
+    const upBody = await up.json();
+    check('사진 올리기는 503 not_configured (reason blob)', up.status === 503 && upBody.error === 'not_configured' && upBody.reason === 'blob', JSON.stringify(upBody));
+  } finally {
+    await c4.close();
+    page = prevPage;
+    await srv3.close();
   }
 });
 

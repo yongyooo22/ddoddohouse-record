@@ -71,6 +71,9 @@ function storageSection() {
       'aria-valuetext': data ? `${fmtBytes(bytes)} 사용${limitBytes ? `, 한도 ${fmtBytes(limitBytes)}` : ''}` : '확인하는 중',
     }, fill),
     h('p', { class: 'store-sub', text: limitCount ? `한도: ${limitCount.toLocaleString('ko-KR')}장 또는 ${fmtBytes(limitBytes)}` : '한도 확인 중…' }),
+    // 서버에 사진 파일 저장소(Vercel Blob)가 아직 연결되지 않음 → 기록은 되지만 사진은 못 올림
+    d.ready === false ? h('p', { class: 'store-off', role: 'status' }, icon('info'),
+      h('span', { text: '사진 저장소(Vercel Blob)가 아직 연결되지 않아 사진을 올리거나 볼 수 없어요. 기록은 그대로 쓸 수 있어요.' })) : null,
   ];
   const gcBtn = h('button', {
     type: 'button', class: 'btn btn-soft btn-block', disabled: status === 'loading' && !data,

@@ -14,7 +14,8 @@
     "bump-sw": "node scripts/bump-sw.mjs"
   },
   "dependencies": {
-    "@upstash/redis": "^1.38.0"
+    "@upstash/redis": "^1.38.0",
+    "@vercel/blob": "^2.8.0"
   },
   "devDependencies": {
     "playwright-core": "~1.61.1"

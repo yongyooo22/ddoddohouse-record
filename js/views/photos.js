@@ -28,6 +28,8 @@ export function photoErrorMessage(e) {
     // 느린 건 대개 서버가 아니라 이 기기의 연결 (지하 방탈출·보드게임 카페 등)
     case 'timeout': case 'network': return SLOW_MSG;
     case 'offline': return '오프라인이라 사진을 올리지 못했어요. 연결되면 실패한 사진을 눌러 다시 올려 주세요';
+    case 'not_configured':
+      return e.data && e.data.reason === 'blob' ? '사진 저장소(Vercel Blob)가 아직 연결되지 않아 사진을 올릴 수 없어요' : api.errorMessage(e, '업로드');
     default: return api.errorMessage(e, '업로드');
   }
 }

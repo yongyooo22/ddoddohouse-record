@@ -1,19 +1,21 @@
 // 사진 API 테스트 (node:test) — 형식 판별 / 크기·개수·용량 한도 / 가져오기 멱등 / 바이너리 응답 헤더 /
-// 기록 photos 검증 / 기록 삭제·수정 시 정리 / in_use / gc 24시간 규칙 / 경합 / 개발 서버 본문 한도.
+// 기록 photos 검증 / 기록 삭제·수정 시 정리 / in_use / gc 24시간 규칙 / 경합 / Blob 어댑터 / 개발 서버 본문 한도.
+// 사진 파일은 Blob(여기서는 인메모리 가짜)에, Redis 에는 파일 경로와 작은 정보만 들어가는지도 확인한다.
 // 저장소 시나리오는 인메모리 가짜 Redis와 (설치돼 있으면) 실제 redis-server 양쪽에서 돌려
 // Lua 스크립트와 가짜 구현이 똑같이 동작하는지 확인한다.
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createHandlers, UPSERT_SCRIPT, RECORD_DELETE_SCRIPT, RECORDS_KEY, MAX_BODY_BYTES } from '../lib/handler.js';
+import { createHandlers, UPSERT_SCRIPT, RECORD_DELETE_SCRIPT, RECORDS_KEY, MEMBERS_KEY, PHOTOS_KEY, MAX_BODY_BYTES } from '../lib/handler.js';
 import {
-  IMAGE_ADD_SCRIPT,
   IMAGE_COMMIT_SCRIPT,
   IMAGE_DELETE_SCRIPT,
-  IMAGE_DELETE_BATCH,
-  IMAGE_META_KEY,
+  IMAGE_FORGET_SCRIPT,
+  IMAGE_GC_SCRIPT,
+  IMAGE_RELEASE_SCRIPT,
+  IMAGE_RESERVE_SCRIPT,
   IMAGE_ROLLBACK_SCRIPT,
-  IMAGE_TOUCH_KEY,
+  IMAGE_SWEEP_BATCH,
   MAX_FULL_BYTES,
   MAX_IMAGE_BODY_BYTES,
   MAX_IMAGE_TOTAL_BYTES,
@@ -21,13 +23,13 @@ import {
   MAX_THUMB_BYTES,
   base64Length,
   decodeImage,
-  deleteScriptArgs,
   detectImageType,
-  imageKey,
+  photoPaths,
+  publicMeta,
 } from '../lib/images.js';
+import { BLOB_DEL_BATCH, MAX_BLOB_READ_BYTES, createBlobFromEnv, wrapBlob } from '../lib/blob.js';
 import { validateRecord, LIMITS } from '../lib/validate.js';
-import { wrapUpstash } from '../lib/redis.js';
-import { createMemoryRedis, enhanceResponse, startDevServer } from '../scripts/dev.mjs';
+import { createMemoryBlob, createMemoryRedis, enhanceResponse, startDevServer } from '../scripts/dev.mjs';
 import {
   fakeJpeg as jpeg,
   fakeWebp as webp,
@@ -35,6 +37,7 @@ import {
   jpegWithSegments,
   mockRes,
   startRedisServer,
+  testRedis,
   webpWithChunks,
 } from './redis-helpers.mjs';
 
@@ -57,12 +60,17 @@ const b64 = (buf) => buf.toString('base64');
 
 const rec = (over = {}) => ({ type: 'boardgame', date: '2026-09-01', title: '카탄', members: [], ...over });
 
-function metaJson(id, { bytesF = 10, bytesT = 5, createdAt = '2026-01-01T00:00:00.000Z' } = {}) {
-  return JSON.stringify({ id, mime: 'image/jpeg', mimeT: 'image/jpeg', bytesF, bytesT, createdAt });
+/** 미리 넣어 둘 사진 메타 (파일 경로는 boardgame/photos/<id>-seed.jpg · …-seed-thumb.jpg) */
+function metaJson(id, { bytesF = 10, bytesT = 5, createdAt = '2026-01-01T00:00:00.000Z', state } = {}) {
+  const files = photoPaths(id, 'seed', 'image/jpeg', 'image/jpeg');
+  return JSON.stringify({ id, ...files, mime: 'image/jpeg', mimeT: 'image/jpeg', bytesF, bytesT, createdAt, ...(state ? { state } : {}) });
 }
 
-function setup({ redis = createMemoryRedis(), now, logger = silent, env = { APP_SECRET: SECRET } } = {}) {
-  const handlers = createHandlers({ redis, env, now, logger });
+/** 이 앱의 키만 비움 (테스트 사이 초기화 — 전체 초기화 명령은 쓰지 않음) */
+const clearApp = (redis) => redis.del(RECORDS_KEY, MEMBERS_KEY, PHOTOS_KEY);
+
+function setup({ redis = createMemoryRedis(), blob = createMemoryBlob(), now, logger = silent, env = { APP_SECRET: SECRET } } = {}) {
+  const handlers = createHandlers({ redis, blob, env, now, logger });
   async function call(route, { method = 'GET', key = SECRET, ip = '10.0.0.1', body, query = {}, headers = {} } = {}) {
     const req = {
       method,
@@ -82,19 +90,29 @@ function setup({ redis = createMemoryRedis(), now, logger = silent, env = { APP_
   const gc = () => call('images', { method: 'POST', query: { action: 'gc' } });
   const saveRecord = (record, baseUpdatedAt) => call('records', { method: 'POST', body: { record, baseUpdatedAt } });
   const delRecord = (id) => call('records', { method: 'DELETE', query: { id } });
-  return { handlers, redis, call, upload, getImage, delImage, stats, gc, saveRecord, delRecord };
+  return { handlers, redis, blob, call, upload, getImage, delImage, stats, gc, saveRecord, delRecord };
 }
 
-/** 사진 데이터 키·메타가 모두 있는지 / 모두 없는지 */
-async function imageState(redis, id) {
-  const [f, t, meta] = await Promise.all([
-    redis.get(imageKey(id, 'f')),
-    redis.get(imageKey(id, 't')),
-    redis.hget(IMAGE_META_KEY, id),
-  ]);
-  if (f && t && meta) return 'present';
-  if (!f && !t && !meta) return 'gone';
-  return `partial(f=${!!f},t=${!!t},meta=${!!meta})`;
+/** 사진 메타(파일 경로)와 Blob 파일이 모두 있는지 / 모두 없는지 */
+async function imageState(redis, blob, id) {
+  const raw = await redis.hget(PHOTOS_KEY, id);
+  const meta = raw ? JSON.parse(raw) : null;
+  const files = blob.paths().filter((p) => p.startsWith(`boardgame/photos/${id}-`));
+  if (meta && !meta.state && files.length === 2 && files.includes(meta.full) && files.includes(meta.thumb)) return 'present';
+  if (!meta && !files.length) return 'gone';
+  return `partial(meta=${meta ? meta.state || 'ok' : 'none'},files=${files.length})`;
+}
+
+/** 기록에서 빠진(또는 다시 쓰겠다고 한) 시각 — 메타의 touchedAt (없으면 null) */
+async function touchedOf(redis, id) {
+  const raw = await redis.hget(PHOTOS_KEY, id);
+  return raw ? JSON.parse(raw).touchedAt ?? null : null;
+}
+
+/** touchedAt 이 적힌 사진 id 들 (정렬) */
+async function touchedIds(redis) {
+  const all = await redis.hgetall(PHOTOS_KEY);
+  return Object.entries(all).filter(([, v]) => v.includes('"touchedAt":"')).map(([id]) => id).sort();
 }
 
 // ── 형식 판별 · base64 ───────────────────────────────────────
@@ -254,11 +272,10 @@ describe('기록 photos 검증', () => {
 // ── 인증 · 공통 응답 ─────────────────────────────────────────
 
 describe('사진 API: 인증 · 공통', () => {
-  test('키 없는 업로드·조회·삭제·gc 는 401, Redis 도 건드리지 않음', async () => {
-    const base = createMemoryRedis();
+  test('키 없는 업로드·조회·삭제·gc 는 401, Redis·Blob 도 건드리지 않음', async () => {
     const touched = [];
-    const redis = Object.fromEntries(Object.entries(base).map(([k, fn]) => [k, (...a) => { touched.push(k); return fn(...a); }]));
-    const { call, upload, getImage } = setup({ redis });
+    const spy = (obj, tag) => Object.fromEntries(Object.entries(obj).map(([k, fn]) => [k, (...a) => { touched.push(`${tag}.${k}`); return fn(...a); }]));
+    const { call, upload, getImage } = setup({ redis: spy(createMemoryRedis(), 'redis'), blob: spy(createMemoryBlob(), 'blob') });
     const responses = [
       await upload(jpeg(), jpeg(100), {}, { key: null }),
       await getImage('abc', 't', { key: null }),
@@ -283,7 +300,7 @@ describe('사진 API: 인증 · 공통', () => {
     const id = up.body.image.id;
     assert.equal((await upload(jpeg(), jpeg(100), {}, { key: 'wrong-key', ip: '4.4.4.4' })).statusCode, 401);
     assert.equal((await getImage(id, 't', { key: 'wrong-key', ip: '4.4.4.4' })).statusCode, 401);
-    assert.equal(await redis.get('ddh:fail:4.4.4.4'), '2');
+    assert.equal(await redis.get('boardgame:fail:4.4.4.4'), '2');
     for (let i = 0; i < 18; i++) await getImage(id, 't', { key: `bad-${i}`, ip: '4.4.4.4' });
     const locked = await getImage(id, 't', { ip: '4.4.4.4' });
     assert.equal(locked.statusCode, 429);
@@ -299,6 +316,24 @@ describe('사진 API: 인증 · 공통', () => {
         assert.deepEqual(res.body, { error: 'not_configured' });
       }
     }
+  });
+
+  test('Blob(사진 파일 저장소)이 연결되지 않으면 사진 올리기·보기·지우기·gc 만 503 (reason blob) — 기록·멤버·통계는 그대로', async () => {
+    const { call, upload, getImage, delImage, gc, stats, saveRecord, delRecord, redis } = setup({ blob: null });
+    for (const res of [await upload(), await getImage('abc', 't'), await delImage('abc'), await gc()]) {
+      assert.equal(res.statusCode, 503);
+      assert.deepEqual(res.body, { error: 'not_configured', reason: 'blob' });
+      assert.equal(res.headers['cache-control'], 'no-store');
+    }
+    // 입력 형식 오류는 그대로 400
+    assert.deepEqual((await getImage('bad id', 't')).body, { error: 'invalid', field: 'id' });
+    assert.deepEqual(await stats(), { count: 0, bytes: 0, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES, ready: false });
+    assert.deepEqual((await call('images', { query: { list: '1' } })).body, { images: [] });
+    const r = await saveRecord(rec());
+    assert.equal(r.statusCode, 200);
+    assert.deepEqual((await saveRecord(rec({ photos: ['p1'] }))).body, { error: 'invalid', field: 'photos', missing: ['p1'] });
+    assert.deepEqual((await delRecord(r.body.record.id)).body, { ok: true });
+    assert.equal(await redis.hget(PHOTOS_KEY, 'p1'), null);
   });
 
   test('허용되지 않은 메서드 405 + Allow, 알 수 없는 action 400', async () => {
@@ -331,7 +366,7 @@ describe('사진 API: 인증 · 공통', () => {
     }
 
     const logged = [];
-    const redis = { ...createMemoryRedis(), get: async (k) => { if (k.startsWith('ddh:img:')) throw new Error(`boom KV_REST_API_TOKEN=${SECRET}`); return null; } };
+    const redis = { ...createMemoryRedis(), hget: async (k) => { if (k === PHOTOS_KEY) throw new Error(`boom KV_REST_API_TOKEN=${SECRET}`); return null; } };
     const broken = setup({ redis, logger: { error: (...a) => logged.push(a) } });
     const res = await broken.getImage('abc', 't');
     assert.equal(res.statusCode, 500);
@@ -362,21 +397,28 @@ describe('사진 API: 인증 · 공통', () => {
   });
 });
 
-// ── 저장소 시나리오 (가짜 / 실제 Redis 공통) ──────────────────
+// ── 저장소 시나리오 (가짜 / 실제 Redis 공통, 파일은 인메모리 가짜 Blob) ────────
 
 function imageSuite(label, makeRedis) {
   describe(`사진 저장 (${label})`, () => {
     let redis;
+    let blob = createMemoryBlob();
     before(async () => {
       redis = await makeRedis();
     });
 
-    function fresh(opts = {}) {
-      return setup({ redis, ...opts });
+    /** 이 앱의 키와 가짜 Blob 을 비움 */
+    async function reset() {
+      await clearApp(redis);
+      blob = createMemoryBlob();
     }
 
-    test('업로드 → 메타 {id,mime,mimeT,bytesF,bytesT,createdAt}, 원본·썸네일 따로 저장', async () => {
-      await redis.flushall();
+    function fresh(opts = {}) {
+      return setup({ redis, blob, ...opts });
+    }
+
+    test('업로드 → 앱에는 {id,mime,mimeT,bytesF,bytesT,createdAt}, 파일은 Blob 에, Redis 에는 파일 경로 문자열만', async () => {
+      await reset();
       const t0 = Date.parse('2026-09-29T01:02:03.004Z');
       const { upload } = fresh({ now: () => new Date(t0) });
       const full = webp(5000, 3);
@@ -395,9 +437,44 @@ function imageSuite(label, makeRedis) {
         createdAt: '2026-09-29T01:02:03.004Z',
       });
       assert.equal(res.body.existed, undefined);
-      assert.equal(await redis.get(imageKey(image.id, 'f')), b64(full));
-      assert.equal(await redis.get(imageKey(image.id, 't')), b64(thumb));
-      assert.deepEqual(JSON.parse(await redis.hget(IMAGE_META_KEY, image.id)), image);
+      // Redis: 사진 id → 파일 경로·형식·크기·시각 (작은 JSON 하나)
+      const raw = await redis.hget(PHOTOS_KEY, image.id);
+      const stored = JSON.parse(raw);
+      assert.deepEqual(stored, { ...image, full: stored.full, thumb: stored.thumb });
+      assert.match(stored.full, new RegExp(`^boardgame/photos/${image.id}-[0-9a-f]{12}\\.webp$`));
+      assert.equal(stored.thumb, stored.full.replace(/\.webp$/, '-thumb.jpg'));
+      assert.ok(raw.length < 400, `메타 ${raw.length}B`);
+      assert.ok(!raw.includes(b64(full).slice(8, 48)) && !raw.includes(b64(thumb).slice(8, 48)), 'Redis 에 사진 데이터(base64) 없음');
+      // Blob: 원본·썸네일 파일 두 개 (형식 그대로)
+      assert.deepEqual(blob.paths(), [stored.thumb, stored.full].sort());
+      assert.ok((await blob.get(stored.full)).equals(full));
+      assert.ok((await blob.get(stored.thumb)).equals(thumb));
+      assert.equal(blob.contentType(stored.full), 'image/webp');
+      assert.equal(blob.contentType(stored.thumb), 'image/jpeg');
+    });
+
+    test('Redis 로 가는 명령에는 사진 데이터가 없음 (올리기·보기·지우기 모두 — 요청이 작음)', async () => {
+      await reset();
+      const sent = [];
+      const tracing = new Proxy(redis, {
+        get(target, name) {
+          const fn = target[name];
+          return typeof fn !== 'function' ? fn : (...a) => { sent.push(JSON.stringify(a)); return fn.apply(target, a); };
+        },
+      });
+      const { upload, getImage, delImage } = fresh({ redis: tracing });
+      const full = jpeg(MAX_FULL_BYTES, 21);
+      const thumb = webp(MAX_THUMB_BYTES, 22);
+      const { image } = (await upload(full, thumb)).body;
+      assert.ok((await getImage(image.id, 'f')).raw.equals(full));
+      assert.ok((await getImage(image.id, 't')).raw.equals(thumb));
+      assert.deepEqual((await delImage(image.id)).body, { ok: true });
+      assert.ok(sent.length >= 5);
+      for (const cmd of sent) {
+        assert.ok(cmd.length < 6000, `Redis 명령 ${cmd.length}B`);
+        assert.ok(!cmd.includes(b64(full).slice(100, 160)) && !cmd.includes(b64(thumb).slice(100, 160)));
+      }
+      assert.deepEqual(blob.paths(), []);
     });
 
     test('GET 바이너리: 저장된 형식·헤더·바이트 그대로 (size=t|f, 기본 f)', async () => {
@@ -440,24 +517,37 @@ function imageSuite(label, makeRedis) {
       assert.equal(arr.statusCode, 200);
     });
 
-    test('GET: 저장된 값이 JPEG·WebP 가 아니면(깨진 키) 바이너리 없이 500 — image/jpeg·webp 외의 형식으로는 안 보냄', async () => {
+    test('GET: 파일이 JPEG·WebP 가 아니면 500 (image/jpeg·webp 외로는 안 보냄), 파일이 없거나 올리는 중이면 404', async () => {
       const errors = [];
       const { getImage } = fresh({ logger: { error: (...a) => errors.push(a.join(' ')) } });
       for (const [id, buf] of [['junk-svg', SVG], ['junk-png', PNG], ['junk-html', Buffer.from('<html><script>alert(1)</script>')]]) {
-        await redis.set(imageKey(id, 't'), b64(buf));
+        await redis.hset(PHOTOS_KEY, { [id]: metaJson(id) });
+        await blob.put(JSON.parse(metaJson(id)).thumb, buf, 'image/jpeg');
         const res = await getImage(id, 't');
         assert.equal(res.statusCode, 500, id);
         assert.deepEqual(res.body, { error: 'server_error' });
         assert.equal(res.raw, undefined, `${id}: 바이너리 없음`);
         assert.equal(res.headers['content-type'], undefined);
         assert.equal(res.headers['cache-control'], 'no-store');
-        await redis.del(imageKey(id, 't'));
+        await redis.hdel(PHOTOS_KEY, id);
+        await blob.del([JSON.parse(metaJson(id)).thumb]);
       }
       assert.equal(errors.length, 3);
+      // 메타는 있는데 Blob 에 파일이 없음 → 404
+      await redis.hset(PHOTOS_KEY, { lost: metaJson('lost') });
+      assert.deepEqual((await getImage('lost', 'f')).body, { error: 'not_found' });
+      // 올리는 중·지우는 중 → 404 (파일이 있어도)
+      for (const state of ['uploading', 'deleting']) {
+        await redis.hset(PHOTOS_KEY, { half: metaJson('half', { state }) });
+        await blob.put(JSON.parse(metaJson('half')).full, jpeg(), 'image/jpeg');
+        assert.deepEqual((await getImage('half', 'f')).body, { error: 'not_found' }, state);
+      }
+      await redis.hdel(PHOTOS_KEY, 'lost');
+      await redis.hdel(PHOTOS_KEY, 'half');
     });
 
     test('형식 거부: PNG/GIF/SVG/가짜 매직 → 400 reason format (full·thumb 각각), 아무것도 저장 안 됨', async () => {
-      await redis.flushall();
+      await reset();
       const { upload, call, stats } = fresh();
       for (const [label, buf] of [['PNG', PNG], ['GIF', GIF], ['SVG', SVG], ['WAV', WAV], ['FF D8', Buffer.from([0xff, 0xd8, 0x00, 0x00])]]) {
         let res = await upload(buf, jpeg(100));
@@ -481,11 +571,12 @@ function imageSuite(label, makeRedis) {
       }
       assert.deepEqual((await call('images', { method: 'POST', body: [] })).body, { error: 'invalid', field: 'body' });
       assert.equal((await stats()).count, 0);
-      assert.deepEqual(await redis.hgetall(IMAGE_META_KEY), {});
+      assert.deepEqual(await redis.hgetall(PHOTOS_KEY), {});
+      assert.deepEqual(blob.paths(), []);
     });
 
     test('크기 한도: 원본 700KB·썸네일 100KB 까지 (디코드 기준), 넘으면 413 + field', async () => {
-      await redis.flushall();
+      await reset();
       const { upload, getImage, stats } = fresh();
       const maxFull = jpeg(MAX_FULL_BYTES, 7);
       const ok = await upload(maxFull, jpeg(MAX_THUMB_BYTES, 8));
@@ -499,15 +590,20 @@ function imageSuite(label, makeRedis) {
       assert.equal((await stats()).count, 1);
     });
 
-    test('개수 한도 3000 → 409 limit(count), 이미 있는 id 가져오기는 그대로 200, 올리다 끊긴 id 는 채움', async () => {
-      await redis.flushall();
+    test('개수 한도 3000 → 409 limit(count), 이미 있는 id 가져오기는 그대로 200, 올리다 끊긴 id 는 새 파일로 채움', async () => {
+      await reset();
       const t0 = Date.parse('2026-09-01T00:00:00.000Z');
       const filler = {};
       // 모두 방금 올린 사진 → 가득 차도 자동 정리로 지울 게 없음
       for (let i = 0; i < MAX_IMAGES; i++) filler[`fill-${i}`] = metaJson(`fill-${i}`, { createdAt: new Date(t0).toISOString() });
-      await redis.hset(IMAGE_META_KEY, filler);
-      await redis.set(imageKey('fill-7', 'f'), b64(jpeg()));
-      await redis.set(imageKey('fill-7', 't'), b64(jpeg(100)));
+      // fill-8: 올리다 끊김 (원본 파일만 쓰고 멈춤)
+      filler['fill-8'] = metaJson('fill-8', { createdAt: new Date(t0).toISOString(), state: 'uploading' });
+      await redis.hset(PHOTOS_KEY, filler);
+      const seed7 = JSON.parse(metaJson('fill-7'));
+      await blob.put(seed7.full, jpeg(), 'image/jpeg');
+      await blob.put(seed7.thumb, jpeg(100), 'image/jpeg');
+      const seed8 = JSON.parse(metaJson('fill-8'));
+      await blob.put(seed8.full, jpeg(), 'image/jpeg');
       const { upload, stats, getImage } = fresh({ now: () => new Date(t0 + HOUR) });
       const over = await upload();
       assert.equal(over.statusCode, 409);
@@ -515,19 +611,20 @@ function imageSuite(label, makeRedis) {
       const again = await upload(jpeg(), jpeg(100), { id: 'fill-7' });
       assert.equal(again.statusCode, 200);
       assert.equal(again.body.existed, true);
-      // 메타만 있고 데이터가 없는 id(올리다 끊김)는 한도와 상관없이 같은 id 로 데이터를 채움
+      // 올리다 끊긴 id 는 한도와 상관없이 같은 id 로 이어받아 새 파일로 채움 (예전 파일은 지움)
       const heal = await upload(jpeg(500, 5), jpeg(100, 5), { id: 'fill-8' });
       assert.equal(heal.statusCode, 200, JSON.stringify(heal.body));
       assert.equal(heal.body.existed, undefined);
-      assert.equal(await imageState(redis, 'fill-8'), 'present');
+      assert.equal(await imageState(redis, blob, 'fill-8'), 'present');
+      assert.equal(blob.paths().includes(seed8.full), false, '끊긴 올리기의 파일은 지움');
       assert.ok((await getImage('fill-8', 'f')).raw.equals(jpeg(500, 5)));
       assert.equal((await stats()).count, MAX_IMAGES);
-      await redis.flushall();
+      await reset();
     });
 
-    test('총 용량 한도 150MB: 딱 맞으면 저장, 넘으면 409 limit(bytes) — 메타 합산', async () => {
-      await redis.flushall();
-      await redis.hset(IMAGE_META_KEY, {
+    test('총 용량 한도 500MB: 딱 맞으면 저장, 넘으면 409 limit(bytes) — 메타 합산', async () => {
+      await reset();
+      await redis.hset(PHOTOS_KEY, {
         big: metaJson('big', { bytesF: MAX_IMAGE_TOTAL_BYTES - 3000, bytesT: 1000 }),
       });
       // big 은 방금 올린 사진 (자동 정리 대상 아님)
@@ -535,17 +632,17 @@ function imageSuite(label, makeRedis) {
       const fits = await upload(jpeg(1500), jpeg(500));
       assert.equal(fits.statusCode, 200, JSON.stringify(fits.body));
       let s = await stats();
-      assert.deepEqual(s, { count: 2, bytes: MAX_IMAGE_TOTAL_BYTES, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES });
+      assert.deepEqual(s, { count: 2, bytes: MAX_IMAGE_TOTAL_BYTES, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES, ready: true });
       const over = await upload(jpeg(40), jpeg(40));
       assert.equal(over.statusCode, 409);
       assert.deepEqual(over.body, { error: 'limit', reason: 'bytes' });
       s = await stats();
       assert.equal(s.count, 2);
-      await redis.flushall();
+      await reset();
     });
 
     test('가득 차면 올린 지 하루 지난 안 쓰는 사진을 한 번 정리하고 다시 시도 (기록이 쓰는·새 사진은 그대로)', async () => {
-      await redis.flushall();
+      await reset();
       let clock = Date.parse('2026-09-10T00:00:00.000Z');
       const { upload, saveRecord, stats } = fresh({ now: () => new Date(clock) });
       const used = (await upload()).body.image.id;
@@ -554,22 +651,22 @@ function imageSuite(label, makeRedis) {
       clock += 25 * HOUR;
       const young = (await upload()).body.image.id;
       const per = 2000 + 300;
-      await redis.hset(IMAGE_META_KEY, {
+      await redis.hset(PHOTOS_KEY, {
         filler: metaJson('filler', { bytesF: MAX_IMAGE_TOTAL_BYTES - 3 * per - 100, bytesT: 0, createdAt: new Date(clock).toISOString() }),
       });
       const res = await upload();
       assert.equal(res.statusCode, 200, JSON.stringify(res.body));
-      assert.equal(await imageState(redis, old), 'gone');
-      assert.equal(await imageState(redis, used), 'present');
-      assert.equal(await imageState(redis, young), 'present');
+      assert.equal(await imageState(redis, blob, old), 'gone');
+      assert.equal(await imageState(redis, blob, used), 'present');
+      assert.equal(await imageState(redis, blob, young), 'present');
       assert.equal((await stats()).bytes, MAX_IMAGE_TOTAL_BYTES - 100);
       // 더 지울 게 없으면 409
       assert.deepEqual((await upload()).body, { error: 'limit', reason: 'bytes' });
-      await redis.flushall();
+      await reset();
     });
 
-    test('id 지정(가져오기): 그 id 로 저장, 다시 보내면 existed:true + 원래 메타·데이터 유지 (멱등)', async () => {
-      await redis.flushall();
+    test('id 지정(가져오기): 그 id 로 저장, 다시 보내면 existed:true + 원래 메타·파일 유지 (멱등)', async () => {
+      await reset();
       let clock = Date.parse('2026-09-01T00:00:00.000Z');
       const { upload, getImage, stats } = fresh({ now: () => new Date(clock) });
       const first = await upload(jpeg(900, 1), jpeg(90, 1), { id: 'imp-1', createdAt: '2020-01-01T00:00:00.000Z' });
@@ -578,33 +675,37 @@ function imageSuite(label, makeRedis) {
       assert.equal(first.body.existed, undefined);
       // createdAt 은 서버가 정함 (옛 날짜로 들어와 gc 에 바로 걸리지 않게)
       assert.equal(first.body.image.createdAt, '2026-09-01T00:00:00.000Z');
+      const files = blob.paths();
       clock += HOUR;
       const again = await upload(webp(500, 2), webp(50, 2), { id: 'imp-1' });
       assert.equal(again.statusCode, 200);
       assert.deepEqual(again.body, { image: first.body.image, existed: true });
+      assert.deepEqual(blob.paths(), files, '파일을 다시 올리지 않음');
       assert.ok((await getImage('imp-1', 'f')).raw.equals(jpeg(900, 1)));
       assert.equal((await getImage('imp-1', 't')).headers['content-type'], 'image/jpeg');
       assert.equal((await stats()).count, 1);
+      // 곧 기록에 붙일 사진이므로 정리 유예를 지금부터 다시 셈
+      assert.equal(await touchedOf(redis, 'imp-1'), new Date(clock).toISOString());
       // 빈 문자열 id 는 없는 것으로
       const gen = await upload(jpeg(), jpeg(100), { id: '' });
       assert.match(gen.body.image.id, UUID_RE);
     });
 
-    test('stats · list', async () => {
-      await redis.flushall();
+    test('stats · list (목록에는 파일 경로·내부 표시 없음)', async () => {
+      await reset();
       let clock = Date.parse('2026-09-01T00:00:00.000Z');
       const { upload, call, stats } = fresh({ now: () => new Date((clock += 1000)) });
-      assert.deepEqual(await stats(), { count: 0, bytes: 0, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES });
+      assert.deepEqual(await stats(), { count: 0, bytes: 0, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES, ready: true });
       const a = (await upload(jpeg(1000), jpeg(100))).body.image;
       const b = (await upload(webp(2000), webp(200))).body.image;
-      assert.deepEqual(await stats(), { count: 2, bytes: 3300, limitBytes: 150 * 1024 * 1024, limitCount: 3000 });
+      assert.deepEqual(await stats(), { count: 2, bytes: 3300, limitBytes: 500 * 1024 * 1024, limitCount: 3000, ready: true });
       const list = await call('images', { query: { list: '1' } });
       assert.equal(list.statusCode, 200);
       assert.deepEqual(list.body, { images: [a, b] });
     });
 
-    test('DELETE: 안 쓰는 사진 200, 기록이 쓰면 409 in_use, 없으면 404, 잘못된 id 400', async () => {
-      await redis.flushall();
+    test('DELETE: 안 쓰는 사진 200 (파일도 지움), 기록이 쓰면 409 in_use, 없으면 404, 잘못된 id 400', async () => {
+      await reset();
       const { upload, delImage, getImage, saveRecord, stats } = fresh();
       const free = (await upload()).body.image;
       const used = (await upload()).body.image;
@@ -613,13 +714,13 @@ function imageSuite(label, makeRedis) {
       const ok = await delImage(free.id);
       assert.equal(ok.statusCode, 200);
       assert.deepEqual(ok.body, { ok: true });
-      assert.equal(await imageState(redis, free.id), 'gone');
+      assert.equal(await imageState(redis, blob, free.id), 'gone');
       assert.equal((await getImage(free.id, 't')).statusCode, 404);
 
       const inUse = await delImage(used.id);
       assert.equal(inUse.statusCode, 409);
       assert.deepEqual(inUse.body, { error: 'in_use' });
-      assert.equal(await imageState(redis, used.id), 'present');
+      assert.equal(await imageState(redis, blob, used.id), 'present');
 
       assert.deepEqual((await delImage(free.id)).body, { error: 'not_found' });
       assert.equal((await delImage(free.id)).statusCode, 404);
@@ -628,7 +729,7 @@ function imageSuite(label, makeRedis) {
     });
 
     test('기록 photos: 없는 사진 참조 400 (missing 목록), 있으면 순서대로 저장', async () => {
-      await redis.flushall();
+      await reset();
       const { upload, saveRecord, call } = fresh();
       const a = (await upload()).body.image.id;
       const b = (await upload()).body.image.id;
@@ -650,7 +751,7 @@ function imageSuite(label, makeRedis) {
     });
 
     test('기록 삭제: 그 기록에만 있던 사진은 하루 유예 뒤 정리 (다른 기록이 쓰는 사진·저장 전 새 사진은 그대로)', async () => {
-      await redis.flushall();
+      await reset();
       let clock = Date.parse('2026-09-01T00:00:00.000Z');
       const { upload, saveRecord, delRecord, gc } = fresh({ now: () => new Date(clock) });
       const own = (await upload()).body.image.id;
@@ -663,32 +764,31 @@ function imageSuite(label, makeRedis) {
 
       assert.deepEqual((await delRecord(r1.id)).body, { ok: true });
       // 바로 지우지 않음: 다른 기기에서 아직 저장하지 않은 폼이 이 사진을 가리킬 수 있음 → 빠진 시각만 적음
-      assert.equal(await imageState(redis, own), 'present');
-      assert.equal(await redis.hget(IMAGE_TOUCH_KEY, own), new Date(t1).toISOString());
+      assert.equal(await imageState(redis, blob, own), 'present');
+      assert.equal(await touchedOf(redis, own), new Date(t1).toISOString());
       clock = t1 + HOUR;
       assert.deepEqual((await gc()).body, { deleted: 0 }, 'gc 도 빠진 지 하루가 안 됐으면 남김');
       clock = t1 + 24 * HOUR - 1;
       await saveRecord(rec({ title: '아무 기록' }));
-      assert.equal(await imageState(redis, own), 'present', '하루가 되기 전');
+      assert.equal(await imageState(redis, blob, own), 'present', '하루가 되기 전');
 
       // 하루 뒤 아무 기록이나 저장·삭제하면 함께 정리 (gc 를 누르지 않아도)
       clock = t1 + 24 * HOUR;
       assert.deepEqual((await delRecord(r2.id)).body, { ok: true });
-      assert.equal(await imageState(redis, own), 'gone');
-      assert.equal(await redis.hget(IMAGE_TOUCH_KEY, own), null);
-      assert.equal(await imageState(redis, shared), 'present', '방금 빠짐 → 유예');
-      assert.equal(await imageState(redis, pending), 'present', '기록에 붙은 적 없는 사진은 gc 에서만');
+      assert.equal(await imageState(redis, blob, own), 'gone');
+      assert.equal(await imageState(redis, blob, shared), 'present', '방금 빠짐 → 유예');
+      assert.equal(await imageState(redis, blob, pending), 'present', '기록에 붙은 적 없는 사진은 gc 에서만');
 
       clock = t1 + 48 * HOUR;
       await saveRecord(rec({ title: '또 다른 기록' }));
-      assert.equal(await imageState(redis, shared), 'gone');
-      assert.equal(await imageState(redis, pending), 'present');
-      assert.deepEqual(await redis.hgetall(IMAGE_TOUCH_KEY), {});
+      assert.equal(await imageState(redis, blob, shared), 'gone');
+      assert.equal(await imageState(redis, blob, pending), 'present');
+      assert.deepEqual(await touchedIds(redis), []);
       assert.equal((await delRecord(r2.id)).statusCode, 404);
     });
 
     test('기록 수정으로 빠진 사진: 하루 유예 뒤 정리 (다른 기록이 쓰면 유지), 순서만 바뀌면 그대로', async () => {
-      await redis.flushall();
+      await reset();
       let clock = Date.parse('2026-09-01T00:00:00.000Z');
       const { upload, saveRecord } = fresh({ now: () => new Date(clock) });
       const [a, b, c] = [(await upload()).body.image.id, (await upload()).body.image.id, (await upload()).body.image.id];
@@ -696,30 +796,30 @@ function imageSuite(label, makeRedis) {
       let r = (await saveRecord(rec({ photos: [a, b, c] }))).body.record;
 
       r = (await saveRecord({ ...r, photos: [c, b, a] }, r.updatedAt)).body.record;
-      assert.deepEqual(await redis.hgetall(IMAGE_TOUCH_KEY), {}, '순서만 바뀜');
+      assert.deepEqual(await touchedIds(redis), [], '순서만 바뀜');
 
       const res = await saveRecord({ ...r, photos: [b] }, r.updatedAt);
       assert.equal(res.statusCode, 200);
-      for (const id of [a, b, c]) assert.equal(await imageState(redis, id), 'present');
-      assert.deepEqual(Object.keys(await redis.hgetall(IMAGE_TOUCH_KEY)).sort(), [a, c].sort());
+      for (const id of [a, b, c]) assert.equal(await imageState(redis, blob, id), 'present');
+      assert.deepEqual(await touchedIds(redis), [a, c].sort());
 
       // 충돌(409)로 저장이 안 되면 빠진 것으로 치지 않음
       const stale = await saveRecord({ ...r, photos: [] }, r.updatedAt);
       assert.equal(stale.statusCode, 409);
-      assert.equal(await redis.hget(IMAGE_TOUCH_KEY, b), null);
+      assert.equal(await touchedOf(redis, b), null);
 
       clock += 24 * HOUR;
       r = res.body.record;
       assert.equal((await saveRecord({ ...r, title: '카탄 (고침)' }, r.updatedAt)).statusCode, 200);
-      assert.equal(await imageState(redis, a), 'gone');
-      assert.equal(await imageState(redis, b), 'present');
-      assert.equal(await imageState(redis, c), 'present', '다른 기록이 씀');
+      assert.equal(await imageState(redis, blob, a), 'gone');
+      assert.equal(await imageState(redis, blob, b), 'present');
+      assert.equal(await imageState(redis, blob, c), 'present', '다른 기록이 씀');
       assert.deepEqual(other.photos, [c]);
-      assert.deepEqual(await redis.hgetall(IMAGE_TOUCH_KEY), {}, '쓰는 사진은 표시만 지움');
+      assert.deepEqual(await touchedIds(redis), [], '쓰는 사진은 표시만 지움');
     });
 
     test('photos 를 안 보낸 수정(사진을 모르는 예전 앱·예전 백업)은 사진을 그대로 둠, [] 를 보내야 뺌', async () => {
-      await redis.flushall();
+      await reset();
       const { upload, saveRecord, getImage, call } = fresh();
       const a = (await upload()).body.image.id;
       const b = (await upload()).body.image.id;
@@ -732,15 +832,16 @@ function imageSuite(label, makeRedis) {
       assert.equal(res.body.record.title, '카탄 (예전 앱에서 고침)');
       assert.deepEqual((await call('data')).body.records[0].photos, [a, b]);
       for (const id of [a, b]) {
-        assert.equal(await imageState(redis, id), 'present');
+        assert.equal(await imageState(redis, blob, id), 'present');
         assert.equal((await getImage(id, 'f')).statusCode, 200);
       }
-      assert.deepEqual(await redis.hgetall(IMAGE_TOUCH_KEY), {}, '빠진 사진 없음');
+      assert.deepEqual(await touchedIds(redis), [], '빠진 사진 없음');
       // 새 기록이면 사진 없음
       assert.deepEqual((await saveRecord(rec({ title: '새 기록' }))).body.record.photos, []);
       // 이미 깨진 참조(사진이 사라짐)만 조용히 빼고 저장 (예전 앱은 사진 오류를 처리하지 못함)
-      await redis.del(imageKey(b, 'f'), imageKey(b, 't'));
-      await redis.hdel(IMAGE_META_KEY, b);
+      const gone = JSON.parse(await redis.hget(PHOTOS_KEY, b));
+      await blob.del([gone.full, gone.thumb]);
+      await redis.hdel(PHOTOS_KEY, b);
       const cur = res.body.record;
       const res2 = await saveRecord({ ...legacy, title: '또 고침' }, cur.updatedAt);
       assert.equal(res2.statusCode, 200, JSON.stringify(res2.body));
@@ -748,11 +849,11 @@ function imageSuite(label, makeRedis) {
       // 빈 배열을 보내면 모두 뺌
       const res3 = await saveRecord({ ...res2.body.record, photos: [] }, res2.body.record.updatedAt);
       assert.deepEqual(res3.body.record.photos, []);
-      assert.ok(await redis.hget(IMAGE_TOUCH_KEY, a));
+      assert.ok(await touchedOf(redis, a));
     });
 
     test('기록이 지워져도 하루 동안은 그 사진으로 다시 저장 가능 (삭제된 기록 되살리기·가져다 쓴 이전 대표 사진)', async () => {
-      await redis.flushall();
+      await reset();
       let clock = Date.parse('2026-09-01T00:00:00.000Z');
       const { upload, saveRecord, delRecord, getImage } = fresh({ now: () => new Date(clock) });
       const p = (await upload()).body.image.id;
@@ -772,11 +873,11 @@ function imageSuite(label, makeRedis) {
       clock += 30 * HOUR;
       await saveRecord(rec({ title: '아무 기록' }));
       for (const id of [p, q]) assert.equal((await getImage(id, 't')).statusCode, 200);
-      assert.deepEqual(await redis.hgetall(IMAGE_TOUCH_KEY), {});
+      assert.deepEqual(await touchedIds(redis), []);
     });
 
     test('기록 삭제는 실제로 지운 값의 사진을 정리 (읽은 뒤 다른 기기가 사진을 더해 저장해도 새지 않음)', async () => {
-      await redis.flushall();
+      await reset();
       let clock = Date.parse('2026-09-01T00:00:00.000Z');
       const now = () => new Date(clock);
       const { upload, saveRecord } = fresh({ now });
@@ -794,18 +895,18 @@ function imageSuite(label, makeRedis) {
           return redis.eval(script, keys, args);
         },
       };
-      const { delRecord } = setup({ redis: racing, now });
+      const { delRecord } = fresh({ redis: racing, now });
       assert.deepEqual((await delRecord(r.id)).body, { ok: true });
       assert.ok(raced);
-      assert.deepEqual(Object.keys(await redis.hgetall(IMAGE_TOUCH_KEY)).sort(), [p1, p2].sort());
+      assert.deepEqual(await touchedIds(redis), [p1, p2].sort());
       clock += 24 * HOUR;
       await saveRecord(rec({ title: '아무 기록' }));
-      assert.equal(await imageState(redis, p1), 'gone');
-      assert.equal(await imageState(redis, p2), 'gone');
+      assert.equal(await imageState(redis, blob, p1), 'gone');
+      assert.equal(await imageState(redis, blob, p2), 'gone');
     });
 
     test('같은 사진을 다른 기록에서 재사용 (공유 참조, 복제 없음)', async () => {
-      await redis.flushall();
+      await reset();
       const { upload, saveRecord, stats } = fresh();
       const cover = (await upload()).body.image.id;
       const first = (await saveRecord(rec({ photos: [cover] }))).body.record;
@@ -813,39 +914,68 @@ function imageSuite(label, makeRedis) {
       assert.equal(second.statusCode, 200);
       assert.deepEqual(second.body.record.photos, first.photos);
       assert.equal((await stats()).count, 1);
+      assert.equal(blob.paths().length, 2);
     });
 
-    test('정리는 best-effort: 정리 표시가 실패해도 기록 삭제·수정은 성공 (로그), gc 로 복구', async () => {
-      await redis.flushall();
+    test('정리는 best-effort: 정리 스크립트가 실패해도 기록 삭제·수정은 성공 (로그), gc 로 복구', async () => {
+      await reset();
       let clock = Date.parse('2026-09-01T00:00:00.000Z');
       const logged = [];
       const flaky = {
         ...redis,
-        async hset(key, values) {
-          if (key === IMAGE_TOUCH_KEY && !flaky.ok) throw new Error('redis timeout');
-          return redis.hset(key, values);
+        async eval(script, keys, args) {
+          if (script === IMAGE_RELEASE_SCRIPT && !flaky.ok) throw new Error('redis timeout');
+          return redis.eval(script, keys, args);
         },
       };
-      const { upload, saveRecord, delRecord, gc } = setup({ redis: flaky, now: () => new Date(clock), logger: { error: (...a) => logged.push(a[0]) } });
+      const { upload, saveRecord, delRecord, gc } = fresh({ redis: flaky, now: () => new Date(clock), logger: { error: (...a) => logged.push(a[0]) } });
       const a = (await upload()).body.image.id;
       const b = (await upload()).body.image.id;
       let r = (await saveRecord(rec({ photos: [a, b] }))).body.record;
+      assert.deepEqual(logged, ['[api] photo cleanup failed']);
       const upd = await saveRecord({ ...r, photos: [b] }, r.updatedAt);
       assert.equal(upd.statusCode, 200);
       r = upd.body.record;
       assert.equal((await delRecord(r.id)).statusCode, 200);
-      assert.deepEqual(logged, ['[api] photo cleanup failed', '[api] photo cleanup failed']);
-      assert.equal(await imageState(redis, a), 'present');
-      assert.equal(await imageState(redis, b), 'present');
+      assert.deepEqual(logged, ['[api] photo cleanup failed', '[api] photo cleanup failed', '[api] photo cleanup failed']);
+      assert.equal(await imageState(redis, blob, a), 'present');
+      assert.equal(await imageState(redis, blob, b), 'present');
       clock += 25 * HOUR;
       flaky.ok = true;
       assert.deepEqual((await gc()).body, { deleted: 2 });
-      assert.equal(await imageState(redis, a), 'gone');
-      assert.equal(await imageState(redis, b), 'gone');
+      assert.equal(await imageState(redis, blob, a), 'gone');
+      assert.equal(await imageState(redis, blob, b), 'gone');
+    });
+
+    test('Blob 파일 삭제가 실패하면 메타를 지우는 중(deleting)으로 남겨 다음 정리가 다시 지움 (주인 없는 파일이 새지 않음)', async () => {
+      await reset();
+      let clock = Date.parse('2026-09-01T00:00:00.000Z');
+      const logged = [];
+      const flakyBlob = { ...blob, async del(paths) { if (!flakyBlob.ok) throw new Error('blob 503'); return blob.del(paths); } };
+      const { upload, delImage, gc, getImage, saveRecord, stats } = fresh({ blob: flakyBlob, now: () => new Date(clock), logger: { error: (...a) => logged.push(a[0]) } });
+      const a = (await upload()).body.image.id;
+      const b = (await upload()).body.image.id;
+      // 직접 지우기: 앱에는 지워진 것처럼 (보이지도, 기록에 붙지도 않음), 파일은 다음 정리 때
+      assert.deepEqual((await delImage(a)).body, { ok: true });
+      assert.equal(JSON.parse(await redis.hget(PHOTOS_KEY, a)).state, 'deleting');
+      assert.equal((await getImage(a, 't')).statusCode, 404);
+      assert.deepEqual((await saveRecord(rec({ photos: [a] }))).body, { error: 'invalid', field: 'photos', missing: [a] });
+      assert.equal(blob.paths().filter((p) => p.includes(a)).length, 2, '파일은 아직 있음');
+      // gc: 파일 삭제가 또 실패 → 지운 것으로 세지 않고 메타 유지
+      clock += 25 * HOUR;
+      assert.deepEqual((await gc()).body, { deleted: 0 });
+      assert.equal(JSON.parse(await redis.hget(PHOTOS_KEY, b)).state, 'deleting');
+      assert.equal((await stats()).count, 2, '지우는 중인 사진도 용량에 셈');
+      assert.deepEqual(logged, ['[api] photo file delete failed', '[api] photo file delete failed']);
+      // Blob 이 돌아오면 다음 정리가 마저 지움
+      flakyBlob.ok = true;
+      assert.deepEqual((await gc()).body, { deleted: 2 });
+      assert.deepEqual(await redis.hgetall(PHOTOS_KEY), {});
+      assert.deepEqual(blob.paths(), []);
     });
 
     test('gc: 참조 없음 + 올린 지 24시간 지난 것만 삭제', async () => {
-      await redis.flushall();
+      await reset();
       const t0 = Date.parse('2026-09-01T00:00:00.000Z');
       let clock = t0;
       const { upload, saveRecord, gc, stats } = fresh({ now: () => new Date(clock) });
@@ -863,41 +993,42 @@ function imageSuite(label, makeRedis) {
       assert.deepEqual((await gc()).body, { deleted: 0 }, '24시간이 되기 전');
       clock = t0 + 24 * HOUR;
       assert.deepEqual((await gc()).body, { deleted: 1 });
-      assert.equal(await imageState(redis, orphan), 'gone');
-      assert.equal(await imageState(redis, used), 'present');
-      assert.equal(await imageState(redis, young), 'present');
+      assert.equal(await imageState(redis, blob, orphan), 'gone');
+      assert.equal(await imageState(redis, blob, used), 'present');
+      assert.equal(await imageState(redis, blob, young), 'present');
 
       clock = t0 + 47 * HOUR + 1;
       assert.deepEqual((await gc()).body, { deleted: 1 });
-      assert.equal(await imageState(redis, young), 'gone');
-      assert.equal(await imageState(redis, used), 'present');
+      assert.equal(await imageState(redis, blob, young), 'gone');
+      assert.equal(await imageState(redis, blob, used), 'present');
       assert.equal((await stats()).count, 1);
     });
 
     test('gc: 만든 시각이 깨진 메타도 정리, 후보가 많아도(여러 번에 나눠) 모두 처리', async () => {
-      await redis.flushall();
+      await reset();
       const { gc, stats, saveRecord } = fresh({ now: () => new Date('2026-09-29T00:00:00.000Z') });
-      const n = IMAGE_DELETE_BATCH * 2 + 17;
+      const n = IMAGE_SWEEP_BATCH * 2 + 17;
       const filler = {};
       for (let i = 0; i < n; i++) filler[`old-${i}`] = metaJson(`old-${i}`);
       filler['broken-meta'] = '{not json';
       filler['no-date'] = JSON.stringify({ id: 'no-date', bytesF: 1, bytesT: 1 });
-      await redis.hset(IMAGE_META_KEY, filler);
-      for (const i of [0, IMAGE_DELETE_BATCH + 3]) {
-        await redis.set(imageKey(`old-${i}`, 'f'), b64(jpeg()));
-        await redis.set(imageKey(`old-${i}`, 't'), b64(jpeg(100)));
+      filler['bad-date'] = JSON.stringify({ id: 'bad-date', bytesF: 1, bytesT: 1, createdAt: 'zzz' });
+      await redis.hset(PHOTOS_KEY, filler);
+      for (const i of [0, IMAGE_SWEEP_BATCH + 3]) {
+        const m = JSON.parse(metaJson(`old-${i}`));
+        await blob.put(m.full, jpeg(), 'image/jpeg');
+        await blob.put(m.thumb, jpeg(100), 'image/jpeg');
       }
-      // 마지막 묶음에 있는 것 하나는 기록이 참조
+      // 하나는 기록이 참조
       assert.equal((await saveRecord(rec({ photos: [`old-${n - 1}`] }))).statusCode, 200);
-      assert.deepEqual((await gc()).body, { deleted: n + 1 });
-      assert.equal(await redis.get(imageKey('old-0', 'f')), null);
-      assert.equal(await redis.get(imageKey(`old-${IMAGE_DELETE_BATCH + 3}`, 't')), null);
+      assert.deepEqual((await gc()).body, { deleted: n + 2 });
+      assert.deepEqual(blob.paths(), []);
       assert.equal((await stats()).count, 1);
-      assert.ok(await redis.hget(IMAGE_META_KEY, `old-${n - 1}`));
+      assert.deepEqual(Object.keys(await redis.hgetall(PHOTOS_KEY)), [`old-${n - 1}`]);
     });
 
     test('기록 JSON 안의 글자는 참조로 치지 않음 (제목·후기에 "photos":["id"] 를 써도)', async () => {
-      await redis.flushall();
+      await reset();
       const { upload, saveRecord, delImage } = fresh();
       const x = (await upload()).body.image.id;
       const y = (await upload()).body.image.id;
@@ -911,20 +1042,19 @@ function imageSuite(label, makeRedis) {
     });
 
     test('경합: 저장 직전에 사진이 지워지면 기록 저장이 400 (깨진 참조가 안 생김)', async () => {
-      await redis.flushall();
+      await reset();
       const { upload, call } = fresh();
       const img = (await upload()).body.image.id;
       const racing = {
         ...redis,
         async eval(script, keys, args) {
           if (script === UPSERT_SCRIPT) {
-            const [k, a] = deleteScriptArgs(RECORDS_KEY, [img]);
-            await redis.eval(IMAGE_DELETE_SCRIPT, k, a); // 다른 기기가 그 사이 사진을 지움
+            await redis.eval(IMAGE_DELETE_SCRIPT, [RECORDS_KEY, PHOTOS_KEY], [img]); // 다른 기기가 그 사이 사진을 지움
           }
           return redis.eval(script, keys, args);
         },
       };
-      const { saveRecord } = setup({ redis: racing });
+      const { saveRecord } = fresh({ redis: racing });
       const res = await saveRecord(rec({ photos: [img] }));
       assert.equal(res.statusCode, 400);
       assert.deepEqual(res.body, { error: 'invalid', field: 'photos', missing: [img] });
@@ -932,7 +1062,7 @@ function imageSuite(label, makeRedis) {
     });
 
     test('경합: 지우기 직전에 다른 기록이 그 사진을 붙이면 지우지 않음 (in_use)', async () => {
-      await redis.flushall();
+      await reset();
       const { upload } = fresh();
       const img = (await upload()).body.image.id;
       const racing = {
@@ -944,21 +1074,21 @@ function imageSuite(label, makeRedis) {
           return redis.eval(script, keys, args);
         },
       };
-      const { delImage } = setup({ redis: racing });
+      const { delImage } = fresh({ redis: racing });
       assert.deepEqual((await delImage(img)).body, { error: 'in_use' });
-      assert.equal(await imageState(redis, img), 'present');
+      assert.equal(await imageState(redis, blob, img), 'present');
     });
 
-    test('Redis 재시도로 메타 예약 EVAL 이 두 번 실행돼도 정상 저장 (가짜 충돌 없음)', async () => {
-      await redis.flushall();
+    test('Redis 재시도로 자리 잡기·마무리 EVAL 이 두 번 실행돼도 정상 저장 (가짜 충돌 없음)', async () => {
+      await reset();
       const retrying = {
         ...redis,
         async eval(script, keys, args) {
-          if (script === IMAGE_ADD_SCRIPT) await redis.eval(script, keys, args);
+          if (script === IMAGE_RESERVE_SCRIPT || script === IMAGE_COMMIT_SCRIPT) await redis.eval(script, keys, args);
           return redis.eval(script, keys, args);
         },
       };
-      const { upload, getImage, stats } = setup({ redis: retrying });
+      const { upload, getImage, stats } = fresh({ redis: retrying });
       const full = jpeg(1234, 9);
       const res = await upload(full, jpeg(100));
       assert.equal(res.statusCode, 200, JSON.stringify(res.body));
@@ -968,10 +1098,11 @@ function imageSuite(label, makeRedis) {
       const imp = await upload(jpeg(), jpeg(100), { id: 'retry-imp' });
       assert.equal(imp.statusCode, 200);
       assert.equal(imp.body.existed, undefined);
+      assert.equal(blob.paths().length, 4);
     });
 
     test('서버도 메타데이터를 뗌: 손으로 만든 백업·직접 API 로 올린 EXIF·XMP 도 저장 안 됨 (크기도 뗀 뒤 기준)', async () => {
-      await redis.flushall();
+      await reset();
       const { upload, getImage } = fresh();
       const clean = jpeg(800, 6);
       const dirty = jpegWithSegments(clean, [[0xe1, 'Exif\0\0GPS 37.5665N SECRETMAKE'], [0xfe, 'secret comment']]);
@@ -985,21 +1116,23 @@ function imageSuite(label, makeRedis) {
       assert.equal(t.includes(Buffer.from('Exif')), false);
     });
 
-    test('올리다 끊긴 사진(pending 메타만 남음): 기록이 가리킬 수 없고, 목록에 표시되며, 같은 id 로 다시 올리면 채워짐', async () => {
-      await redis.flushall();
+    test('올리다 끊긴 사진(uploading 메타만 남음): 기록이 가리킬 수 없고, 목록에 pending 으로 표시되며, 같은 id 로 다시 올리면 채워짐', async () => {
+      await reset();
       const now = () => new Date('2026-09-01T00:00:00.000Z');
-      // 함수가 데이터를 쓰는 도중에 멈춘 것처럼: SET 과 되돌리기가 모두 실패
+      // 함수가 파일을 쓰는 도중에 멈춘 것처럼: 파일 쓰기와 되돌리기(파일 지우기)가 모두 실패
       const dying = {
-        ...redis,
-        async set() { throw new Error('function timeout'); },
-        async eval(script, keys, args) {
-          if (script === IMAGE_ROLLBACK_SCRIPT) throw new Error('function timeout');
-          return redis.eval(script, keys, args);
+        ...blob,
+        async put(p, bytes, type) {
+          await blob.put(p, bytes, type);
+          throw new Error('function timeout');
         },
+        async del() { throw new Error('function timeout'); },
       };
-      const first = await setup({ redis: dying, now }).upload(jpeg(900, 3), jpeg(90, 3), { id: 'imp-x' });
+      const first = await fresh({ blob: dying, now }).upload(jpeg(900, 3), jpeg(90, 3), { id: 'imp-x' });
       assert.equal(first.statusCode, 500);
-      assert.equal(JSON.parse(await redis.hget(IMAGE_META_KEY, 'imp-x')).pending, true);
+      const left = JSON.parse(await redis.hget(PHOTOS_KEY, 'imp-x'));
+      assert.equal(left.state, 'uploading');
+      assert.equal(blob.paths().length, 2, '파일은 남았지만 경로가 메타에 적혀 있음');
 
       const { upload, saveRecord, getImage, call } = fresh({ now });
       const listed = (await call('images', { query: { list: '1' } })).body.images;
@@ -1011,38 +1144,66 @@ function imageSuite(label, makeRedis) {
       assert.equal(again.statusCode, 200, JSON.stringify(again.body));
       assert.equal(again.body.existed, undefined);
       assert.equal(again.body.image.pending, undefined);
-      assert.equal(JSON.parse(await redis.hget(IMAGE_META_KEY, 'imp-x')).pending, undefined);
+      assert.equal(JSON.parse(await redis.hget(PHOTOS_KEY, 'imp-x')).state, undefined);
+      assert.equal(await imageState(redis, blob, 'imp-x'), 'present');
+      assert.ok(!blob.paths().includes(left.full) && !blob.paths().includes(left.thumb), '끊긴 올리기의 파일은 지움');
       assert.ok((await getImage('imp-x', 'f')).raw.equals(jpeg(900, 3)));
       assert.equal((await saveRecord(rec({ photos: ['imp-x'] }))).statusCode, 200);
       assert.equal((await upload(jpeg(900, 3), jpeg(90, 3), { id: 'imp-x' })).body.existed, true, '다 올라간 뒤엔 건너뜀');
     });
 
-    test('되돌리기: 같은 id 를 다른 요청이 마무리하고 기록에 붙였으면 지우지 않음 (두 기기에서 같은 백업 가져오기)', async () => {
-      await redis.flushall();
+    test('되돌리기: 같은 id 를 다른 요청이 이어받아 마무리하고 기록에 붙였으면 그 사진은 그대로 (두 기기에서 같은 백업 가져오기)', async () => {
+      await reset();
       const other = fresh();
       let raced = false;
       const racing = {
-        ...redis,
-        async set(key, value) {
+        ...blob,
+        async put(p, bytes, type) {
           if (!raced) {
             raced = true;
-            // 이 요청이 데이터를 쓰려는 순간, 다른 기기가 같은 id 를 다 올리고 기록까지 저장
+            // 이 요청이 파일을 쓰려는 순간, 다른 기기가 같은 id 를 다 올리고 기록까지 저장
             assert.equal((await other.upload(jpeg(700, 4), jpeg(70, 4), { id: 'dup-1' })).statusCode, 200);
             assert.equal((await other.saveRecord(rec({ photos: ['dup-1'] }))).statusCode, 200);
             throw new Error('write failed');
           }
-          return redis.set(key, value);
+          return blob.put(p, bytes, type);
         },
       };
-      const res = await setup({ redis: racing }).upload(jpeg(700, 4), jpeg(70, 4), { id: 'dup-1' });
+      const res = await fresh({ blob: racing }).upload(jpeg(700, 4), jpeg(70, 4), { id: 'dup-1' });
       assert.equal(res.statusCode, 500);
-      assert.equal(await imageState(redis, 'dup-1'), 'present');
+      assert.equal(await imageState(redis, blob, 'dup-1'), 'present', '이 요청의 파일만 지우고 이어받은 쪽 파일·메타는 그대로');
       assert.equal((await other.getImage('dup-1', 'f')).statusCode, 200);
       assert.equal((await other.call('data')).body.records[0].photos[0], 'dup-1');
     });
 
+    test('지우는 중인 사진을 같은 id 로 다시 올리면 새 파일로 이어받고, 지우던 쪽은 새 메타·파일을 건드리지 않음', async () => {
+      await reset();
+      const { upload, getImage } = fresh();
+      await upload(jpeg(600, 1), jpeg(60, 1), { id: 'again-1' });
+      const oldMeta = JSON.parse(await redis.hget(PHOTOS_KEY, 'again-1'));
+      let raced = false;
+      const racing = {
+        ...blob,
+        async del(paths) {
+          if (!raced) {
+            raced = true;
+            // 지우는 도중(파일을 지우기 직전)에 다른 기기가 같은 id 를 백업에서 다시 올림
+            const res = await upload(jpeg(600, 2), jpeg(60, 2), { id: 'again-1' });
+            assert.equal(res.statusCode, 200, JSON.stringify(res.body));
+          }
+          return blob.del(paths);
+        },
+      };
+      assert.deepEqual((await fresh({ blob: racing }).delImage('again-1')).body, { ok: true });
+      assert.ok(raced);
+      assert.equal(await imageState(redis, blob, 'again-1'), 'present');
+      assert.notEqual(JSON.parse(await redis.hget(PHOTOS_KEY, 'again-1')).full, oldMeta.full);
+      assert.ok(!blob.paths().includes(oldMeta.full));
+      assert.ok((await getImage('again-1', 'f')).raw.equals(jpeg(600, 2)));
+    });
+
     test('gc keep: 요청한 기기의 초안 사진은 남기고, 다른 기기의 gc 에서도 하루 더 보호', async () => {
-      await redis.flushall();
+      await reset();
       let clock = Date.parse('2026-09-01T00:00:00.000Z');
       const { upload, call, gc } = fresh({ now: () => new Date(clock) });
       const draft = (await upload()).body.image.id;
@@ -1050,10 +1211,10 @@ function imageSuite(label, makeRedis) {
       clock += 25 * HOUR;
       const res = await call('images', { method: 'POST', query: { action: 'gc' }, body: { keep: [draft, 'not-there'] } });
       assert.deepEqual(res.body, { deleted: 1 });
-      assert.equal(await imageState(redis, draft), 'present');
-      assert.equal(await imageState(redis, orphan), 'gone');
-      assert.equal(await redis.hget(IMAGE_TOUCH_KEY, draft), new Date(clock).toISOString());
-      assert.equal(await redis.hget(IMAGE_TOUCH_KEY, 'not-there'), null);
+      assert.equal(await imageState(redis, blob, draft), 'present');
+      assert.equal(await imageState(redis, blob, orphan), 'gone');
+      assert.equal(await touchedOf(redis, draft), new Date(clock).toISOString());
+      assert.equal(await redis.hget(PHOTOS_KEY, 'not-there'), null);
       clock += 23 * HOUR;
       assert.deepEqual((await gc()).body, { deleted: 0 }, '다른 기기의 gc: 아직 유예 중');
       clock += 2 * HOUR;
@@ -1064,41 +1225,24 @@ function imageSuite(label, makeRedis) {
       assert.deepEqual((await call('images', { method: 'POST', query: { action: 'gc' }, body: '{bad' })).body, { error: 'invalid', field: 'body' });
     });
 
-    test('데이터 저장이 실패하면 500 + 메타·데이터 되돌림 (개수·용량에 안 남음)', async () => {
-      await redis.flushall();
+    test('파일 저장이 실패하면 500 + 메타·파일 되돌림 (개수·용량에 안 남음)', async () => {
+      await reset();
       const logged = [];
-      let calls = 0;
       const failing = {
-        ...redis,
-        async set(key, value) {
-          if (++calls === 2) throw new Error('write failed'); // 썸네일 쓰기 실패
-          return redis.set(key, value);
+        ...blob,
+        async put(p, bytes, type) {
+          if (p.includes('-thumb.')) throw new Error('write failed'); // 썸네일 쓰기 실패
+          return blob.put(p, bytes, type);
         },
       };
-      const { upload, stats } = setup({ redis: failing, logger: { error: (...a) => logged.push(a[0]) } });
+      const { upload, stats } = fresh({ blob: failing, logger: { error: (...a) => logged.push(a[0]) } });
       const res = await upload();
       assert.equal(res.statusCode, 500);
       assert.deepEqual(res.body, { error: 'server_error' });
-      assert.deepEqual(await redis.hgetall(IMAGE_META_KEY), {});
-      assert.deepEqual(await stats(), { count: 0, bytes: 0, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES });
+      assert.deepEqual(await redis.hgetall(PHOTOS_KEY), {});
+      assert.deepEqual(blob.paths(), [], '먼저 쓴 원본 파일도 지움');
+      assert.deepEqual(await stats(), { count: 0, bytes: 0, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES, ready: true });
       assert.deepEqual(logged, ['[api] server_error']);
-    });
-
-    test('원본·썸네일은 하나씩 따로 저장 (한 요청에 묶여 커지지 않게)', async () => {
-      await redis.flushall();
-      const order = [];
-      const tracing = {
-        ...redis,
-        async set(key, value) {
-          order.push(`start:${key.slice(-1)}`);
-          const r = await redis.set(key, value);
-          order.push(`end:${key.slice(-1)}`);
-          return r;
-        },
-      };
-      const { upload } = setup({ redis: tracing });
-      assert.equal((await upload()).statusCode, 200);
-      assert.deepEqual(order, ['start:f', 'end:f', 'start:t', 'end:t']);
     });
   });
 }
@@ -1109,120 +1253,274 @@ imageSuite('인메모리 가짜 Redis', () => createMemoryRedis());
 
 describe('실제 redis-server (사진)', { skip: hasRedisServer ? false : 'redis-server 없음' }, () => {
   let server;
-  let client;
   let wrapped;
 
   before(async () => {
     server = await startRedisServer();
-    client = server.client;
-    wrapped = wrapUpstash(client.raw);
-    wrapped.flushall = () => client.cmd('FLUSHALL');
+    wrapped = testRedis(server.client.raw);
   });
 
   after(() => server?.stop());
 
-  test('어댑터: SET/GET/DEL/HEXISTS 가 문자열 그대로', async () => {
-    const big = b64(jpeg(300 * 1024));
-    assert.equal(await wrapped.set('t:img', big), 'OK');
-    assert.equal(await wrapped.get('t:img'), big);
-    assert.equal(await wrapped.set('t:num', '12345'), 'OK');
-    assert.equal(await wrapped.get('t:num'), '12345');
-    assert.equal(Number(await wrapped.del('t:img', 't:num', 't:none')), 2);
-    assert.equal(await wrapped.get('t:img'), null);
-    await wrapped.hset('t:h', { a: '1' });
-    assert.equal(Number(await wrapped.hexists('t:h', 'a')), 1);
-    assert.equal(Number(await wrapped.hexists('t:h', 'b')), 0);
-  });
-
-  test('가짜 Redis 와 같은 결과: IMAGE_ADD·COMMIT·ROLLBACK·DELETE / UPSERT(사진 확인) / RECORD_DELETE', async () => {
-    await wrapped.flushall();
+  test('가짜 Redis 와 같은 결과: 자리 잡기·마무리·되돌리기·지우기·정리·빼기 / UPSERT(사진 확인) / RECORD_DELETE', async () => {
+    await clearApp(wrapped);
     const fake = createMemoryRedis();
     const both = async (fn) => {
       const [a, b] = [await fn(wrapped), await fn(fake)];
       assert.deepEqual(a, b);
       return a;
     };
-    const dataKeys = (id) => [imageKey(id, 'f'), imageKey(id, 't')];
-    const pend = (id, bytes) => JSON.stringify({ ...JSON.parse(metaJson(id, { bytesF: bytes, bytesT: 1 })), pending: true });
-    const add = (id, bytes, maxCount = '3', maxBytes = '100', at = 'T1') => (r) =>
-      r.eval(IMAGE_ADD_SCRIPT, [IMAGE_META_KEY, ...dataKeys(id), IMAGE_TOUCH_KEY], [id, pend(id, bytes), String(bytes + 1), maxCount, maxBytes, at]);
-    const commit = (id, bytes) => (r) => r.eval(IMAGE_COMMIT_SCRIPT, [IMAGE_META_KEY, ...dataKeys(id)], [id, metaJson(id, { bytesF: bytes, bytesT: 1 })]);
-    const rollback = (id) => (r) => r.eval(IMAGE_ROLLBACK_SCRIPT, [RECORDS_KEY, IMAGE_META_KEY, ...dataKeys(id)], [id]);
-    const setData = (id, sizes = 'ft') => async (r) => {
-      for (const size of sizes) await r.set(imageKey(id, size), `${id}-${size}`);
-      return 'OK';
-    };
-    const complete = async (id, bytes) => {
-      assert.deepEqual(await both(add(id, bytes, '10', '1000')), ['ok', '']);
-      await both(setData(id));
-      assert.equal(await both(commit(id, bytes)), 'ok');
-    };
-
-    assert.deepEqual(await both(add('a', 40)), ['ok', '']);
-    assert.deepEqual(await both(add('a', 10)), ['incomplete', pend('a', 40)], 'pending → 마저 씀');
-    assert.equal(await both(commit('a', 40)), 'incomplete', '데이터가 없으면 마무리 안 함');
-    await both(setData('a'));
-    assert.equal(await both(commit('a', 40)), 'ok');
-    assert.deepEqual(await both(add('a', 10, '3', '100', 'T2')), ['exists', metaJson('a', { bytesF: 40, bytesT: 1 })]);
-    assert.deepEqual(await both(add('b', 58)), ['ok', '']); // 41 + 59 = 100 (딱 맞음)
-    assert.deepEqual(await both(add('c', 0)), ['limit', 'bytes']);
-    assert.deepEqual(await both(add('c', 0, '2', '1000')), ['limit', 'count']);
-    await both(setData('b', 'f')); // b: 원본만 쓰고 멈춤 (pending)
-    // 메타는 다 됐는데 데이터가 빠진 것도 마저 씀
-    await both((r) => r.hset(IMAGE_META_KEY, { m: metaJson('m', { bytesF: 1, bytesT: 1 }) }));
-    assert.deepEqual(await both(add('m', 1, '10', '1000')), ['incomplete', metaJson('m', { bytesF: 1, bytesT: 1 })]);
-    await both((r) => r.hdel(IMAGE_META_KEY, 'm'));
-    await both((r) => r.hdel(IMAGE_TOUCH_KEY, 'm'));
-
+    const T0 = '2026-09-01T00:00:00.000Z';
+    const meta = (id, bytes, extra = {}) => JSON.stringify({ id, ...photoPaths(id, 'n1', 'image/jpeg', 'image/jpeg'), mime: 'image/jpeg', mimeT: 'image/jpeg', bytesF: bytes, bytesT: 1, createdAt: T0, ...extra });
+    const up = (id, bytes, extra) => meta(id, bytes, { ...extra, state: 'uploading' });
+    const reserve = (id, pending, bytes, { maxCount = '4', maxBytes = '100', at = T0, takeover = '' } = {}) => (r) =>
+      r.eval(IMAGE_RESERVE_SCRIPT, [PHOTOS_KEY], [id, pending, String(bytes + 1), maxCount, maxBytes, at, takeover]);
+    const commit = (id, pending, final) => (r) => r.eval(IMAGE_COMMIT_SCRIPT, [PHOTOS_KEY], [id, pending, final]);
+    const rollback = (id, pending) => async (r) => Number(await r.eval(IMAGE_ROLLBACK_SCRIPT, [PHOTOS_KEY], [id, pending]));
+    const del = (id) => (r) => r.eval(IMAGE_DELETE_SCRIPT, [RECORDS_KEY, PHOTOS_KEY], [id]);
+    const sweep = (script, at, cutoff, max, extra = []) => (r) => r.eval(script, [RECORDS_KEY, PHOTOS_KEY], [at, cutoff, String(max), ...extra]);
+    const forget = (...pairs) => async (r) => Number(await r.eval(IMAGE_FORGET_SCRIPT, [PHOTOS_KEY], pairs.flat()));
     const upsert = (id, photos) => (r) =>
-      r.eval(UPSERT_SCRIPT, [RECORDS_KEY, IMAGE_META_KEY], [id, '', JSON.stringify({ id, title: `"photos":["a"]`, photos }), '10', ...photos]);
-    assert.deepEqual(await both(upsert('r1', ['a', 'b', 'x', 'y'])), ['missing', 'b,x,y'], 'pending 사진은 없는 것으로');
+      r.eval(UPSERT_SCRIPT, [RECORDS_KEY, PHOTOS_KEY], [id, '', JSON.stringify({ id, title: `"photos":["a"]`, photos }), '10', ...photos]);
+
+    // 자리 잡기 → 재시도 → 마무리 → 마무리 재시도
+    assert.deepEqual(await both(reserve('a', up('a', 40), 40)), ['ok', '']);
+    assert.deepEqual(await both(reserve('a', up('a', 40), 40)), ['ok', ''], '같은 요청의 재시도');
+    assert.deepEqual(await both(reserve('a', up('a', 41), 41)), ['taken', ''], '이어받기 안 됨(새 id 충돌)');
+    assert.equal(await both(commit('a', up('a', 40), meta('a', 40))), 'ok');
+    assert.equal(await both(commit('a', up('a', 40), meta('a', 40))), 'ok', '마무리 재시도');
+    // 다 올라간 id: 유예를 지금부터 (touchedAt) → 'exists'
+    const touchedA = meta('a', 40, { touchedAt: '2026-09-01T05:00:00.000Z' });
+    assert.deepEqual(await both(reserve('a', up('a', 9), 9, { at: '2026-09-01T05:00:00.000Z' })), ['exists', touchedA]);
+    // 한도: 41 + 59 = 100 (딱 맞음) → 그다음은 bytes / count
+    assert.deepEqual(await both(reserve('b', up('b', 58), 58)), ['ok', '']);
+    assert.deepEqual(await both(reserve('c', up('c', 0), 0)), ['limit', 'bytes']);
+    assert.deepEqual(await both(reserve('c', up('c', 0), 0, { maxCount: '2', maxBytes: '1000' })), ['limit', 'count']);
+    // 올리다 끊긴 b 를 가져오기가 이어받음 (새 파일 경로) → 예전 요청의 마무리는 lost, 되돌리기는 남의 자리를 건드리지 않음
+    const b2 = JSON.stringify({ ...JSON.parse(up('b', 58)), full: 'boardgame/photos/b-n2.jpg', thumb: 'boardgame/photos/b-n2-thumb.jpg' });
+    assert.deepEqual(await both(reserve('b', b2, 58, { takeover: '1' })), ['incomplete', up('b', 58)]);
+    assert.equal(await both(commit('b', up('b', 58), meta('b', 58))), 'lost');
+    assert.equal(await both(rollback('b', up('b', 58))), 0);
+    assert.equal(await both(rollback('b', b2)), 1);
+    assert.equal(await both((r) => r.hget(PHOTOS_KEY, 'b')), null);
+    assert.deepEqual(await both(reserve('b', up('b', 58), 58)), ['ok', '']);
+
+    // UPSERT: 올리는 중(b)·없는 사진은 없는 것으로, 다 올라간 사진(a)은 붙일 수 있음
+    assert.deepEqual(await both(upsert('r1', ['a', 'b', 'x', 'y'])), ['missing', 'b,x,y']);
     assert.deepEqual(await both(upsert('r1', ['a'])), ['ok', '']);
     assert.deepEqual(await both(upsert('r2', [])), ['ok', '']);
 
-    // 되돌리기: 다 올라간(a)·남이 마무리한 건 그대로, 올리는 중(b)이고 안 쓰면 메타·데이터 모두, 메타 없는 데이터(z)도
-    assert.equal(await both(rollback('a')), 'kept');
-    assert.equal(await both(rollback('b')), 'deleted');
-    await both(setData('z', 'f'));
-    assert.equal(await both(rollback('z')), 'deleted');
-    // pending 인데 기록이 가리키면(예전 데이터) 메타를 남김 — 같은 id 로 다시 올려 채울 수 있게
-    await both((r) => r.hset(IMAGE_META_KEY, { p: pend('p', 5) }));
-    await both((r) => r.hset(RECORDS_KEY, { r3: JSON.stringify({ id: 'r3', photos: ['p'] }) }));
-    assert.equal(await both(rollback('p')), 'in_use');
-    await both((r) => r.hdel(RECORDS_KEY, 'r3'));
-    await both((r) => r.hdel(IMAGE_META_KEY, 'p'));
+    // 직접 지우기: 없음 / 기록이 씀 / 지울 차례로 (다시 불러도 같은 값)
+    assert.deepEqual(await both(del('zz')), ['missing', '']);
+    assert.deepEqual(await both(del('a')), ['in_use', '']);
+    const doomedB = up('b', 58).replace(',"state":"uploading"}', ',"state":"deleting"}');
+    assert.deepEqual(await both(del('b')), ['deleting', doomedB]);
+    assert.deepEqual(await both(del('b')), ['deleting', doomedB]);
+    assert.deepEqual(await both(upsert('r3', ['b'])), ['missing', 'b'], '지우는 중인 사진도 없는 것으로');
+    assert.equal(await both(commit('b', up('b', 58), meta('b', 58))), 'lost', '지우는 중이면 올리기 마무리 안 됨');
+    assert.equal(await both(forget(['b', 'not-the-same'], ['zz', doomedB])), 0);
+    assert.equal(await both(forget(['b', doomedB])), 1);
 
-    // 지우기: 유예 기준 시각(cutoff) 뒤에 적힌 imgtouch 는 남김, 쓰거나 없는 사진의 imgtouch 는 지움
-    await complete('d', 1);
-    await complete('e', 1);
-    await both((r) => r.hset(IMAGE_TOUCH_KEY, { d: 'T5', e: 'T1', zz: 'T1' }));
-    const del = (ids, cutoff = '') => (r) => {
-      const [keys, args] = deleteScriptArgs(RECORDS_KEY, ids, cutoff);
-      return r.eval(IMAGE_DELETE_SCRIPT, keys, args);
+    // 기록에서 빠짐(RELEASE): 빠진 사진에 시각을 적고, 적힌 지 하루 지난 것 중 안 쓰는 것만 지울 차례로
+    for (const [id, m] of [['d', meta('d', 1)], ['e', meta('e', 1)], ['f', meta('f', 1)], ['g', meta('g', 1)]]) await both((r) => r.hset(PHOTOS_KEY, { [id]: m }));
+    await both((r) => r.hset(RECORDS_KEY, { r4: JSON.stringify({ id: 'r4', photos: ['d', 'a'] }) }));
+    const at1 = '2026-09-02T00:00:00.000Z';
+    assert.deepEqual(await both(sweep(IMAGE_RELEASE_SCRIPT, at1, '2026-09-01T00:00:00.000Z', 10, ['d', 'e', 'b', 'nope'])), [], '방금 빠짐 → 유예');
+    assert.equal(JSON.parse(await wrapped.hget(PHOTOS_KEY, 'e')).touchedAt, at1);
+    const at2 = '2026-09-03T00:00:01.000Z';
+    const out = await both(async (r) => (await sweep(IMAGE_RELEASE_SCRIPT, at2, '2026-09-02T00:00:01.000Z', 10)(r)).map(String));
+    assert.deepEqual(out, ['e', JSON.stringify({ ...JSON.parse(meta('e', 1)), touchedAt: at1, state: 'deleting' })], 'e 만 (d 는 기록 r4 가 씀 → 시각만 지움)');
+    assert.equal(JSON.parse(await wrapped.hget(PHOTOS_KEY, 'd')).touchedAt, undefined);
+    assert.equal(await both(forget(['e', out[1]])), 1);
+
+    // gc: keep 은 유예를 새로, 올린·빠진 시각이 모두 기준보다 오래된 안 쓰는 사진 (시각이 깨졌으면 오래된 것으로)
+    // (실제 Redis 해시는 순서가 정해져 있지 않으므로 id 순으로 비교)
+    await both((r) => r.hset(PHOTOS_KEY, {
+      h: meta('h', 1, { createdAt: '2026-09-05T00:00:00.000Z' }),
+      broken: '{not json',
+      z: meta('z', 1, { createdAt: 'zzz' }),
+    }));
+    const byId = (flat) => {
+      const pairs = [];
+      for (let i = 0; i + 1 < flat.length; i += 2) pairs.push([flat[i], flat[i + 1]]);
+      return pairs.sort((x, y) => x[0].localeCompare(y[0]));
     };
-    assert.deepEqual(await both(del(['a', 'd', 'e', 'zz'], 'T3')), ['in_use', 'young', 'deleted', 'missing']);
-    assert.deepEqual(await both(del(['d'])), ['deleted'], '유예 없이(직접 지우기)');
-    assert.deepEqual(await both(del(['e'])), ['missing']);
-    for (const key of [...dataKeys('a'), ...dataKeys('b'), ...dataKeys('d'), ...dataKeys('e'), ...dataKeys('z')]) {
-      assert.equal(await wrapped.get(key), await fake.get(key), key);
-    }
-    for (const key of [IMAGE_META_KEY, RECORDS_KEY, IMAGE_TOUCH_KEY]) {
+    const gcRun = (extra) => async (r) => byId(await sweep(IMAGE_GC_SCRIPT, '2026-09-04T00:00:00.000Z', '2026-09-03T00:00:00.000Z', 10, extra)(r));
+    const gc = await both(gcRun(['f']));
+    assert.deepEqual(gc.map(([id]) => id), ['broken', 'g', 'z'], 'h 는 새 사진, a·d 는 기록이 씀, f 는 keep');
+    assert.equal(gc[0][1], '{not jso,"state":"deleting"}');
+    assert.equal(JSON.parse(await wrapped.hget(PHOTOS_KEY, 'f')).touchedAt, '2026-09-04T00:00:00.000Z', 'keep');
+    assert.deepEqual(await both(gcRun([])), gc, '아직 빼지 않은 것은 같은 값으로 다시 (파일 지우기 재시도)');
+    assert.equal(await both(forget(...gc)), 3);
+    assert.deepEqual(await both(gcRun([])), []);
+
+    for (const key of [PHOTOS_KEY, RECORDS_KEY]) {
       assert.deepEqual(await wrapped.hgetall(key), await fake.hgetall(key), key);
     }
-    assert.deepEqual(await wrapped.hgetall(IMAGE_TOUCH_KEY), {});
 
     // 기록 삭제: 지운 값을 돌려줌, 없으면 nil
     const rd = (id) => (r) => r.eval(RECORD_DELETE_SCRIPT, [RECORDS_KEY], [id]);
     const r1 = await wrapped.hget(RECORDS_KEY, 'r1');
     assert.equal(await both(rd('r1')), r1);
     assert.equal(await both(rd('r1')), null);
-    // 메타가 다 지워지면 해시도 사라짐 (가짜도 같음)
-    await both((r) => r.hdel(RECORDS_KEY, 'r2'));
-    assert.deepEqual(await both(del(['a'])), ['deleted']);
-    assert.equal(Number(await client.cmd('EXISTS', IMAGE_META_KEY)), 0);
+    // 한 번에 max 장까지만 지울 차례로 (나머지는 다음 번에 — 어느 것이 먼저인지는 해시 순서에 따름)
+    for (const r of [wrapped, fake]) {
+      await r.hset(PHOTOS_KEY, { m1: meta('m1', 1), m2: meta('m2', 1), m3: meta('m3', 1) });
+      const run = () => sweep(IMAGE_GC_SCRIPT, '2026-09-04T00:00:00.000Z', '2026-09-03T00:00:00.000Z', 2)(r);
+      const first = await run();
+      assert.equal(first.length, 4);
+      assert.equal(Number(await forget(...byId(first))(r)), 2);
+      const second = await run();
+      assert.equal(second.length, 2);
+      assert.equal(Number(await forget(...byId(second))(r)), 1);
+      assert.deepEqual(await run(), []);
+    }
+    // 다 지우면 해시도 사라짐 (가짜도 같음)
+    for (const id of ['a', 'd', 'f', 'h']) await both((r) => r.hdel(PHOTOS_KEY, id));
+    assert.equal(Number(await server.client.cmd('EXISTS', PHOTOS_KEY)), 0);
+    assert.deepEqual(await fake.hgetall(PHOTOS_KEY), {});
+    await clearApp(wrapped);
   });
 
   imageSuite('실제 redis-server + wrapUpstash', async () => wrapped);
+});
+
+// ── lib/blob.js: Vercel Blob 어댑터 ─────────────────────────────
+
+describe('lib/blob.js 어댑터 (Vercel Blob 비공개 저장소)', () => {
+  /** @vercel/blob 의 put·get·del 흉내 (호출 기록) */
+  function fakeSdk() {
+    const files = new Map();
+    const log = [];
+    const stream = (buf) => new ReadableStream({
+      start(c) {
+        for (let i = 0; i < buf.length; i += 1000) c.enqueue(new Uint8Array(buf.subarray(i, i + 1000)));
+        c.close();
+      },
+    });
+    return {
+      files,
+      log,
+      async put(pathname, body, opts) {
+        log.push(['put', pathname, opts]);
+        files.set(pathname, Buffer.from(body));
+        return { pathname, url: `https://store.private.blob.vercel-storage.com/${pathname}` };
+      },
+      async get(pathname, opts) {
+        log.push(['get', pathname, opts]);
+        const f = files.get(pathname);
+        return f ? { statusCode: 200, stream: stream(f), blob: { size: f.length } } : null;
+      },
+      async del(list, opts) {
+        log.push(['del', list, opts]);
+        for (const p of list) files.delete(p);
+      },
+    };
+  }
+
+  test('BLOB_READ_WRITE_TOKEN: 비공개(access private)로 올리고, 경로는 그대로(임의 꼬리 없음)·재시도 덮어쓰기 허용', async () => {
+    const sdk = fakeSdk();
+    const blob = createBlobFromEnv({ BLOB_READ_WRITE_TOKEN: '  vercel_blob_rw_abc_123  ' }, sdk);
+    const bytes = jpeg(2500);
+    await blob.put('boardgame/photos/p1-n1.jpg', bytes, 'image/jpeg');
+    assert.deepEqual(sdk.log[0], ['put', 'boardgame/photos/p1-n1.jpg', {
+      token: 'vercel_blob_rw_abc_123', access: 'private', contentType: 'image/jpeg', addRandomSuffix: false, allowOverwrite: true,
+    }]);
+    const got = await blob.get('boardgame/photos/p1-n1.jpg');
+    assert.ok(Buffer.isBuffer(got) && got.equals(bytes), '여러 조각으로 온 스트림을 모음');
+    assert.deepEqual(sdk.log[1], ['get', 'boardgame/photos/p1-n1.jpg', { token: 'vercel_blob_rw_abc_123', access: 'private' }]);
+    assert.equal(await blob.get('boardgame/photos/none.jpg'), null);
+  });
+
+  test('BLOB_STORE_ID 만 있으면 Vercel OIDC 로 (토큰 없이 storeId), 둘 다 없으면 null', async () => {
+    const sdk = fakeSdk();
+    const blob = createBlobFromEnv({ BLOB_STORE_ID: 'store_abc' }, sdk);
+    await blob.put('boardgame/photos/p2-n1.webp', webp(100), 'image/webp');
+    assert.deepEqual(sdk.log[0][2], { storeId: 'store_abc', access: 'private', contentType: 'image/webp', addRandomSuffix: false, allowOverwrite: true });
+    assert.equal(createBlobFromEnv({}), null);
+    assert.equal(createBlobFromEnv({ BLOB_READ_WRITE_TOKEN: '   ' }), null);
+    assert.equal(typeof createBlobFromEnv({ BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_x_y' }).put, 'function', '실제 SDK 로 감싼 객체 (요청은 보내지 않음)');
+  });
+
+  test('del: 같은 경로는 한 번만, 100개씩 나눠 지움', async () => {
+    const sdk = fakeSdk();
+    const blob = wrapBlob(sdk, { token: 't' });
+    const paths = Array.from({ length: 250 }, (_, i) => `boardgame/photos/p${i}-n1.jpg`);
+    await blob.del([...paths, paths[0], paths[1]]);
+    const calls = sdk.log.filter((l) => l[0] === 'del');
+    assert.deepEqual(calls.map((c) => c[1].length), [BLOB_DEL_BATCH, BLOB_DEL_BATCH, 50]);
+    assert.deepEqual(calls[0][2], { token: 't' });
+    await blob.del([]);
+    assert.equal(sdk.log.filter((l) => l[0] === 'del').length, 3, '빈 목록은 요청 안 함');
+  });
+
+  test('boardgame/photos/ 밖의 경로는 요청을 보내지 않고 오류 (다른 앱 파일을 건드리지 않게)', async () => {
+    const sdk = fakeSdk();
+    const blob = wrapBlob(sdk, { token: 't' });
+    for (const bad of ['mahjong/photos/a.jpg', 'boardgame/other/a.jpg', 'boardgame/photos/', 'boardgame/photos/../mahjong/a.jpg', 'boardgame/photos/a b.jpg', '', null]) {
+      await assert.rejects(blob.put(bad, jpeg(), 'image/jpeg'), /밖의 경로/, String(bad));
+      await assert.rejects(blob.get(bad), /밖의 경로/, String(bad));
+      await assert.rejects(blob.del(['boardgame/photos/ok.jpg', bad]), /밖의 경로/, String(bad));
+    }
+    assert.deepEqual(sdk.log, []);
+  });
+
+  test('실제 @vercel/blob SDK 로 보내는 요청: 비공개·경로 그대로·덮어쓰기 허용·환경변수의 토큰 (Blob API 흉내 서버)', async () => {
+    const seen = [];
+    const server = http.createServer((req, res) => {
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const body = Buffer.concat(chunks);
+        seen.push({ method: req.method, url: req.url, headers: req.headers, body });
+        res.setHeader('content-type', 'application/json');
+        const pathname = new URL(req.url, 'http://x').searchParams.get('pathname');
+        res.end(req.method === 'PUT'
+          ? JSON.stringify({ url: `https://store123.private.blob.vercel-storage.com/${pathname}`, downloadUrl: '', pathname, contentType: req.headers['x-content-type'], contentDisposition: 'inline', etag: '"e1"' })
+          : '{}');
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const prev = process.env.VERCEL_BLOB_API_URL;
+    process.env.VERCEL_BLOB_API_URL = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const blob = createBlobFromEnv({ BLOB_READ_WRITE_TOKEN: 'vercel_blob_rw_store123_abcdefghijklmnop' });
+      const bytes = jpeg(3000, 5);
+      await blob.put('boardgame/photos/p1-abc123.jpg', bytes, 'image/jpeg');
+      await blob.del(['boardgame/photos/p1-abc123.jpg', 'boardgame/photos/p1-abc123-thumb.jpg']);
+      const [put, del] = seen;
+      assert.equal(put.method, 'PUT');
+      assert.equal(new URL(put.url, 'http://x').searchParams.get('pathname'), 'boardgame/photos/p1-abc123.jpg');
+      assert.ok(put.body.equals(bytes));
+      assert.equal(put.headers['x-vercel-blob-access'], 'private');
+      assert.equal(put.headers['x-content-type'], 'image/jpeg');
+      assert.equal(put.headers['x-add-random-suffix'], '0');
+      assert.equal(put.headers['x-allow-overwrite'], '1');
+      assert.equal(put.headers.authorization, 'Bearer vercel_blob_rw_store123_abcdefghijklmnop');
+      assert.equal(del.method, 'POST');
+      assert.equal(new URL(del.url, 'http://x').pathname, '/delete');
+      assert.deepEqual(JSON.parse(del.body.toString()).urls, ['boardgame/photos/p1-abc123.jpg', 'boardgame/photos/p1-abc123-thumb.jpg']);
+    } finally {
+      if (prev === undefined) delete process.env.VERCEL_BLOB_API_URL;
+      else process.env.VERCEL_BLOB_API_URL = prev;
+      server.closeAllConnections?.();
+      await new Promise((r) => server.close(r));
+    }
+  });
+
+  test('get: 한도보다 큰 파일은 오류 (이 앱이 올린 파일이 아님)', async () => {
+    const sdk = fakeSdk();
+    sdk.files.set('boardgame/photos/huge.jpg', Buffer.alloc(MAX_BLOB_READ_BYTES + 1));
+    await assert.rejects(wrapBlob(sdk).get('boardgame/photos/huge.jpg'), /too large/);
+  });
+
+  test('publicMeta: 앱에는 파일 경로·내부 표시를 보내지 않음', () => {
+    const m = JSON.parse(metaJson('p9', { state: 'deleting' }));
+    assert.deepEqual(publicMeta({ ...m, touchedAt: '2026-01-02T00:00:00.000Z' }), {
+      id: 'p9', mime: 'image/jpeg', mimeT: 'image/jpeg', bytesF: 10, bytesT: 5, createdAt: '2026-01-01T00:00:00.000Z', pending: true,
+    });
+    assert.deepEqual(photoPaths('p9', 'abc', 'image/webp', 'image/jpeg'), { full: 'boardgame/photos/p9-abc.webp', thumb: 'boardgame/photos/p9-abc-thumb.jpg' });
+  });
 });
 
 // ── 개발 서버: 본문 한도·바이너리 응답·보안 헤더 ────────────────
@@ -1265,7 +1563,10 @@ describe('개발 서버 (사진)', () => {
     }
 
     res = await api('/api/images?stats=1');
-    assert.deepEqual(await res.json(), { count: 1, bytes: MAX_FULL_BYTES + MAX_THUMB_BYTES, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES });
+    assert.deepEqual(await res.json(), { count: 1, bytes: MAX_FULL_BYTES + MAX_THUMB_BYTES, limitBytes: MAX_IMAGE_TOTAL_BYTES, limitCount: MAX_IMAGES, ready: true });
+    // 파일은 (가짜) Blob 에, Redis 에는 경로만
+    assert.equal(server.blob.paths().length, 2);
+    assert.ok((await server.redis.hget('boardgame:photos', image.id)).length < 400);
     res = await api(`/api/images?id=${image.id}`, { method: 'DELETE' });
     assert.deepEqual(await res.json(), { ok: true });
     res = await api(`/api/images?id=${image.id}&size=t`);

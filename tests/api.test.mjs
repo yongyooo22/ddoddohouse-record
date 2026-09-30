@@ -8,18 +8,23 @@ import {
   UPSERT_SCRIPT,
   RECORDS_KEY,
   MEMBERS_KEY,
+  PHOTOS_KEY,
   MAX_RECORDS,
   MAX_MEMBERS,
 } from '../lib/handler.js';
 import { validateRecord, validateMember } from '../lib/validate.js';
-import { keyMatches, clientIp, readSecret, FAIL_SCRIPT } from '../lib/auth.js';
+import { keyMatches, clientIp, readSecret, failKey, FAIL_SCRIPT } from '../lib/auth.js';
+import { isOwnKey } from '../lib/keys.js';
 import { pairsToObject, wrapUpstash, createRedisFromEnv } from '../lib/redis.js';
-import { createMemoryRedis, startDevServer, sourceToRegExp } from '../scripts/dev.mjs';
-import { hasRedisServer, mockRes, startRedisServer } from './redis-helpers.mjs';
+import { createMemoryRedis, createMemoryBlob, startDevServer, sourceToRegExp } from '../scripts/dev.mjs';
+import { fakeJpeg, hasRedisServer, mockRes, startRedisServer, testRedis } from './redis-helpers.mjs';
 
 const SECRET = 'test-secret-key-0123456789';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const silent = { error() {} };
+
+/** 이 앱의 키만 비움 (테스트 사이 초기화 — 전체 초기화 명령은 쓰지 않음) */
+const clearApp = (redis) => redis.del(RECORDS_KEY, MEMBERS_KEY, PHOTOS_KEY);
 
 // ── 도우미 ───────────────────────────────────────────────────
 
@@ -132,11 +137,15 @@ describe('설정 확인 (fail closed)', () => {
     assert.deepEqual(res.body, { error: 'not_configured' });
   });
 
-  test('createRedisFromEnv: URL/토큰 없으면 null, 있으면 인터페이스 객체', () => {
+  test('createRedisFromEnv: URL/토큰 없으면 null, 있으면 최소 인터페이스 (전체 초기화·키 훑기·통째 지우기 명령 없음)', () => {
     assert.equal(createRedisFromEnv({}), null);
-    const r = createRedisFromEnv({ UPSTASH_REDIS_REST_URL: 'https://example.upstash.io', UPSTASH_REDIS_REST_TOKEN: 't' });
-    for (const m of ['hgetall', 'hget', 'hset', 'hdel', 'hlen', 'hexists', 'get', 'set', 'del', 'incr', 'expire', 'eval']) {
-      assert.equal(typeof r[m], 'function', m);
+    for (const env of [
+      { UPSTASH_REDIS_REST_URL: 'https://example.upstash.io', UPSTASH_REDIS_REST_TOKEN: 't' },
+      { KV_REST_API_URL: 'https://example.upstash.io', KV_REST_API_TOKEN: 't' },
+    ]) {
+      const r = createRedisFromEnv(env);
+      assert.deepEqual(Object.keys(r).sort(), ['eval', 'get', 'hdel', 'hget', 'hgetall']);
+      for (const m of ['flushdb', 'flushall', 'keys', 'scan', 'del', 'set', 'hset']) assert.equal(r[m], undefined, m);
     }
   });
 
@@ -180,8 +189,8 @@ describe('인증', () => {
     assert.equal(res.headers['cache-control'], 'no-store');
     res = await call('records', { method: 'POST', key: 'another-wrong-key', ip: '1.2.3.4', body: {} });
     assert.equal(res.statusCode, 401);
-    assert.equal(await redis.get('ddh:fail:1.2.3.4'), '2');
-    const ttl = redis.ttl('ddh:fail:1.2.3.4');
+    assert.equal(await redis.get('boardgame:fail:1.2.3.4'), '2');
+    const ttl = redis.ttl('boardgame:fail:1.2.3.4');
     assert.ok(ttl > 890 && ttl <= 900, `ttl=${ttl}`);
   });
 
@@ -198,7 +207,7 @@ describe('인증', () => {
       assert.equal(res.headers['cache-control'], 'no-store');
     }
     assert.deepEqual(touched, []);
-    assert.equal(await base.get('ddh:fail:7.7.7.7'), null);
+    assert.equal(await base.get('boardgame:fail:7.7.7.7'), null);
     // 그 뒤에도 같은 IP의 진짜 사용자는 정상
     assert.equal((await call('data', { ip: '7.7.7.7' })).statusCode, 200);
   });
@@ -206,7 +215,7 @@ describe('인증', () => {
   test('키 없는 요청 25번(다른 사이트의 <img> 폭탄) 뒤에도 맞는 키는 200', async () => {
     const { call, redis } = setup();
     for (let i = 0; i < 25; i++) await call('data', { key: null, ip: '8.8.4.4' });
-    assert.equal(await redis.get('ddh:fail:8.8.4.4'), null);
+    assert.equal(await redis.get('boardgame:fail:8.8.4.4'), null);
     assert.equal((await call('data', { ip: '8.8.4.4' })).statusCode, 200);
   });
 
@@ -218,7 +227,7 @@ describe('인증', () => {
     assert.deepEqual(res.body.records, []);
     assert.deepEqual(res.body.members, []);
     assert.ok(!Number.isNaN(Date.parse(res.body.serverTime)));
-    assert.equal(await redis.get('ddh:fail:1.2.3.4'), '1');
+    assert.equal(await redis.get('boardgame:fail:1.2.3.4'), '1');
   });
 
   test('키 앞뒤 공백은 무시, 다른 길이·비문자열은 거부', () => {
@@ -255,7 +264,7 @@ describe('무차별 대입 방지', () => {
     assert.equal(locked.headers['cache-control'], 'no-store');
     // 잠긴 동안은 인증 확인 전에 거절 → 카운터도 더 늘지 않음
     assert.equal((await call('records', { key: 'bad', ip: '1.2.3.4', method: 'POST' })).statusCode, 429);
-    assert.equal(await redis.get('ddh:fail:1.2.3.4'), '20');
+    assert.equal(await redis.get('boardgame:fail:1.2.3.4'), '20');
     // 다른 IP는 영향 없음
     assert.equal((await call('data', { ip: '5.6.7.8' })).statusCode, 200);
     // 15분 지나면 풀림
@@ -269,7 +278,7 @@ describe('무차별 대입 방지', () => {
     assert.equal((await call('data', { key: null, ip: '1.1.1.1' })).statusCode, 401);
     assert.equal((await call('data', { key: 'bad', ip: '1.1.1.1' })).statusCode, 429);
     assert.equal((await call('data', { ip: '1.1.1.1' })).statusCode, 429);
-    assert.equal(await redis.get('ddh:fail:1.1.1.1'), '20');
+    assert.equal(await redis.get('boardgame:fail:1.1.1.1'), '20');
   });
 
   test('실패 카운터는 INCR+EXPIRE 를 스크립트 하나로 (만료 없는 카운터가 남지 않음)', async () => {
@@ -283,9 +292,9 @@ describe('무차별 대입 방지', () => {
     };
     const { call } = setup({ redis });
     assert.equal((await call('data', { key: 'bad', ip: '2.2.2.2' })).statusCode, 401);
-    assert.deepEqual(calls, [['FAIL', ['ddh:fail:2.2.2.2'], ['900']]]);
-    assert.equal(await base.get('ddh:fail:2.2.2.2'), '1');
-    const ttl = base.ttl('ddh:fail:2.2.2.2');
+    assert.deepEqual(calls, [['FAIL', ['boardgame:fail:2.2.2.2'], ['900']]]);
+    assert.equal(await base.get('boardgame:fail:2.2.2.2'), '1');
+    const ttl = base.ttl('boardgame:fail:2.2.2.2');
     assert.ok(ttl > 890 && ttl <= 900, `ttl=${ttl}`);
   });
 
@@ -616,7 +625,7 @@ function storageSuite(label, makeRedis) {
     }
 
     test('새 기록: id 생성, createdAt=updatedAt, 종류 블록만 저장', async () => {
-      await redis.flushall();
+      await clearApp(redis);
       const { post, call } = fresh();
       const res = await post('records', { record: bgRecord({ mm: { publisher: 'x' } }) });
       assert.equal(res.statusCode, 200);
@@ -777,7 +786,7 @@ function storageSuite(label, makeRedis) {
     });
 
     test('GET /api/data: 기록은 날짜 내림차순, 멤버는 생성순', async () => {
-      await redis.flushall();
+      await clearApp(redis);
       let clock = Date.parse('2026-09-29T10:00:00.000Z');
       const { post, call } = fresh({ now: () => new Date((clock += 1000)) });
       await post('records', { record: bgRecord({ date: '2026-01-01', title: 'A' }) });
@@ -797,7 +806,7 @@ function storageSuite(label, makeRedis) {
     });
 
     test('기록 한도 5000: 새 기록은 409 limit, 기존 기록 수정은 가능', async () => {
-      await redis.flushall();
+      await clearApp(redis);
       const { post } = fresh();
       const keep = (await post('records', { record: bgRecord() })).body.record;
       const filler = {};
@@ -843,7 +852,7 @@ function storageSuite(label, makeRedis) {
     });
 
     test('멤버 한도 200', async () => {
-      await redis.flushall();
+      await clearApp(redis);
       const filler = {};
       for (let i = 0; i < MAX_MEMBERS; i++) filler[`mem-${i}`] = JSON.stringify({ id: `mem-${i}`, name: `멤버${i}` });
       await redis.hset(MEMBERS_KEY, filler);
@@ -861,7 +870,7 @@ function storageSuite(label, makeRedis) {
       const ip = '203.0.113.9';
       for (let i = 0; i < 20; i++) await call('data', { key: 'bad', ip });
       assert.equal((await call('data', { ip })).statusCode, 429);
-      assert.equal(Number(await redis.get(`ddh:fail:${ip}`)), 20);
+      assert.equal(Number(await redis.get(`boardgame:fail:${ip}`)), 20);
     });
   });
 }
@@ -878,15 +887,14 @@ describe('실제 redis-server', { skip: hasRedisServer ? false : 'redis-server �
   before(async () => {
     server = await startRedisServer();
     client = server.client;
-    // wrapUpstash 경유 → lib/redis.js 어댑터도 함께 검증
-    wrapped = wrapUpstash(client.raw);
-    wrapped.flushall = () => client.cmd('FLUSHALL');
+    // wrapUpstash 경유 → lib/redis.js 어댑터도 함께 검증 (+ 상태를 꾸미는 보조 명령)
+    wrapped = testRedis(client.raw);
   });
 
   after(() => server?.stop());
 
   test('UPSERT_SCRIPT 동작: 새로 추가 / 기대값 불일치 / 한도', async () => {
-    const ev = (...args) => wrapped.eval(UPSERT_SCRIPT, ['t:h'], args);
+    const ev = (...args) => wrapped.eval(UPSERT_SCRIPT, ['boardgame:test:h'], args);
     assert.deepEqual(await ev('a', '', '{"v":1}', '2'), ['ok', '']);
     assert.deepEqual(await ev('a', '', '{"v":2}', '2'), ['conflict', '{"v":1}']);
     assert.deepEqual(await ev('a', '{"v":1}', '{"v":2}', '2'), ['ok', '']);
@@ -894,19 +902,19 @@ describe('실제 redis-server', { skip: hasRedisServer ? false : 'redis-server �
     assert.deepEqual(await ev('b', '', '{"b":1}', '2'), ['ok', '']);
     assert.deepEqual(await ev('c', '', '{"c":1}', '2'), ['limit', '']);
     assert.deepEqual(await ev('a', '{"v":2}', '{"v":4}', '2'), ['ok', '']);
-    assert.deepEqual(await wrapped.hgetall('t:h'), { a: '{"v":4}', b: '{"b":1}' });
+    assert.deepEqual(await wrapped.hgetall('boardgame:test:h'), { a: '{"v":4}', b: '{"b":1}' });
   });
 
   test('FAIL_SCRIPT: INCR+EXPIRE 가 한 번에 (가짜 Redis 와 같은 값)', async () => {
-    await client.cmd('DEL', 't:fail');
+    await wrapped.del('boardgame:test:fail');
     const fake = createMemoryRedis();
     for (let i = 1; i <= 3; i++) {
-      assert.equal(Number(await wrapped.eval(FAIL_SCRIPT, ['t:fail'], ['900'])), i);
-      assert.equal(Number(await fake.eval(FAIL_SCRIPT, ['t:fail'], ['900'])), i);
+      assert.equal(Number(await wrapped.eval(FAIL_SCRIPT, ['boardgame:test:fail'], ['900'])), i);
+      assert.equal(Number(await fake.eval(FAIL_SCRIPT, ['boardgame:test:fail'], ['900'])), i);
     }
-    const ttl = await client.cmd('TTL', 't:fail');
+    const ttl = await client.cmd('TTL', 'boardgame:test:fail');
     assert.ok(ttl > 890 && ttl <= 900, `ttl=${ttl}`);
-    assert.ok(fake.ttl('t:fail') > 890);
+    assert.ok(fake.ttl('boardgame:test:fail') > 890);
   });
 
   test('가짜 Redis와 같은 결과', async () => {
@@ -919,17 +927,125 @@ describe('실제 redis-server', { skip: hasRedisServer ? false : 'redis-server �
       ['c', '', 'w', '2'],
       ['c', 'nope', 'w', '2'],
     ];
-    await client.cmd('DEL', 't:cmp');
+    await wrapped.del('boardgame:test:cmp');
     for (const s of steps) {
-      assert.deepEqual(await wrapped.eval(UPSERT_SCRIPT, ['t:cmp'], s), await fake.eval(UPSERT_SCRIPT, ['t:cmp'], s), s.join(','));
+      assert.deepEqual(await wrapped.eval(UPSERT_SCRIPT, ['boardgame:test:cmp'], s), await fake.eval(UPSERT_SCRIPT, ['boardgame:test:cmp'], s), s.join(','));
     }
-    assert.deepEqual(await wrapped.hgetall('t:cmp'), await fake.hgetall('t:cmp'));
+    assert.deepEqual(await wrapped.hgetall('boardgame:test:cmp'), await fake.hgetall('boardgame:test:cmp'));
+  });
+
+  test('같은 Redis 의 마작 데이터(mahjong:*)는 읽지도 고치지도 지우지도 않음 — 기록·멤버·사진·gc·잘못된 코드까지', async () => {
+    // 마작 앱이 쓰던 키를 그대로 흉내 (앱 어댑터는 이 키를 거부하므로 원시 명령으로)
+    const mahjong = {
+      'mahjong:games': ['HSET', 'g1', '{"winner":"연경","score":32000}', 'g2', '{"winner":"영식"}'],
+      'mahjong:members': ['HSET', 'm1', '{"name":"연경"}'],
+      'mahjong:settings': ['SET', '{"uma":[20,10,-10,-20]}'],
+    };
+    for (const [key, [cmd, ...rest]] of Object.entries(mahjong)) await client.cmd(cmd, key, ...rest);
+    const snapshot = async () => ({
+      games: await client.cmd('HGETALL', 'mahjong:games'),
+      members: await client.cmd('HGETALL', 'mahjong:members'),
+      settings: await client.cmd('GET', 'mahjong:settings'),
+      ttl: await client.cmd('TTL', 'mahjong:games'),
+    });
+    const before = await snapshot();
+
+    // 이 앱의 명령이 어떤 키로 갔는지 모두 기록
+    const seen = new Set();
+    const spy = new Proxy(client.raw, {
+      get(target, name) {
+        const fn = target[name];
+        return (...a) => {
+          if (name === 'eval') a[1].forEach((k) => seen.add(k));
+          else seen.add(a[0]);
+          return fn(...a);
+        };
+      },
+    });
+    let clock = Date.parse('2026-09-01T00:00:00.000Z');
+    const handlers = createHandlers({ redis: wrapUpstash(spy), blob: createMemoryBlob(), env: { APP_SECRET: SECRET }, now: () => new Date(clock), logger: silent });
+    const call = async (route, { method = 'GET', key = SECRET, body, query = {} } = {}) => {
+      const res = mockRes();
+      await handlers[route]({ method, headers: { 'x-app-key': key, 'x-forwarded-for': '198.51.100.7' }, query, body }, res);
+      return res;
+    };
+    const photo = { full: fakeJpeg(3000).toString('base64'), thumb: fakeJpeg(300).toString('base64') };
+    const img = (await call('images', { method: 'POST', body: photo })).body.image.id;
+    const spare = (await call('images', { method: 'POST', body: photo })).body.image.id;
+    const mem = (await call('members', { method: 'POST', body: { member: { name: '연경' } } })).body.member;
+    const rec = (await call('records', { method: 'POST', body: { record: bgRecord({ members: [mem.id], photos: [img] }) } })).body.record;
+    assert.equal((await call('images', { query: { id: img, size: 't' } })).statusCode, 200);
+    assert.equal((await call('data')).body.records.length, 1);
+    await call('records', { method: 'POST', body: { record: { ...rec, photos: [] }, baseUpdatedAt: rec.updatedAt } });
+    assert.deepEqual((await call('images', { method: 'DELETE', query: { id: spare } })).body, { ok: true });
+    clock += 25 * 60 * 60 * 1000;
+    assert.deepEqual((await call('images', { method: 'POST', query: { action: 'gc' } })).body, { deleted: 1 });
+    await call('records', { method: 'DELETE', query: { id: rec.id } });
+    await call('members', { method: 'DELETE', query: { id: mem.id } });
+    await call('images', { query: { stats: '1' } });
+    await call('images', { query: { list: '1' } });
+    assert.equal((await call('data', { key: 'wrong-code-wrong-code' })).statusCode, 401);
+
+    assert.ok(seen.size > 0);
+    for (const k of seen) assert.ok(k.startsWith('boardgame:'), `이 앱 밖의 키로 명령이 감: ${k}`);
+    assert.deepEqual(await snapshot(), before, '마작 데이터 그대로');
+    assert.equal(await client.cmd('EXISTS', 'mahjong:games', 'mahjong:members', 'mahjong:settings'), 3);
+    await clearApp(wrapped);
   });
 
   storageSuite('실제 redis-server + wrapUpstash', async () => wrapped);
 });
 
 // ── 어댑터 / 개발 서버 ────────────────────────────────────────
+
+describe('Redis 키 이름공간 (boardgame:)', () => {
+  test('키 이름: boardgame:games · boardgame:members · boardgame:photos · boardgame:fail:<IP>', () => {
+    assert.equal(RECORDS_KEY, 'boardgame:games');
+    assert.equal(MEMBERS_KEY, 'boardgame:members');
+    assert.equal(PHOTOS_KEY, 'boardgame:photos');
+    assert.equal(failKey('203.0.113.5'), 'boardgame:fail:203.0.113.5');
+    for (const k of ['boardgame:games', 'boardgame:fail:::1']) assert.equal(isOwnKey(k), true, k);
+    for (const k of ['mahjong:games', 'mahjong:members', 'boardgame:', 'boardgame', 'boardgames:games', 'Boardgame:games', 'ddh:records', '', null, 42]) {
+      assert.equal(isOwnKey(k), false, String(k));
+    }
+  });
+
+  test('어댑터는 boardgame: 밖의 키로 가는 명령을 보내지 않고 오류 (EVAL 의 KEYS 도)', async () => {
+    const sent = [];
+    const client = new Proxy({}, { get: (_, name) => async (...a) => { sent.push([name, ...a]); return null; } });
+    const r = wrapUpstash(client);
+    for (const [label, fn] of [
+      ['hgetall', () => r.hgetall('mahjong:games')],
+      ['hget', () => r.hget('mahjong:members', 'm1')],
+      ['hdel', () => r.hdel('mahjong:games', 'g1')],
+      ['get', () => r.get('mahjong:settings')],
+      ['eval', () => r.eval('return 1', ['boardgame:games', 'mahjong:games'], [])],
+      ['접두어만', () => r.get('boardgame:')],
+    ]) {
+      await assert.rejects(fn(), /boardgame:' 밖의 키/, label);
+    }
+    assert.deepEqual(sent, [], 'Redis 로는 아무것도 가지 않음');
+    await r.hget('boardgame:games', 'x');
+    assert.deepEqual(sent, [['hget', 'boardgame:games', 'x']]);
+  });
+
+  test('가짜 Redis 도 boardgame: 밖의 키를 거부 — API 전체를 돌려도 만들어지는 키는 boardgame:* 뿐', async () => {
+    const redis = createMemoryRedis();
+    await assert.rejects(redis.hget('mahjong:games', 'g1'), /밖의 키/);
+    await assert.rejects(redis.eval(UPSERT_SCRIPT, ['mahjong:games'], ['a', '', '{}', '10']), /밖의 키/);
+    const handlers = createHandlers({ redis, blob: createMemoryBlob(), env: { APP_SECRET: SECRET }, logger: silent });
+    const call = async (route, { method = 'GET', key = SECRET, body, query = {} } = {}) => {
+      const res = mockRes();
+      await handlers[route]({ method, headers: { 'x-app-key': key, 'x-forwarded-for': '192.0.2.1' }, query, body }, res);
+      return res;
+    };
+    const img = (await call('images', { method: 'POST', body: { full: fakeJpeg(2000).toString('base64'), thumb: fakeJpeg(200).toString('base64') } })).body.image.id;
+    const mem = (await call('members', { method: 'POST', body: { member: { name: '영식' } } })).body.member;
+    assert.equal((await call('records', { method: 'POST', body: { record: bgRecord({ members: [mem.id], photos: [img] }) } })).statusCode, 200);
+    assert.equal((await call('data', { key: 'wrong-code-wrong-code' })).statusCode, 401);
+    assert.deepEqual(redis.keyNames(), ['boardgame:fail:192.0.2.1', 'boardgame:games', 'boardgame:members', 'boardgame:photos']);
+  });
+});
 
 describe('lib/redis.js 어댑터', () => {
   test('pairsToObject: 배열·객체·null', () => {

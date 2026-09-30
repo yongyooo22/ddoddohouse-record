@@ -1,7 +1,11 @@
 // 테스트 공용 도우미 — 최소 RESP 클라이언트, 로컬 redis-server 띄우기, Vercel 스타일 가짜 res, 가짜 사진 바이트
 // (*.test.mjs 가 아니라서 node --test 가 따로 실행하지 않음)
 import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
+import { wrapUpstash, ownKey } from '../lib/redis.js';
 
 export const hasRedisServer = spawnSync('redis-server', ['--version']).status === 0;
 
@@ -97,10 +101,15 @@ export function createRespClient(port) {
   return { raw, cmd, ready, close: () => sock.end() };
 }
 
-/** 임의 포트에 저장 안 하는 redis-server 를 띄우고 연결. 반환: { client, stop } */
+/**
+ * 임의 포트에 테스트 전용 redis-server 를 띄우고 연결. 반환: { client, stop }
+ * 빈 임시 폴더에서 저장 없이(--save '' · appendonly no) 띄우므로 처음부터 비어 있고, 끝나면 폴더째 지움
+ * (FLUSHALL 같은 전체 초기화 명령은 쓰지 않음)
+ */
 export async function startRedisServer() {
   const port = await freePort();
-  const proc = spawn('redis-server', ['--port', String(port), '--bind', '127.0.0.1', '--save', '', '--appendonly', 'no'], {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ddh-redis-'));
+  const proc = spawn('redis-server', ['--port', String(port), '--bind', '127.0.0.1', '--dir', dir, '--save', '', '--appendonly', 'no'], {
     stdio: 'ignore',
   });
   let client;
@@ -116,15 +125,31 @@ export async function startRedisServer() {
   }
   if (!client) {
     proc.kill();
+    rmSync(dir, { recursive: true, force: true });
     throw new Error('redis-server 에 연결하지 못함');
   }
-  await client.cmd('FLUSHALL');
   return {
     client,
     stop() {
       client.close();
       proc.kill();
+      rmSync(dir, { recursive: true, force: true });
     },
+  };
+}
+
+/**
+ * 실제 redis-server 용 테스트 Redis: 앱이 쓰는 어댑터(wrapUpstash) + 상태를 꾸미는 보조 명령(hset·set·del·hlen).
+ * 보조 명령도 'boardgame:' 키만 받음
+ */
+export function testRedis(raw) {
+  return {
+    ...wrapUpstash(raw),
+    hset: (k, obj) => raw.hset(ownKey(k), obj),
+    hdel: (k, ...f) => raw.hdel(ownKey(k), ...f),
+    hlen: (k) => raw.hlen(ownKey(k)),
+    set: (k, v) => raw.set(ownKey(k), v),
+    del: (...k) => raw.del(...k.map(ownKey)),
   };
 }
 

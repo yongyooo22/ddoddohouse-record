@@ -1,4 +1,4 @@
-// 로컬 개발 서버 — 정적 파일 + /api/* (인메모리 가짜 Redis) + vercel.json 헤더 흉내
+// 로컬 개발 서버 — 정적 파일 + /api/* (인메모리 가짜 Redis·가짜 사진 저장소) + vercel.json 헤더 흉내
 // 실행: npm run dev   (PORT, APP_SECRET, HOST 환경변수로 변경 가능)
 // 테스트에서: const { url, close } = await startDevServer({ port: 0 });
 import http from 'node:http';
@@ -8,13 +8,17 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createHandlers, UPSERT_SCRIPT, RECORD_DELETE_SCRIPT, MAX_BODY_BYTES } from '../lib/handler.js';
 import { FAIL_SCRIPT, PUBLIC_DEV_SECRET } from '../lib/auth.js';
+import { KEY_PREFIX, PHOTO_PATH_PREFIX, isOwnKey, isOwnPath } from '../lib/keys.js';
 import {
-  IMAGE_ADD_SCRIPT,
   IMAGE_COMMIT_SCRIPT,
   IMAGE_DELETE_SCRIPT,
+  IMAGE_FORGET_SCRIPT,
+  IMAGE_GC_SCRIPT,
+  IMAGE_RELEASE_SCRIPT,
+  IMAGE_RESERVE_SCRIPT,
   IMAGE_ROLLBACK_SCRIPT,
   MAX_IMAGE_BODY_BYTES,
-  PENDING_MARK,
+  STATE_MARK,
 } from '../lib/images.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -45,9 +49,10 @@ const MIME = {
 
 /**
  * handler가 쓰는 명령만 구현한 가짜 Redis. 값은 실제 Upstash 클라이언트(automaticDeserialization: false)처럼 문자열.
+ * 실제 어댑터처럼 'boardgame:' 밖의 키는 거부한다 (테스트에서 이름공간을 벗어나는 코드를 잡아내게).
  * EVAL은 lib/handler.js의 UPSERT_SCRIPT·RECORD_DELETE_SCRIPT, lib/auth.js의 FAIL_SCRIPT, lib/images.js의
- * IMAGE_ADD_SCRIPT·IMAGE_COMMIT_SCRIPT·IMAGE_ROLLBACK_SCRIPT·IMAGE_DELETE_SCRIPT만 지원하며
- * 같은 로직(문자열 패턴까지)을 JS로 수행한다.
+ * IMAGE_*_SCRIPT만 지원하며 같은 로직(문자열 패턴까지)을 JS로 수행한다.
+ * hset·set·del 등은 테스트가 상태를 꾸미는 데 쓰는 보조 명령 (handler는 쓰지 않음).
  * @param {{ now?: () => number }} [opts]  만료 계산용 시계(ms)
  */
 export function createMemoryRedis({ now = Date.now } = {}) {
@@ -55,6 +60,10 @@ export function createMemoryRedis({ now = Date.now } = {}) {
   const hashes = new Map();
   const expiresAt = new Map();
 
+  function own(key) {
+    if (!isOwnKey(key)) throw new Error(`fake redis: '${KEY_PREFIX}' 밖의 키 (${key})`);
+    return key;
+  }
   function purge(key) {
     const t = expiresAt.get(key);
     if (t !== undefined && t <= now()) {
@@ -67,6 +76,7 @@ export function createMemoryRedis({ now = Date.now } = {}) {
     return new Error('WRONGTYPE Operation against a key holding the wrong kind of value');
   }
   function hash(key, create) {
+    own(key);
     purge(key);
     if (strings.has(key)) throw wrongType();
     let h = hashes.get(key);
@@ -74,6 +84,7 @@ export function createMemoryRedis({ now = Date.now } = {}) {
     return h;
   }
   function str(key) {
+    own(key);
     purge(key);
     if (hashes.has(key)) throw wrongType();
     return strings.has(key) ? strings.get(key) : null;
@@ -85,6 +96,14 @@ export function createMemoryRedis({ now = Date.now } = {}) {
       expiresAt.delete(key);
     }
   }
+
+  // ── lib/images.js 의 Lua 조각과 같은 로직 ──
+  const setField = (m, name, value) => {
+    const s = m.split(new RegExp(`,"${name}":"[^"]*"`)).join('');
+    return value === '' ? s : `${s.slice(0, -1)},"${name}":"${value}"}`;
+  };
+  const ready = (m) => !m.includes(STATE_MARK);
+  const isoOf = (m, name) => new RegExp(`"${name}":"(\\d{4}-\\d{2}-\\d{2}T[^"]*)"`).exec(m)?.[1];
 
   return {
     async hgetall(key) {
@@ -114,14 +133,12 @@ export function createMemoryRedis({ now = Date.now } = {}) {
     async hlen(key) {
       return hash(key, false)?.size ?? 0;
     },
-    async hexists(key, field) {
-      return hash(key, false)?.has(String(field)) ? 1 : 0;
-    },
     async get(key) {
       return str(key);
     },
     async set(key, value) {
       // SET 은 종류와 만료를 가리지 않고 덮어씀
+      own(key);
       purge(key);
       hashes.delete(key);
       expiresAt.delete(key);
@@ -131,26 +148,15 @@ export function createMemoryRedis({ now = Date.now } = {}) {
     async del(...keys) {
       let n = 0;
       for (const key of keys) {
+        own(key);
         purge(key);
         if (strings.delete(key) || hashes.delete(key)) n++;
         expiresAt.delete(key);
       }
       return n;
     },
-    async incr(key) {
-      const cur = str(key);
-      const n = cur === null ? 0 : Number(cur);
-      if (!Number.isInteger(n)) throw new Error('ERR value is not an integer or out of range');
-      strings.set(key, String(n + 1));
-      return n + 1;
-    },
-    async expire(key, seconds) {
-      purge(key);
-      if (!strings.has(key) && !hashes.has(key)) return 0;
-      expiresAt.set(key, now() + Number(seconds) * 1000);
-      return 1;
-    },
     async eval(script, keys, args) {
+      keys.forEach(own);
       if (script === FAIL_SCRIPT) {
         // INCR + EXPIRE (실제 Redis에서는 Lua 하나로 원자적)
         const key = keys[0];
@@ -170,62 +176,110 @@ export function createMemoryRedis({ now = Date.now } = {}) {
         }
         return refs;
       };
-      const exists = (...ks) => ks.filter((k) => str(k) !== null).length;
       const hdelField = (key, field) => {
         hash(key, false)?.delete(field);
         dropIfEmpty(key);
       };
-      if (script === IMAGE_ADD_SCRIPT) {
-        const [id, meta, bytes, maxCount, maxBytes, at] = args.map(String);
+      // 정리 후보를 참조 확인 뒤 지울 차례로 (Lua 의 SWEEP 조각) → [id, 메타, …]
+      const sweep = (cand, max) => {
+        if (!cand.length) return [];
+        const refs = refsOf(keys[0]);
+        const out = [];
+        for (const [id, m] of cand) {
+          if (out.length >= 2 * max) break;
+          if (refs.has(id)) {
+            if (m.includes('"touchedAt":"')) hash(keys[1], true).set(id, setField(m, 'touchedAt', ''));
+          } else {
+            const d = setField(m, 'state', 'deleting');
+            hash(keys[1], true).set(id, d);
+            out.push(id, d);
+          }
+        }
+        return out;
+      };
+      if (script === IMAGE_RESERVE_SCRIPT) {
+        const [id, pending, bytes, maxCount, maxBytes, at, takeover] = args.map(String);
         const h = hash(keys[0], false);
-        if (h?.has(id)) {
-          hash(keys[3], true).set(id, at);
-          const cur = h.get(id);
-          return [cur.includes(PENDING_MARK) || exists(keys[1], keys[2]) < 2 ? 'incomplete' : 'exists', cur];
+        const cur = h?.get(id);
+        if (cur === pending) return ['ok', ''];
+        if (cur !== undefined && ready(cur)) {
+          const t = setField(cur, 'touchedAt', at);
+          h.set(id, t);
+          return ['exists', t];
+        }
+        if (cur !== undefined) {
+          if (takeover !== '1') return ['taken', ''];
+          h.set(id, pending);
+          return ['incomplete', cur];
         }
         const vals = [...(h?.values() ?? [])];
         if (vals.length >= Number(maxCount)) return ['limit', 'count'];
         let total = Number(bytes);
         for (const v of vals) total += Number(/"bytesF":(\d+)/.exec(v)?.[1] ?? 0) + Number(/"bytesT":(\d+)/.exec(v)?.[1] ?? 0);
         if (total > Number(maxBytes)) return ['limit', 'bytes'];
-        hash(keys[0], true).set(id, meta);
+        hash(keys[0], true).set(id, pending);
         return ['ok', ''];
       }
       if (script === IMAGE_COMMIT_SCRIPT) {
-        if (exists(keys[1], keys[2]) < 2) return 'incomplete';
-        hash(keys[0], true).set(String(args[0]), String(args[1]));
+        const [id, pending, meta] = args.map(String);
+        const cur = hash(keys[0], false)?.get(id);
+        if (cur === meta) return 'ok';
+        if (cur !== pending) return 'lost';
+        hash(keys[0], true).set(id, meta);
         return 'ok';
       }
       if (script === IMAGE_ROLLBACK_SCRIPT) {
-        const id = String(args[0]);
-        const cur = hash(keys[1], false)?.get(id);
-        if (cur !== undefined && !cur.includes(PENDING_MARK)) return 'kept';
-        if (cur !== undefined && refsOf(keys[0]).has(id)) return 'in_use';
-        if (cur !== undefined) hdelField(keys[1], id);
-        strings.delete(keys[2]);
-        strings.delete(keys[3]);
-        return 'deleted';
+        const [id, pending] = args.map(String);
+        if (hash(keys[0], false)?.get(id) !== pending) return 0;
+        hdelField(keys[0], id);
+        return 1;
       }
       if (script === IMAGE_DELETE_SCRIPT) {
-        const refs = refsOf(keys[0]);
-        const [cutoff, ...ids] = args.map(String);
-        return ids.map((id, i) => {
-          const touched = hash(keys[2], false)?.get(id);
-          if (!hash(keys[1], false)?.has(id)) {
-            if (touched !== undefined) hdelField(keys[2], id);
-            return 'missing';
-          }
-          if (refs.has(id)) {
-            if (touched !== undefined) hdelField(keys[2], id);
-            return 'in_use';
-          }
-          if (cutoff !== '' && touched !== undefined && touched > cutoff) return 'young';
-          strings.delete(keys[3 + 2 * i]);
-          strings.delete(keys[4 + 2 * i]);
-          hdelField(keys[1], id);
-          if (touched !== undefined) hdelField(keys[2], id);
-          return 'deleted';
+        const id = String(args[0]);
+        const cur = hash(keys[1], false)?.get(id);
+        if (cur === undefined) return ['missing', ''];
+        if (refsOf(keys[0]).has(id)) return ['in_use', ''];
+        const d = setField(cur, 'state', 'deleting');
+        hash(keys[1], true).set(id, d);
+        return ['deleting', d];
+      }
+      if (script === IMAGE_RELEASE_SCRIPT) {
+        const [at, cutoff, max, ...released] = args.map(String);
+        for (const id of released) {
+          const m = hash(keys[1], false)?.get(id);
+          if (m !== undefined && ready(m)) hash(keys[1], true).set(id, setField(m, 'touchedAt', at));
+        }
+        const cand = [...(hash(keys[1], false) ?? [])].filter(([, m]) => {
+          const t = /"touchedAt":"([^"]*)"/.exec(m)?.[1];
+          return t !== undefined && !(t > cutoff);
         });
+        return sweep(cand, Number(max));
+      }
+      if (script === IMAGE_GC_SCRIPT) {
+        const [at, cutoff, max, ...kept] = args.map(String);
+        const keep = new Set(kept);
+        const cand = [];
+        for (const [id, m] of [...(hash(keys[1], false) ?? [])]) {
+          if (keep.has(id)) {
+            if (ready(m)) hash(keys[1], true).set(id, setField(m, 'touchedAt', at));
+          } else {
+            const c = isoOf(m, 'createdAt');
+            const t = isoOf(m, 'touchedAt');
+            if (!((c && c > cutoff) || (t && t > cutoff))) cand.push([id, m]);
+          }
+        }
+        return sweep(cand, Number(max));
+      }
+      if (script === IMAGE_FORGET_SCRIPT) {
+        let n = 0;
+        for (let i = 0; i + 1 < args.length; i += 2) {
+          const id = String(args[i]);
+          if (hash(keys[0], false)?.get(id) === String(args[i + 1])) {
+            hdelField(keys[0], id);
+            n++;
+          }
+        }
+        return n;
       }
       if (script === RECORD_DELETE_SCRIPT) {
         const h = hash(keys[0], false);
@@ -244,7 +298,7 @@ export function createMemoryRedis({ now = Date.now } = {}) {
       if (cur === '' && (h?.size ?? 0) >= Number(max)) return ['limit', ''];
       const missing = photos.filter((p) => {
         const m = hash(metaKey, false)?.get(p);
-        return m === undefined || m.includes(PENDING_MARK);
+        return m === undefined || !ready(m);
       });
       if (missing.length) return ['missing', missing.join(',')];
       hash(hashKey, true).set(field, value);
@@ -252,15 +306,45 @@ export function createMemoryRedis({ now = Date.now } = {}) {
     },
     // ── 테스트 보조 (handler는 쓰지 않음) ──
     ttl(key) {
+      own(key);
       purge(key);
       if (!strings.has(key) && !hashes.has(key)) return -2;
       const t = expiresAt.get(key);
       return t === undefined ? -1 : Math.ceil((t - now()) / 1000);
     },
-    flushall() {
-      strings.clear();
-      hashes.clear();
-      expiresAt.clear();
+    /** 들어 있는 키 이름 (테스트에서 이름공간 확인용) */
+    keyNames() {
+      return [...strings.keys(), ...hashes.keys()].sort();
+    },
+  };
+}
+
+// ── 인메모리 가짜 사진 저장소 (lib/blob.js 인터페이스와 동일) ──────────
+
+/** Vercel Blob 대신 메모리에 파일을 두는 가짜. 실제 어댑터처럼 boardgame/photos/ 밖의 경로는 거부 */
+export function createMemoryBlob() {
+  const files = new Map(); // 경로 → { bytes, contentType }
+  function own(pathname) {
+    if (!isOwnPath(pathname)) throw new Error(`fake blob: '${PHOTO_PATH_PREFIX}' 밖의 경로 (${pathname})`);
+    return pathname;
+  }
+  return {
+    async put(pathname, bytes, contentType) {
+      files.set(own(pathname), { bytes: Buffer.from(bytes), contentType });
+    },
+    async get(pathname) {
+      const f = files.get(own(pathname));
+      return f ? Buffer.from(f.bytes) : null;
+    },
+    async del(pathnames) {
+      for (const p of pathnames) files.delete(own(p));
+    },
+    // ── 테스트 보조 ──
+    paths() {
+      return [...files.keys()].sort();
+    },
+    contentType(pathname) {
+      return files.get(pathname)?.contentType ?? null;
     },
   };
 }
@@ -419,9 +503,10 @@ async function serveStatic(root, pathname, req, res) {
  * @param {string} [opts.host]     기본 env HOST 또는 127.0.0.1
  * @param {string} [opts.secret]   기본 env APP_SECRET 또는 'dev-secret-key-1234'
  * @param {object} [opts.redis]    주입할 redis (기본: 새 인메모리 가짜)
+ * @param {object} [opts.blob]     주입할 사진 저장소 (기본: 새 인메모리 가짜, null 이면 사진 저장소 없음)
  * @param {string} [opts.root]     정적 파일 루트 (기본: 저장소 루트)
  * @param {object} [opts.logger]   API 서버 로그 (기본 console)
- * @returns {Promise<{url:string, port:number, secret:string, redis:object, close:() => Promise<void>}>}
+ * @returns {Promise<{url:string, port:number, secret:string, redis:object, blob:object, close:() => Promise<void>}>}
  */
 export async function startDevServer(opts = {}) {
   const port = opts.port ?? (process.env.PORT ? Number(process.env.PORT) : 3000);
@@ -429,7 +514,8 @@ export async function startDevServer(opts = {}) {
   const secret = opts.secret ?? process.env.APP_SECRET ?? DEFAULT_DEV_SECRET;
   const root = path.resolve(opts.root ?? ROOT);
   const redis = opts.redis ?? createMemoryRedis();
-  const handlers = createHandlers({ redis, env: { APP_SECRET: secret }, logger: opts.logger ?? console });
+  const blob = opts.blob === undefined ? createMemoryBlob() : opts.blob;
+  const handlers = createHandlers({ redis, blob, env: { APP_SECRET: secret }, logger: opts.logger ?? console });
   const routes = {
     '/api/data': handlers.data,
     '/api/records': handlers.records,
@@ -488,6 +574,7 @@ export async function startDevServer(opts = {}) {
     port: actualPort,
     secret,
     redis,
+    blob,
     close: () =>
       new Promise((resolve) => {
         server.closeAllConnections?.();
