@@ -110,7 +110,8 @@ function render(root, ctx) {
       h('span', { text: '멤버를 먼저 등록하면 기록에서 함께한 사람을 고를 수 있어요' }), icon('chevron'))
     : null;
 
-  root.replaceChildren(h('div', { class: 'page page-home' }, head, cover, tip, shortcuts, mate, recentSec));
+  // 넓은 화면: 요약 카드 옆에 [팁 · 종류 바로가기 · 이번 달 멤버]를 한 묶음으로 (휴대폰에서는 차례대로 쌓임)
+  root.replaceChildren(h('div', { class: 'page page-home' }, head, cover, h('div', { class: 'home-side' }, tip, shortcuts, mate), recentSec));
 }
 
 export function mount(root, ctx) {

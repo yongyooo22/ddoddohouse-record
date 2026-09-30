@@ -271,7 +271,10 @@ async function lockLayout(p = page) {
     const pr = perf.getBoundingClientRect();
     const notch = (pseudo) => {
       const c = getComputedStyle(perf, pseudo);
-      return { content: c.content, l: pr.left + parseFloat(c.left), r: pr.right - parseFloat(c.right), bg: c.backgroundColor };
+      return {
+        content: c.content, bg: c.backgroundColor,
+        l: pr.left + parseFloat(c.left), r: pr.right - parseFloat(c.right), t: pr.top + parseFloat(c.top), b: pr.bottom - parseFloat(c.bottom),
+      };
     };
     return {
       vw: document.documentElement.clientWidth,
@@ -1313,6 +1316,90 @@ await step('좁은 화면 (320px) 가로 넘침', async () => {
   await shot('320-stats-murdermystery');
   await page.click('.page-stats .seg-type .seg-item:has-text("전체")');
   await page.setViewportSize(VIEWPORT);
+});
+
+await step('노트북 화면 (1366×768): 위쪽 메뉴 · 여러 줄 카드 · 두 단 · 가로 티켓', async () => {
+  const cl = await newContext({ viewport: { width: 1366, height: 768 }, isMobile: false, hasTouch: false, deviceScaleFactor: 1 });
+  const phone = page;
+  page = await cl.newPage();
+  watch(page, '[laptop] ');
+  const rect = (sel) => page.$eval(sel, (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top, b: b.bottom, w: b.width, h: b.height }; });
+  const lefts = (sel) => page.$$eval(sel, (els) => new Set(els.map((e) => Math.round(e.getBoundingClientRect().left))).size);
+  try {
+    // 입장 화면: 가로 티켓 — 왼쪽 제목, 세로 점선(위아래 반원 홈), 오른쪽 입력. 스크롤 없이 한 화면
+    await page.goto(`${BASE}/`);
+    await page.waitForSelector('.lock #lock-key');
+    const L = await lockLayout();
+    const [hd, bd] = [await rect('.lock-head'), await rect('.lock-body')];
+    check('입장 화면: 가로 티켓 (왼쪽 제목 · 세로 점선 · 오른쪽 입력)', hd.r <= L.perf.l + 1 && L.perf.r <= bd.l + 1 && Math.abs(hd.t - bd.t) < 2 &&
+      L.perf.h > 200 && /dashed/.test(await page.$eval('.lock-perf', (e) => getComputedStyle(e).borderLeftStyle)), JSON.stringify({ hd, perf: L.perf, bd }));
+    check('입장 화면: 세로 점선 위아래에 반원 홈', Math.abs(L.notchL.t - L.card.t) < 1 && Math.abs(L.notchR.b - L.card.b) < 1, JSON.stringify([L.notchL, L.notchR, L.card]));
+    check('입장 화면: 스크롤 없이 한 화면 가운데', (await page.evaluate(() => document.scrollingElement.scrollHeight)) <= 768 && Math.abs((L.card.t + L.card.b) / 2 - 384) < 30);
+    await noOverflow('노트북 입장 화면');
+    await shot('laptop-lock');
+
+    await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
+    await page.waitForSelector('.page-home');
+    // 위쪽 메뉴 막대: 화면 위 전체 폭, [이름] 홈·기록·통계·멤버 … [+ 새 기록]
+    const nav = await rect('#tabbar');
+    check('위쪽 메뉴 막대 (화면 맨 위, 전체 폭)', nav.t === 0 && nav.h <= 72 && nav.w >= 1300, JSON.stringify(nav));
+    const addBtn = await rect('#tabbar .tab-add-btn');
+    check('메뉴: 이름과 ‘새 기록’ 글자가 보이고, 새 기록은 오른쪽 끝', await page.isVisible('#tabbar .tabbar-brand') && await page.isVisible('#tabbar .tab-add-label') &&
+      (await text('#tabbar .tab-add-label')) === '새 기록' && addBtn.r > 1200 && addBtn.l > (await rect('#tabbar [data-tab="members"]')).r);
+    // 홈: 요약 카드 옆에 바로가기·멤버, 최근 기록은 한 줄에 3개
+    const [cover, side] = [await rect('.page-home .cover'), await rect('.page-home .home-side')];
+    check('홈: 요약 카드 옆에 종류 바로가기 · 이번 달 멤버', cover.r <= side.l && Math.abs(cover.t - side.t) < 2, JSON.stringify({ cover, side }));
+    check('홈 최근 기록: 한 줄에 3개', (await lefts('.page-home .rcard')) === 3);
+    await cardsOverlapFree('노트북 홈', '.page-home .rcard');
+    await noOverflow('노트북 홈');
+    await shot('laptop-home');
+    // 기록 목록: 한 줄에 3개, 검색·정렬·필터가 한 줄
+    await page.click('#tabbar [data-tab="records"]');
+    await page.waitForSelector('.page-list .rcard');
+    check('메뉴의 기록 표시', (await page.getAttribute('#tabbar [data-tab="records"]', 'aria-current')) === 'page');
+    check('기록 목록: 한 줄에 카드 3개', (await lefts('.page-list .rcard')) === 3);
+    const [srch, sort] = [await rect('.page-list .search-wrap'), await rect('.page-list .list-tools select')];
+    check('기록 목록: 검색 · 정렬 · 필터가 한 줄', Math.abs((srch.t + srch.b) / 2 - (sort.t + sort.b) / 2) < 4 && srch.r < sort.l, JSON.stringify({ srch, sort }));
+    await cardsOverlapFree('노트북 기록 목록');
+    await noOverflow('노트북 기록 목록');
+    await shot('laptop-list');
+    // 상세: 왼쪽 [사진·요약], 오른쪽 [멤버·종류별·후기…], 위쪽 막대 아래에 붙는 상단 바
+    await go(`#/record/${encodeURIComponent(ids.bg)}`, '.page-detail');
+    const [lead, rest] = [await rect('.page-detail .dcol-lead'), await rect('.page-detail .dcol-rest')];
+    check('상세: 두 단 (요약 | 나머지)', lead.r <= rest.l && Math.abs(lead.t - rest.t) < 2 && lead.w > 400 && rest.w > 400, JSON.stringify({ lead, rest }));
+    check('상세: 상단 바는 위쪽 메뉴 아래에 붙음', (await page.$eval('.page-detail .appbar', (e) => getComputedStyle(e).top)) === '64px');
+    await noOverflow('노트북 상세');
+    await shot('laptop-detail');
+    // 폼: 두 단, 저장 버튼은 오른쪽 아래
+    await go(`#/edit/${encodeURIComponent(ids.bg)}`, '.page-form');
+    const cols2 = await page.$$eval('.page-form .form-col', (els) => els.map((e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, t: b.top }; }));
+    const save = await rect('.page-form .save-btn');
+    check('폼: 두 단 (기본·사진·멤버 | 종류별·후기·태그), 저장은 오른쪽', cols2.length === 2 && cols2[0].r <= cols2[1].l && Math.abs(cols2[0].t - cols2[1].t) < 2 && save.r > 1200,
+      JSON.stringify({ cols2, save }));
+    check('폼에서는 위쪽 메뉴를 감춤', !(await page.isVisible('#tabbar')));
+    await noOverflow('노트북 폼');
+    await shot('laptop-form');
+    await page.click('.page-form .savebar button:has-text("취소")');
+    await page.waitForSelector('.page-detail');
+    // 통계 · 멤버 · 새 기록 고르기: 여러 줄
+    await go('#/stats', '.page-stats');
+    check('통계: 카드 두 줄씩', (await lefts('.page-stats .chart-card')) === 2);
+    await noOverflow('노트북 통계');
+    await shot('laptop-stats');
+    await go('#/members', '.page-members');
+    check('멤버: 여러 줄 카드', (await lefts('.page-members .mlist li')) >= 3);
+    await noOverflow('노트북 멤버');
+    await page.click('#tabbar .tab-add');
+    await page.waitForSelector('.page-picker');
+    check('새 기록: 세 종류가 한 줄', (await lefts('.page-picker .pick')) === 3);
+    for (const [hash, sel] of [['#/settings', '.page-settings'], [`#/member/${encodeURIComponent(ids['연경'])}`, '.page-profile']]) {
+      await go(hash, sel);
+      await noOverflow(`노트북 ${hash}`);
+    }
+  } finally {
+    await cl.close();
+    page = phone;
+  }
 });
 
 await step('401 → 키 삭제 후 잠금, 링크 붙여넣기로 다시 열기', async () => {

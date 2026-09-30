@@ -1412,6 +1412,114 @@ html.vw-open, html.vw-open body { overflow: hidden; }
   .glyph-dot.rating-input .rating-track { gap: 3px; }
 }
 
+/* ── 노트북 · 넓은 화면 (가로 위주) ───────────────────── */
+/* 900px 이상: 아래 탭 막대 → 위쪽 메뉴 막대, 내용 폭 최대 1200px, 기록 카드는 여러 줄,
+   긴 화면(홈·상세·폼·통계·프로필·설정)은 두 단, 입장 화면은 가로 티켓. 휴대폰 모양은 그대로 */
+.tabbar-brand, .tab-add-label { display: none; }
+.home-side, .dcol, .form-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+
+@media (min-width: 900px) {
+  :root { --topbar-h: 64px; }
+  html { scroll-padding-top: calc(var(--topbar-h) + 16px); } /* 키보드로 옮길 때 위쪽 막대에 가리지 않게 */
+  .app { max-width: 1264px; }
+  .view, body:not(.has-tabbar) .view, body.is-locked .view { padding: 0 32px 48px; }
+  body.has-tabbar:not(.is-locked) .app { padding-top: var(--topbar-h); }
+  .banner { margin: 12px 32px 0; }
+  .toasts { bottom: 28px; }
+  body:not(.has-tabbar) .toasts { bottom: 100px; } /* 폼: 저장 막대 위 */
+  body.is-locked .toasts { bottom: 28px; }
+
+  /* 위쪽 메뉴 막대: [로고] 홈 · 기록 · 통계 · 멤버 ………… [+ 새 기록] */
+  .tabbar {
+    top: 0; bottom: auto; max-width: none; height: var(--topbar-h); margin: 0;
+    display: flex; align-items: center; gap: 4px;
+    padding: 0 max(32px, calc((100% - 1200px) / 2));
+    background: color-mix(in srgb, var(--paper) 92%, transparent);
+    border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none;
+  }
+  .tabbar-brand {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 44px; margin-right: 24px;
+    color: var(--ink); font-size: 17px; font-weight: 900; letter-spacing: -.03em; text-decoration: none; white-space: nowrap;
+  }
+  .tabbar-brand .ico { width: 26px; height: 26px; color: var(--accent); }
+  .tab { flex-direction: row; gap: 6px; min-height: 40px; padding: 0 14px; border-radius: 10px; color: var(--ink-2); font-size: 14.5px; }
+  .tab .ico { width: 19px; height: 19px; }
+  .tab[aria-current="page"] { background: var(--surface-3); color: var(--ink); }
+  .tab[aria-current="page"]:not(.tab-add)::after { display: none; }
+  @media (hover: hover) { .tab:not(.tab-add):hover { background: color-mix(in srgb, var(--surface-3) 70%, transparent); color: var(--ink); } }
+  .tab-add, .tab-add[aria-current="page"] { order: 10; margin-left: auto; padding: 0; background: none; }
+  .tab-add-btn {
+    display: inline-flex; align-items: center; gap: 6px; width: auto; height: 42px; padding: 0 18px 0 14px;
+    border-radius: 10px; background: var(--accent); color: var(--on-accent); box-shadow: none; transform: none;
+  }
+  .tab-add-btn .ico { width: 18px; height: 18px; }
+  .tab-add-label { display: inline; font-size: 15px; font-weight: 800; }
+  .tab-add:active .tab-add-btn { transform: scale(.97); }
+  @media (hover: hover) { .tab-add:hover .tab-add-btn { background: var(--accent-strong); } }
+  .tab-add:focus-visible { outline: none; }
+  .tab-add:focus-visible .tab-add-btn { outline: 2.5px solid var(--focus); outline-offset: 2px; }
+  body.has-tabbar .appbar { top: var(--topbar-h); } /* 위쪽 막대 아래에 붙음 */
+
+  /* 기록 카드: 여러 줄 (1200px에서 3개, 좁은 노트북 창에서 2개) */
+  .rlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+
+  /* 홈: [요약 카드 | 종류 바로가기 · 이번 달 멤버] 위에, 최근 기록은 아래 여러 줄 */
+  .page-home { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px 20px; }
+  .page-home > :not(.cover):not(.home-side) { grid-column: 1 / -1; }
+  .page-home .kicker { display: none; } /* 위쪽 막대에 이름이 있음 */
+  .cover { display: flex; flex-direction: column; }
+  .cover-types { margin-top: auto; }
+
+  /* 기록 목록: 검색·정렬·필터를 한 줄로 */
+  .page-list .page-head .icon-btn { display: none; } /* 위쪽 막대의 '새 기록'과 같음 */
+  .page-list > .seg-type, .page-stats > .seg-type { width: 100%; max-width: 560px; }
+  .list-tools { flex-direction: row; align-items: center; gap: 16px; }
+  .search-wrap { flex: 1 1 0; max-width: 560px; }
+  .list-tools-row { flex: 1 1 0; }
+  .more-btn { width: auto; min-width: 280px; align-self: center; }
+
+  /* 상세: 왼쪽 [사진 · 요약], 오른쪽 [멤버 · 종류별 · 후기 …] */
+  .page-detail { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 24px; align-items: start; }
+  .page-detail > :not(.dcol) { grid-column: 1 / -1; }
+
+  /* 폼: 왼쪽 [기본 · 사진 · 멤버], 오른쪽 [종류별 · 후기 · 태그], 저장 막대는 오른쪽 아래 */
+  .form-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 20px; align-items: start; }
+  .form-body > :not(.form-col) { grid-column: 1 / -1; }
+  .savebar { display: flex; justify-content: flex-end; margin: 0; padding: 16px 0 18px; }
+  .savebar .btn { min-width: 140px; }
+  .savebar .save-btn { min-width: 260px; }
+  .page-picker { width: 100%; max-width: 1000px; margin-inline: auto; }
+  .picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  /* 통계: 카드 두 줄씩 (숫자 4칸은 한 줄 전체) */
+  .stats-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .stats-body > .tiles-4, .stats-body > .empty, .stats-body > .loading-state { grid-column: 1 / -1; }
+  .tiles-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+  /* 멤버: 목록을 여러 줄 카드로 */
+  .page-members .mlist.card { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; padding: 0; background: none; border: 0; box-shadow: none; }
+  .page-members .mlist li, .page-members .mlist li + li { border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow-1); }
+  .page-profile { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 8fr); gap: 16px 20px; }
+  .page-profile > .appbar, .page-profile > .home-recent { grid-column: 1 / -1; }
+  .ptile { justify-content: center; padding: 16px; }
+
+  /* 설정: 두 줄 */
+  .page-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; width: 100%; max-width: 1000px; margin-inline: auto; }
+  .page-settings > .appbar, .page-settings > .set-foot { grid-column: 1 / -1; }
+
+  /* 입장 화면: 가로 티켓 — 왼쪽 제목 · 세로 점선(위아래 반원 홈) · 오른쪽 입력 */
+  /* 입장 화면: 가로 티켓 — 왼쪽 제목 · 세로 점선(위아래 반원 홈) · 오른쪽 입력. 화면 높이에 딱 맞게 가운데 */
+  body.is-locked .view { padding-bottom: 0; }
+  .lock { min-height: 100vh; min-height: 100dvh; }
+  .lock-card { display: grid; grid-template-columns: minmax(0, 5fr) auto minmax(0, 6fr); max-width: 820px; }
+  .lock-head { justify-content: center; padding: 36px 32px; }
+  .lock-perf { margin: 14px 0; border-top: 0; border-left: 1px dashed var(--line-2); }
+  .lock-perf::before, .lock-perf::after { left: -10px; right: auto; width: 20px; height: 10px; border: 1px solid var(--line); }
+  .lock-perf::before { top: -15px; bottom: auto; border-top: 0; border-radius: 0 0 10px 10px; }
+  .lock-perf::after { top: auto; bottom: -15px; border-bottom: 0; border-radius: 10px 10px 0 0; }
+  .lock-body { justify-content: center; padding: 30px 32px 18px; }
+}
+
 /* ── 모션 줄이기 ────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

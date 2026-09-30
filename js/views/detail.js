@@ -212,18 +212,21 @@ function render(root, id, ctx) {
         h('button', { type: 'button', class: 'icon-btn', 'aria-label': '삭제', onClick: onDelete }, icon('trash')),
       ],
     }),
-    gallery(r, { start: galleryAt.get(r.id) || 0, onIndex: (i) => galleryAt.set(r.id, i) }),
-    hero,
-    members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null,
-    typeSecs,
-    review,
-    tags.length ? h('div', { class: 'dtags' }, tags.map((tg) => h('a', { class: 'tag', href: `#/records?tag=${encodeURIComponent(tg)}`, text: `#${tg}` }))) : null,
-    h('p', { class: 'dmeta' },
-      r.createdAt ? h('span', { text: `작성 ${fmtDateTime(r.createdAt)}` }) : null,
-      r.updatedAt && r.updatedAt !== r.createdAt ? h('span', { text: `수정 ${fmtDateTime(r.updatedAt)}` }) : null),
-    h('div', { class: 'dactions' },
-      h('a', { class: 'btn btn-soft', href: `#/edit/${encodeURIComponent(r.id)}` }, icon('edit'), h('span', { text: '수정하기' })),
-      h('button', { type: 'button', class: 'btn btn-ghost btn-danger-text', onClick: onDelete }, icon('trash'), h('span', { text: '삭제' }))));
+    // 넓은 화면에서는 두 단: 왼쪽 [사진 · 요약], 오른쪽 [나머지] (휴대폰에서는 차례대로 쌓임)
+    h('div', { class: 'dcol dcol-lead' },
+      gallery(r, { start: galleryAt.get(r.id) || 0, onIndex: (i) => galleryAt.set(r.id, i) }),
+      hero),
+    h('div', { class: 'dcol dcol-rest' },
+      members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null,
+      typeSecs,
+      review,
+      tags.length ? h('div', { class: 'dtags' }, tags.map((tg) => h('a', { class: 'tag', href: `#/records?tag=${encodeURIComponent(tg)}`, text: `#${tg}` }))) : null,
+      h('p', { class: 'dmeta' },
+        r.createdAt ? h('span', { text: `작성 ${fmtDateTime(r.createdAt)}` }) : null,
+        r.updatedAt && r.updatedAt !== r.createdAt ? h('span', { text: `수정 ${fmtDateTime(r.updatedAt)}` }) : null),
+      h('div', { class: 'dactions' },
+        h('a', { class: 'btn btn-soft', href: `#/edit/${encodeURIComponent(r.id)}` }, icon('edit'), h('span', { text: '수정하기' })),
+        h('button', { type: 'button', class: 'btn btn-ghost btn-danger-text', onClick: onDelete }, icon('trash'), h('span', { text: '삭제' })))));
   root.replaceChildren(view);
 }
 

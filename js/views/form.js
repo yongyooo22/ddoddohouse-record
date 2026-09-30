@@ -561,7 +561,10 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
   }
   function buildAll() {
     for (const k of Object.keys(builders)) sections[k] = builders[k]();
-    holder.body.replaceChildren(banner, sections.common, sections.photos, sections.members, sections.type, sections.review, sections.tags);
+    // 넓은 화면에서는 두 단: 왼쪽 [기본 · 사진 · 멤버], 오른쪽 [종류별 · 후기 · 태그] (휴대폰에서는 차례대로 쌓임)
+    holder.body.replaceChildren(banner,
+      h('div', { class: 'form-col' }, sections.common, sections.photos, sections.members),
+      h('div', { class: 'form-col' }, sections.type, sections.review, sections.tags));
   }
 
   // ── 초안 배너 ──
