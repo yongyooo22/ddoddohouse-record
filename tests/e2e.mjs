@@ -697,37 +697,40 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   check('보드게임 배지', (await text(`${cardOf('테라포밍 마스')} .badge`)) === '보드게임');
   check('머미 배지', (await text(`${cardOf('붉은 저택의 초대')} .badge`)) === '머미');
   check('방탈출 배지', (await text(`${cardOf('잊혀진 연구소')} .badge`)) === '방탈출');
-  check('보드게임 카드: 우승 도장·승자', (await text(`${cardOf('테라포밍 마스')} .stamp`)) === '우승' && (await text(`${cardOf('테라포밍 마스')} .ki-win`)).includes('영식'));
-  // 스포일러 머미 기록: 범인·배역(= 시나리오의 범인 캐릭터)은 카드에서 가림 → 탭하면 보임
+  // 티켓 카드: 장르 태그 → 제목(최대 두 줄) → 날짜 · 점선 아래 ★ 평점 · 한줄평
+  // 우승자·참여자·배역·범인·스포일러·남은 시간·누적 번호는 상세 화면에서
+  const bgCard = cardOf('테라포밍 마스');
+  check('카드 날짜: 2026.10.01 꼴 회색 글씨', /^\d{4}\.\d{2}\.\d{2}$/.test(await text(`${bgCard} .rcard-date`)), await text(`${bgCard} .rcard-date`));
+  check('카드 평점: ★ 4.5 (별 다섯 개 대신)', (await text(`${bgCard} .rcard-rating`)) === '4.5' &&
+    (await page.getAttribute(`${bgCard} .rcard-rating`, 'aria-label')) === '별점 4.5점' && !(await page.$('.page-list .rcard .stars')));
+  check('카드 한줄평', (await text(`${bgCard} .rcard-one`)) === '화성 개척은 역시 재밌다', await text(`${bgCard} .rcard-one`));
+  const bgText = await text(bgCard);
+  check('보드게임 카드: 우승 도장·승자·참여자는 상세로', !bgText.includes('우승') && !bgText.includes('영식') && !(await page.$(`${bgCard} .avatar`)), bgText);
+  check('카드 대표 사진 칸 72px 정사각형', await page.$eval(`${bgCard} .rcard-thumb`, (e) => { const b = e.getBoundingClientRect(); return Math.round(b.width) === 72 && Math.round(b.height) === 72; }));
+  check('카드 제목은 최대 두 줄', await page.$eval(`${bgCard} .rcard-title`, (e) => getComputedStyle(e).webkitLineClamp === '2'));
+  // 스포일러 머미 기록: 범인·배역·한줄평(스포일러)·후기는 카드에 아예 안 보임 — 가린 칸도 두지 않고 생략
   const mmCard = cardOf('붉은 저택의 초대');
-  check('머미 카드: 범인·배역 가림', !!(await page.$(`${mmCard} .ki-roles .spoiler:not(.is-revealed) .spoiler-btn:has-text("범인·배역 보기")`)) &&
-    (await page.$eval(`${mmCard} .ki-roles .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true' && getComputedStyle(e).filter.includes('blur'))));
-  // 버튼 옆의 흐린 글자를 눌러도 반응 없는 게 아니라 카드가 열림 (카드 링크가 받음)
-  const hitsCard = await page.$eval(`${mmCard} .ki-roles .spoiler-inline`, (el) => {
-    const btn = el.querySelector('.spoiler-btn').getBoundingClientRect();
+  const mmText = await text(mmCard);
+  check('스포일러 머미 카드: 범인·배역·한줄평 생략', !mmText.includes('범인') && !mmText.includes('세바스찬') && !mmText.includes('집사') &&
+    !(await page.$(`${mmCard} .spoiler`)) && !(await page.$(`${mmCard} .rcard-one`)), mmText);
+  check('스포일러 머미 카드: 평점은 보임', (await text(`${mmCard} .rcard-rating`)) === '4.0', await text(`${mmCard} .rcard-rating`));
+  check('방탈출 카드: 작은 성공 배지', (await text(`${cardOf('잊혀진 연구소')} .rbadge`)) === '탈출 성공');
+  check('실패 방탈출: 작은 실패 배지', (await text(`${cardOf('저주받은 인형의 집')} .rbadge`)) === '탈출 실패');
+  check('보드게임·머미 카드엔 결과 배지 없음', !(await page.$(`${bgCard} .rbadge`)) && !(await page.$(`${mmCard} .rbadge`)));
+  check('카드에 기울인 도장 없음', !(await page.$('.page-list .rcard .stamp')));
+  const erText = await text(cardOf('잊혀진 연구소'));
+  check('방탈출 카드: 남은 시간·힌트·브랜드·누적 번호는 상세로', !erText.includes('남김') && !erText.includes('힌트') && !erText.includes('키이스케이프') && !erText.includes('번째'), erText);
+  // 카드 아무 곳(사진·점선 아래)을 눌러도 기록이 열림 — 카드 링크가 받음
+  const hitStub = await page.$eval(`${bgCard} .rcard-stub`, (el) => {
+    el.scrollIntoView({ block: 'center' });
     const r = el.getBoundingClientRect();
-    const x = Math.min(r.right - 4, btn.right + 30);
-    const hit = document.elementFromPoint(x, btn.top + btn.height / 2);
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     return hit ? `${hit.tagName}.${hit.className}` : 'none';
   });
-  check('가린 글자 부분을 누르면 카드 링크로', /^A\.card-link/.test(hitsCard), hitsCard);
-  await page.click(`${mmCard} .ki-roles .spoiler-btn`);
-  await sleep(150);
-  const mmInfo = await text(`${mmCard} .rcard-info`);
-  check('머미 카드: 펼치면 범인·역할', mmInfo.includes('범인') && mmInfo.includes('연경') && mmInfo.includes('연경·집사 세바스찬') && page.url().endsWith('#/records'), mmInfo);
-  check('머미 카드: 범인 도주 도장', (await text(`${cardOf('붉은 저택의 초대')} .stamp`)) === '범인 도주');
-  const erInfo = await text(`${cardOf('잊혀진 연구소')} .rcard-info`);
-  check('방탈출 카드: 남은 시간·힌트·브랜드', erInfo.includes('12:34 남김') && erInfo.includes('힌트 2') && erInfo.includes('키이스케이프 홍대점'), erInfo);
-  check('방탈출 카드: 누적 번호', (await text(`${cardOf('잊혀진 연구소')} .ordinal`)) === '2번째 방탈출' && (await text(`${cardOf('저주받은 인형의 집')} .ordinal`)) === '1번째 방탈출');
-  check('실패 방탈출: 탈출 실패 도장', (await text(`${cardOf('저주받은 인형의 집')} .stamp`)) === '탈출 실패');
+  check('점선 아래를 눌러도 카드 링크로', /^A\.card-link/.test(hitStub), hitStub);
+  await page.evaluate(() => scrollTo(0, 0));
   const groups = await texts('.page-list .mgroup-head .mg-month');
   check('월별 그룹 2개', groups.length === 2, groups.join(','));
-  // 스포일러 한줄평: 목록에서 탭하면 이동 없이 보임
-  const oneSp = `${cardOf('붉은 저택의 초대')} .rcard-line .spoiler`;
-  check('목록: 스포일러 한줄평 가림', !!(await page.$(`${oneSp}:not(.is-revealed)`)));
-  await page.click(`${oneSp} .spoiler-btn`);
-  await sleep(200);
-  check('탭하면 목록에서 바로 보임', !!(await page.$(`${oneSp}.is-revealed`)) && page.url().endsWith('#/records'), page.url());
   await noOverflow('기록 목록');
   await shot('15-list');
 
@@ -943,13 +946,34 @@ await step('통계 (생성한 데이터와 일치)', async () => {
 
 await step('홈 요약 · 멤버 프로필', async () => {
   await tab('home', '.page-home');
-  check('총 4개', (await text('.cover-big')) === '4');
-  check('이번 달 3개', (await text('.cover-pill')) === '이번 달 3개');
-  check('종류별 1·1·2', JSON.stringify(await texts('.cover-tnum')) === '["1","1","2"]', JSON.stringify(await texts('.cover-tnum')));
+  // 낮은 요약 띠: 전체 · 이번 달 · 종류별 (큰 표지·비율 막대·종류별 최근 날짜 없음)
+  const sumOf = () => page.$$eval('.page-home .summary .sum-item', (els) => els.map((e) => `${e.querySelector('.sum-label').textContent} ${e.querySelector('.sum-value').textContent}`));
+  const sums = await sumOf();
+  check('요약 띠: 전체 4회 · 이번 달 3회 · 보드게임 1회 · 머미 1회 · 방탈출 2회',
+    JSON.stringify(sums) === JSON.stringify(['전체 4회', '이번 달 3회', '보드게임 1회', '머미 1회', '방탈출 2회']), JSON.stringify(sums));
+  check('큰 표지·이번 달 멤버 카드는 홈에 없음', !(await page.$('.page-home .cover')) && !(await page.$('.page-home .mate')));
+  const mobRows = await page.$eval('.page-home .summary', (e) => new Set([...e.querySelectorAll('.sum-item')].map((x) => Math.round(x.getBoundingClientRect().top))).size);
+  check('휴대폰: 요약 띠는 두 줄', mobRows === 2, String(mobRows));
+  check('휴대폰: 최근 기록 한 칸', await page.evaluate(() => {
+    const c = [...document.querySelectorAll('.page-home .rlist > .rcard')];
+    return c.length > 1 && c[1].getBoundingClientRect().top >= c[0].getBoundingClientRect().bottom;
+  }));
+  check('최근 기록이 요약 띠 바로 아래', await page.$eval('.page-home .summary', (e) => !!(e.nextElementSibling && e.nextElementSibling.matches('.home-recent'))));
   check('최근 기록 4개', (await page.$$('.page-home .rcard')).length === 4);
-  check('이번 달 함께한 멤버 3번', (await text('.mate-count')) === '3번 함께했어요', await text('.mate-count'));
+  check('‘전체 보기’ → 기록 목록', (await page.getAttribute('.page-home .home-recent .link-more', 'href')) === '#/records');
   await noOverflow('홈');
   await shot('23-home');
+  // 요약 띠의 종류 칸 → 그 종류 목록, 전체 칸 → 전체 목록
+  await page.click('.page-home .sum-item:has(.sum-label:text-is("방탈출")) .sum-link');
+  const erOnly = await until(async () => { const x = await cardTitles(); return x.length === 2 && x; });
+  check('요약 띠 방탈출 → 방탈출 2개', !!erOnly && (await text('.page-list .seg-type .seg-input:checked + .seg-item')) === '방탈출', String(await cardTitles()));
+  await tab('home', '.page-home');
+  await page.click('.page-home .sum-item:has(.sum-label:text-is("전체")) .sum-link');
+  check('요약 띠 전체 → 4개', !!(await until(async () => { const x = await cardTitles(); return x.length === 4 && x; })), String(await cardTitles()));
+  // 이번 달 가장 많이 함께한 멤버는 멤버 화면에서 (집계는 그대로)
+  await tab('members', '.page-members');
+  check('멤버 화면: 이번 달 가장 많이 함께한 멤버 3번', (await text('.page-members .mate-count')) === '3번 함께했어요', await text('.page-members .mate-count'));
+  check('멤버 화면에 이번 달 멤버 카드는 하나만', (await page.$$('.page-members .mate')).length === 1);
   await go(`#/member/${encodeURIComponent(ids['연경'])}`, '.page-profile');
   const tiles = await texts('.page-profile .ptile');
   check('프로필: 보드게임 0승 · 머미 범인 1번 · 방탈출 50%', tiles[0].includes('1회') && tiles[0].includes('0승') && tiles[1].includes('범인 1번') && tiles[2].includes('2회') && tiles[2].includes('성공률 50%'), tiles.join(' | '));
@@ -1166,7 +1190,7 @@ await step('401 → 키 삭제 후 잠금, 링크 붙여넣기로 다시 열기'
   await page.click('.lock-form button[type="submit"]');
   await page.waitForSelector('.page-home', { timeout: 8000 });
   check('링크 붙여넣기로 열림', (await localKey()) === SECRET);
-  check('데이터 다시 표시', (await text('.cover-big')) === '4');
+  check('데이터 다시 표시', (await text('.page-home .sum-total .sum-num')) === '4');
 });
 
 await step('잠금 해제 정보 지우기', async () => {
@@ -1209,7 +1233,7 @@ const draftNow = () => page.evaluate(() => JSON.parse(localStorage.getItem('ddh:
 
 await step('보안: 다른 사이트의 키 없는 요청(<img>·preflight)으로 잠기지 않음', async () => {
   await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
-  await page.waitForSelector('.page-home .cover', { timeout: 8000 });
+  await page.waitForSelector('.page-home .summary', { timeout: 8000 });
   const before = await failCount();
   // 다른 출처(포트가 다른 서버)의 악성 페이지: 방문자 브라우저로 키 없는 요청 25번 + 키를 붙인 교차 출처 fetch(→ preflight)
   const http = await import('node:http');
@@ -1236,7 +1260,7 @@ await step('보안: 다른 사이트의 키 없는 요청(<img>·preflight)으�
 });
 
 await step('보안: 틀린 링크를 열어도 쓰던 코드·기기 사본 유지, 새 코드는 확인 뒤에만 교체', async () => {
-  await page.waitForSelector('.page-home .cover');
+  await page.waitForSelector('.page-home .summary');
   const cacheBefore = await page.evaluate(() => !!localStorage.getItem('ddh:cache'));
   await allowing([/status of 401/], async () => {
     await page.goto('about:blank');
@@ -1253,8 +1277,8 @@ await step('보안: 틀린 링크를 열어도 쓰던 코드·기기 사본 유�
   await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
   check('새 코드 확인 뒤 교체 안내', !!(await toastSeen(/새 코드로 열었어요/, 6000)), String(await texts('.toast')));
   check('새 코드 저장', (await localKey()) === SECRET);
-  await page.waitForSelector('.page-home .cover', { timeout: 8000 });
-  check('데이터 표시', Number(await text('.cover-big')) > 0);
+  await page.waitForSelector('.page-home .summary', { timeout: 8000 });
+  check('데이터 표시', Number(await text('.page-home .sum-total .sum-num')) > 0);
 });
 
 await step('데이터: 응답만 못 받은 새 기록을 고쳐서 다시 저장해도 고친 내용이 남음', async () => {
@@ -1588,7 +1612,7 @@ await step('첫 로딩: 빈 화면 대신 ‘불러오는 중’, 새 기록 폼
   await ps.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
   await ps.waitForSelector('.page-home .loading-state', { timeout: 8000 });
   check('홈: 불러오는 중 표시', true);
-  check('홈: 0개 표지·멤버 등록 안내·빈 안내 없음', !(await ps.$('.page-home .cover')) && !(await ps.$('.page-home .tip')) && !(await ps.$('.page-home .empty')));
+  check('홈: 0회 요약 띠·멤버 등록 안내·빈 안내 없음', !(await ps.$('.page-home .summary')) && !(await ps.$('.page-home .tip')) && !(await ps.$('.page-home .empty')));
   await ps.screenshot({ path: path.join(SHOTS, 'light-29-first-load.png') });
   await ps.click('#tabbar [data-tab="members"]');
   check('멤버: 불러오는 중 (멤버 없음 안내 아님)', !!(await ps.waitForSelector('.page-members .loading-state', { timeout: 5000 })) && !(await ps.$('.page-members .empty')));
@@ -2480,6 +2504,174 @@ await step('사진: 다크 모드 · 320px · 가로 스크롤 없음', async ()
 });
 
 await cp.close();
+
+// ── 노트북(가로) · 태블릿: 사이드바와 여러 단 배치 ───────────────
+const dc = await newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false });
+page = await dc.newPage();
+watch(page, '[desktop] ');
+theme = 'light';
+/** 두 요소가 나란히(같은 줄, a 가 왼쪽) 놓였는지 */
+const sideBySide = (a, b) => page.evaluate(([sa, sb]) => {
+  const x = document.querySelector(sa);
+  const y = document.querySelector(sb);
+  if (!x || !y) return false;
+  const p = x.getBoundingClientRect();
+  const q = y.getBoundingClientRect();
+  return Math.abs(p.top - q.top) < 2 && p.right <= q.left && p.width > 0 && q.width > 0;
+}, [a, b]);
+
+await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크롤 없음', async () => {
+  await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
+  await page.waitForSelector('.page-home .summary', { timeout: 8000 });
+  const side = await page.$eval('#tabbar', (e) => { const b = e.getBoundingClientRect(); return { l: b.left, w: b.width, h: b.height, dir: getComputedStyle(e).flexDirection }; });
+  check('메뉴가 왼쪽 사이드바 (화면 높이 전체)', side.l === 0 && side.w >= 200 && side.w <= 300 && side.h === 900 && side.dir === 'column', JSON.stringify(side));
+  check('사이드바: 이름 · 새 기록 버튼 · 설정', await page.isVisible('#tabbar .side-brand') && await page.isVisible('#tabbar .side-cta') && await page.isVisible('#tabbar .tab-settings') && !(await page.isVisible('#tabbar .tab-add')));
+  check('본문이 사이드바 오른쪽에서 시작', await page.$eval('#view', (e) => e.getBoundingClientRect().left >= 248));
+  // 홈: 낮은 요약 띠(80~100px) 바로 아래 최근 기록 — 첫 줄 카드가 스크롤 없이 다 보임
+  const strip = await page.$eval('.page-home .summary', (e) => {
+    const b = e.getBoundingClientRect();
+    return { h: Math.round(b.height), rows: new Set([...e.querySelectorAll('.sum-item')].map((x) => Math.round(x.getBoundingClientRect().top))).size };
+  });
+  check('홈: 요약 띠는 한 줄 · 높이 80~100px', strip.h >= 80 && strip.h <= 100 && strip.rows === 1, JSON.stringify(strip));
+  check('홈: 이번 달 멤버 카드는 멤버 화면으로 (홈엔 없음)', !(await page.$('.page-home .mate')));
+  check('홈: 최근 기록 세 칸', await sideBySide('.page-home .rlist > .rcard:nth-child(1)', '.page-home .rlist > .rcard:nth-child(2)') &&
+    await sideBySide('.page-home .rlist > .rcard:nth-child(2)', '.page-home .rlist > .rcard:nth-child(3)'));
+  const firstRow = await page.evaluate(() => {
+    scrollTo(0, 0);
+    return Math.max(...[...document.querySelectorAll('.page-home .rlist > .rcard')].slice(0, 3).map((e) => e.getBoundingClientRect().bottom));
+  });
+  check('홈: 최근 기록 첫 줄이 스크롤 없이 다 보임 (1440×900)', firstRow > 0 && firstRow <= 900, String(firstRow));
+  check('홈 머리의 톱니 버튼은 숨김 (설정은 사이드바에)', !(await page.isVisible('.page-home .home-head .icon-btn')));
+  // 긴 제목·긴 한줄평: 제목은 두 줄까지 말줄임, 한줄평은 점선 아래 두 줄까지 — 서로 겹치지 않고 같은 줄 카드는 점선 높이가 같음
+  const longRec = (await api('POST', '/api/records', {
+    record: {
+      type: 'escaperoom', date: TODAY, rating: 3.5, members: [ids['연경']], er: { cleared: false },
+      title: '아주아주 긴 제목을 가진 방탈출 테마 — 이름이 두 줄을 훌쩍 넘어가면 카드에서 어떻게 보이는지 확인하려는 기록',
+      oneLiner: '한줄평도 길게 써 보면 카드 아래쪽 칸에서 두 줄까지만 보이고 나머지는 말줄임표로 줄어드는지 확인하려고 일부러 길게 적은 문장',
+    },
+  })).data.record;
+  await page.reload();
+  await page.waitForSelector(`.page-home .rcard:has(a[href="#/record/${encodeURIComponent(longRec.id)}"])`, { timeout: 8000 });
+  const lay = await page.$$eval('.page-home .rlist > .rcard', (cards) => cards.slice(0, 3).map((c) => {
+    const r = (s) => { const e = c.querySelector(s); return e ? e.getBoundingClientRect() : null; };
+    const title = c.querySelector('.rcard-title');
+    const lh = parseFloat(getComputedStyle(title).lineHeight);
+    return {
+      card: c.getBoundingClientRect(), title: r('.rcard-title'), date: r('.rcard-date'), thumb: r('.rcard-thumb'), main: r('.rcard-main'), stub: r('.rcard-stub'), one: r('.rcard-one'),
+      titleLines: Math.round(title.getBoundingClientRect().height / lh), clipped: title.scrollHeight > title.clientHeight + 1,
+    };
+  }));
+  const L = lay[0];
+  check('긴 제목: 두 줄에서 말줄임', L.titleLines === 2 && L.clipped, JSON.stringify({ lines: L.titleLines, clipped: L.clipped }));
+  check('긴 제목·날짜·한줄평이 겹치지 않음', lay.every((x) => x.title.bottom <= x.date.top + 1 && x.main.bottom <= x.stub.top + 1 && x.thumb.bottom <= x.stub.top + 1 &&
+    (!x.one || (x.one.top >= x.stub.top && x.one.bottom <= x.card.bottom + 1))), JSON.stringify(lay.map((x) => [x.title.bottom, x.date.top, x.main.bottom, x.stub.top, x.one && x.one.bottom, x.card.bottom])));
+  check('같은 줄 카드는 점선 높이가 같음', lay.every((x) => Math.abs(x.stub.top - lay[0].stub.top) < 1.5), JSON.stringify(lay.map((x) => x.stub.top)));
+  check('긴 기록이 있어도 첫 줄이 화면 안', Math.max(...lay.map((x) => x.card.bottom)) <= 900, String(Math.max(...lay.map((x) => x.card.bottom))));
+  await noOverflow('1440 홈');
+  await shot('desktop-home');
+  await api('DELETE', `/api/records?id=${encodeURIComponent(longRec.id)}`);
+  await page.reload();
+  await page.waitForSelector('.page-home .summary', { timeout: 8000 });
+
+  await page.click('#tabbar [data-tab="records"]');
+  await page.waitForSelector('.page-list .rcard');
+  check('목록: 필터가 왼쪽에 늘 보임 (필터 버튼 없음)', await page.isVisible('.page-list .filter-panel') && !(await page.isVisible('.page-list .list-tools button[aria-controls="list-filter"]')));
+  check('목록: 필터 | 결과 두 단', await page.evaluate(() => {
+    const f = document.querySelector('.page-list .filter-panel').getBoundingClientRect();
+    const r = document.querySelector('.page-list .list-results').getBoundingClientRect();
+    return f.right <= r.left;
+  }));
+  const chipSel = '.page-list .filter-panel .chip-member:has(.chip-label:text-is("영식"))';
+  await page.click(chipSel);
+  const found = await until(async () => { const t = await text('.page-list .list-count'); return t.includes('찾았어요') && t; }, 3000);
+  const shown = (await cardTitles()).length;
+  const expected = (await api('GET', '/api/data')).data.records.filter((r) => (r.members || []).includes(ids['영식'])).length;
+  check('필터 칩을 누르면 바로 걸러짐', !!found && (await page.getAttribute(chipSel, 'aria-pressed')) === 'true' && shown === expected, `${found} · 카드 ${shown} / 기대 ${expected}`);
+  await page.click('.page-list .filter-panel button:has-text("필터 초기화")');
+  await noOverflow('1440 목록');
+  await shot('desktop-list');
+
+  await go(`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail');
+  check('상세: (사진·요약) | (기록) 두 단', await sideBySide('.page-detail .detail-col-a', '.page-detail .detail-col-b'));
+  check('상세: 사진이 왼쪽 단 맨 위', !!(await page.$('.page-detail .detail-col-a > .dgallery:first-child')));
+  await noOverflow('1440 상세');
+  await shot('desktop-detail');
+
+  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
+  check('폼: 두 단', await sideBySide('.page-form .form-col-a', '.page-form .form-col-b'));
+  check('폼에서도 사이드바는 그대로 (휴대폰만 숨김)', await page.$eval('#tabbar', (e) => e.hidden && e.getBoundingClientRect().width > 0));
+  check('저장 버튼이 오른쪽 아래에 보임', await page.$eval('.page-form .save-btn', (e) => { const b = e.getBoundingClientRect(); return b.bottom <= innerHeight && b.right > innerWidth - 120; }));
+  await noOverflow('1440 폼');
+  await shot('desktop-form');
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await sleep(150);
+
+  await go('#/stats', '.page-stats');
+  check('통계: 숫자 타일이 한 줄 (전체·이번 달 | 종류별)', await sideBySide('.page-stats .stats-body > .tiles-2', '.page-stats .stats-body > .tiles-3'));
+  check('통계: 월별 · 요일별 차트가 나란히', await sideBySide('.page-stats .stats-body > .chart-card:nth-child(3)', '.page-stats .stats-body > .chart-card:nth-child(4)'));
+  await noOverflow('1440 통계');
+  await shot('desktop-stats');
+  for (const seg of ['보드게임', '머미', '방탈출']) {
+    await page.click(`.page-stats .seg-type .seg-item:has-text("${seg}")`);
+    await noOverflow(`1440 통계 ${seg}`);
+  }
+  await page.click('.page-stats .seg-type .seg-item:has-text("전체")');
+
+  await page.click('#tabbar [data-tab="members"]');
+  await page.waitForSelector('.page-members .mlist');
+  check('멤버: 카드 격자', await sideBySide('.page-members .mlist li:nth-child(1)', '.page-members .mlist li:nth-child(2)'));
+  check('멤버 추가 버튼에 글자', (await text('.page-members .page-head button[aria-label="멤버 추가"]')) === '멤버 추가');
+  await noOverflow('1440 멤버');
+  await go(`#/member/${encodeURIComponent(ids['영식'])}`, '.page-profile');
+  check('프로필: 소개 | 종류별 타일 나란히', await sideBySide('.page-profile > .phero', '.page-profile > .ptiles'));
+  await noOverflow('1440 프로필');
+
+  await page.click('#tabbar .tab-settings');
+  await page.waitForSelector('.page-settings');
+  check('설정: 사이드바에서 열림 · 표시', (await page.getAttribute('#tabbar .tab-settings', 'aria-current')) === 'page');
+  check('설정: 두 단', await sideBySide('.page-settings .set-col:nth-child(1)', '.page-settings .set-col:nth-child(2)'));
+  await noOverflow('1440 설정');
+  await shot('desktop-settings');
+
+  await page.click('#tabbar .side-cta');
+  await page.waitForSelector('.page-picker');
+  check('새 기록: 세 종류가 한 줄', await sideBySide('.page-picker .pick.t-boardgame', '.page-picker .pick.t-murdermystery'));
+  await noOverflow('1440 종류 선택');
+});
+
+await step('태블릿 1024px: 왼쪽 레일 · 가로 스크롤 없음', async () => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await go('#/', '.page-home');
+  const rail = await page.$eval('#tabbar', (e) => e.getBoundingClientRect().width);
+  check('메뉴가 좁은 레일', rail >= 80 && rail <= 100, String(rail));
+  check('레일에도 설정', await page.isVisible('#tabbar .tab-settings'));
+  for (const [hash, sel] of [['#/', '.page-home'], ['#/records', '.page-list'], [`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail'], [`#/edit/${encodeURIComponent(ids.mm)}`, '.page-form'], ['#/stats', '.page-stats'], ['#/settings', '.page-settings']]) {
+    await go(hash, sel);
+    await noOverflow(`1024 ${hash}`);
+    if (sel === '.page-form') { await page.click('.page-form .savebar button:has-text("취소")'); await sleep(150); }
+  }
+  await go('#/records', '.page-list');
+  check('1024: 필터는 버튼으로 여닫음', await page.isVisible('.page-list .list-tools button[aria-controls="list-filter"]'));
+  await page.setViewportSize({ width: 1440, height: 900 });
+});
+
+await step('노트북 잠금 화면: 표지 | 입장 코드 두 칸', async () => {
+  const lc = await newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false });
+  const lp = await lc.newPage();
+  watch(lp, '[desktop-lock] ');
+  await lp.goto(`${BASE}/`);
+  await lp.waitForSelector('.lock #lock-key');
+  check('메뉴 숨김', await lp.$eval('#tabbar', (e) => e.getBoundingClientRect().width === 0));
+  check('표지와 입장 코드가 나란히', await lp.evaluate(() => {
+    const a = document.querySelector('.lock-brand').getBoundingClientRect();
+    const b = document.querySelector('.lock-body').getBoundingClientRect();
+    return Math.abs(a.top - b.top) < 2 && a.right <= b.left;
+  }));
+  await lp.screenshot({ path: path.join(SHOTS, 'desktop-lock.png') });
+  await lc.close();
+});
+
+await dc.close();
 
 // ── 마무리 ──────────────────────────────────────────────────
 currentStep = '전체';

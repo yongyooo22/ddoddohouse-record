@@ -93,6 +93,7 @@ export function mount(root, ctx) {
     const tags = allTags().slice(0, 30);
     for (const tg of filters.tags) if (!tags.includes(tg)) tags.unshift(tg);
     panel.replaceChildren(
+      h('p', { class: 'fp-title', text: '필터' }),
       h('div', { class: 'fp-group' },
         h('p', { class: 'fp-label', text: '함께한 멤버 (모두 포함)' }),
         mems.length
@@ -165,7 +166,7 @@ export function mount(root, ctx) {
     } else {
       const shown = list.slice(0, limit);
       if (filters.sort === 'rating') {
-        out.push(h('div', { class: 'rlist' }, shown.map((r) => recordCard(r, { showMonth: true }))));
+        out.push(h('div', { class: 'rlist' }, shown.map((r) => recordCard(r))));
       } else {
         let cur = null;
         let group = null;
@@ -201,7 +202,7 @@ export function mount(root, ctx) {
   const view = h('div', { class: 'page page-list' },
     h('header', { class: 'page-head' },
       h('h1', { class: 'page-title', text: '기록' }),
-      h('a', { class: 'icon-btn icon-btn-soft', href: '#/new', 'aria-label': '새 기록' }, icon('plus'))),
+      h('a', { class: 'icon-btn icon-btn-soft head-add', href: '#/new', 'aria-label': '새 기록' }, icon('plus'), h('span', { class: 'head-label', text: '새 기록' }))),
     seg,
     h('div', { class: 'list-tools' },
       h('div', { class: 'search-wrap' }, icon('search', 'search-ico'), search),

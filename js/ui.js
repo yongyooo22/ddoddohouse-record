@@ -160,21 +160,6 @@ export function avatar(id, size = 'md') {
   return h('span', { class: `av av-${size} mc-${m.color}`, 'aria-hidden': 'true' }, m.missing ? '?' : (m.emoji || initial(m.name)));
 }
 
-export function avatarRow(ids, { max = 6, size = 'sm' } = {}) {
-  const list = Array.isArray(ids) ? ids : [];
-  const names = list.map((id) => memberInfo(id).name);
-  const row = h('span', { class: 'av-row', role: 'img', 'aria-label': names.length ? `함께한 멤버: ${names.join(', ')}` : '멤버 없음' });
-  list.slice(0, max).forEach((id) => row.appendChild(avatar(id, size)));
-  if (list.length > max) row.appendChild(h('span', { class: `av av-${size} av-more`, 'aria-hidden': 'true', text: `+${list.length - max}` }));
-  return row;
-}
-
-/** 아바타 + 이름 */
-export function memberTag(id, { size = 'xs', extra } = {}) {
-  const m = memberInfo(id);
-  return h('span', { class: `mtag${m.missing ? ' is-gone' : ''}` }, avatar(m, size), h('span', { class: 'mtag-name', text: m.name }), extra || null);
-}
-
 // ── 별점 (읽기 전용) ──
 function glyphFor(kind) {
   return kind === 'dot' ? dotShape : starShape;

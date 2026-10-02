@@ -367,6 +367,7 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
     one.addEventListener('input', () => { m.oneLiner = one.value; changed(); });
 
     return h('section', { class: `card fsec fsec-main ${t.cls}` },
+      h('div', { class: 'fsec-head' }, h('span', { class: 'fsec-ico', 'aria-hidden': 'true' }, icon(t.icon)), h('h2', { class: 'fsec-title', text: '기본 정보' })),
       h('div', { class: 'fsec-body' },
         field(t.titleLabel, titleInput, { counter: counterFor(titleInput, LIMITS.title) }),
         h('datalist', { id: listId }, titles.slice(0, 80).map((x) => h('option', { value: x }))),
@@ -472,8 +473,8 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
           if (saved) { toggle(saved.id, true); rerender('members'); }
         },
       }, icon('plus'), h('span', { class: 'chip-label', text: '새 멤버' })));
-    return h('section', { class: 'card fsec' },
-      h('div', { class: 'fsec-head' }, h('h2', { class: 'fsec-title', text: '함께한 멤버' }), count),
+    return h('section', { class: `card fsec ${t.cls}` },
+      h('div', { class: 'fsec-head' }, h('span', { class: 'fsec-ico fsec-ico-soft', 'aria-hidden': 'true' }, icon('users')), h('h2', { class: 'fsec-title', text: '함께한 멤버' }), count),
       h('div', { class: 'fsec-body' }, chips,
         !mems.length ? h('p', { class: 'fhint', text: '아직 등록된 멤버가 없어요. ‘새 멤버’로 바로 추가할 수 있어요.' }) : null));
   }
@@ -482,8 +483,9 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
     const builder = type === 'boardgame' ? bgSection : type === 'murdermystery' ? mmSection : erSection;
     const body = builder(m, ctl);
     const title = type === 'boardgame' ? '게임 결과' : type === 'murdermystery' ? '머더미스터리 기록' : '방탈출 기록';
+    const ic = type === 'boardgame' ? 'trophy' : type === 'murdermystery' ? 'mask' : 'clock';
     const secEl = h('section', { class: `card fsec fsec-type ${t.cls}` },
-      h('div', { class: 'fsec-head' }, h('span', { class: 'fsec-ico', 'aria-hidden': 'true' }, icon(t.icon)), h('h2', { class: 'fsec-title', text: title })),
+      h('div', { class: 'fsec-head' }, h('span', { class: 'fsec-ico fsec-ico-soft', 'aria-hidden': 'true' }, icon(ic)), h('h2', { class: 'fsec-title', text: title })),
       body);
     secEl.paintOrdinal = body.paintOrdinal;
     return secEl;
@@ -493,8 +495,8 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
     const ta = h('textarea', { class: 'input textarea', rows: '6', maxlength: String(LIMITS.review), placeholder: '자유롭게 후기를 남겨 주세요. 스포일러가 있다면 아래 스위치를 켜 주세요.' });
     ta.value = m.review;
     ta.addEventListener('input', () => { m.review = ta.value; changed(); });
-    return h('section', { class: 'card fsec' },
-      h('div', { class: 'fsec-head' }, h('h2', { class: 'fsec-title', text: '후기' }), counterFor(ta, LIMITS.review)),
+    return h('section', { class: `card fsec ${t.cls}` },
+      h('div', { class: 'fsec-head' }, h('span', { class: 'fsec-ico fsec-ico-soft', 'aria-hidden': 'true' }, icon('note')), h('h2', { class: 'fsec-title', text: '후기' }), counterFor(ta, LIMITS.review)),
       h('div', { class: 'fsec-body' },
         ta,
         switchRow({
@@ -538,8 +540,8 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
     input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); add(); } });
     paintCount();
     paintChips();
-    return h('section', { class: 'card fsec' },
-      h('div', { class: 'fsec-head' }, h('h2', { class: 'fsec-title', text: '태그' }), count),
+    return h('section', { class: `card fsec ${t.cls}` },
+      h('div', { class: 'fsec-head' }, h('span', { class: 'fsec-ico fsec-ico-soft', 'aria-hidden': 'true' }, icon('tag')), h('h2', { class: 'fsec-title', text: '태그' }), count),
       h('div', { class: 'fsec-body' }, chipsBox,
         h('div', { class: 'tag-add' }, input, h('button', { type: 'button', class: 'btn btn-soft', onClick: add }, '추가'))));
   }
@@ -561,7 +563,10 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
   }
   function buildAll() {
     for (const k of Object.keys(builders)) sections[k] = builders[k]();
-    holder.body.replaceChildren(banner, sections.common, sections.photos, sections.members, sections.type, sections.review, sections.tags);
+    // 넓은 화면은 두 단: (기본 정보·사진·멤버) | (종류별 기록·후기·태그). 휴대폰은 같은 순서로 한 줄
+    holder.body.replaceChildren(banner,
+      h('div', { class: 'form-col form-col-a' }, sections.common, sections.photos, sections.members),
+      h('div', { class: 'form-col form-col-b' }, sections.type, sections.review, sections.tags));
   }
 
   // ── 초안 배너 ──

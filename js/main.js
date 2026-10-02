@@ -21,7 +21,7 @@ const tabbar = document.getElementById('tabbar');
 const banner = document.getElementById('banner');
 
 // ── 테마 ──
-const THEME_COLORS = { light: '#F7F4EE', dark: '#17161A' };
+const THEME_COLORS = { light: '#F4F1EC', dark: '#131216' };
 function applyTheme() {
   const t = store.getTheme();
   const root = document.documentElement;
@@ -162,6 +162,7 @@ function lock(message) {
   tabbar.hidden = true;
   banner.hidden = true;
   document.body.classList.add('is-locked');
+  document.body.classList.remove('is-app');
   document.title = APP_NAME;
   if (location.hash && location.hash !== '#/') history.replaceState(null, '', `${location.pathname}#/`);
   viewEl.replaceChildren();
@@ -185,7 +186,7 @@ const ROUTES = [
   [/^\/stats$/, 'stats', statsView, 'stats', '통계'],
   [/^\/members$/, 'members', membersView, 'members', '멤버'],
   [/^\/member\/([^/]+)$/, 'member', membersView, 'members', '멤버'],
-  [/^\/settings$/, 'settings', settingsView, 'home', '설정'],
+  [/^\/settings$/, 'settings', settingsView, 'settings', '설정'],
 ];
 
 function parseHash() {
@@ -209,6 +210,8 @@ function route() {
   if (!store.getKey()) { lock(); return; }
   start();
   document.body.classList.remove('is-locked');
+  // 넓은 화면에서는 폼에서도 사이드바를 그대로 보여 주기 위한 표시 (잠금·첫 로딩 중에는 없음)
+  document.body.classList.add('is-app');
 
   if (entryId) scrollMem.set(entryId, window.scrollY);
   const st = history.state;

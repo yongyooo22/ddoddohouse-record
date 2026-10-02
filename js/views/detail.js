@@ -204,6 +204,8 @@ function render(root, id, ctx) {
     : null;
 
   const tags = arr(r.tags);
+  const photos = gallery(r, { start: galleryAt.get(r.id) || 0, onIndex: (i) => galleryAt.set(r.id, i) });
+  // 휴대폰은 한 줄로, 넓은 화면은 (사진·요약·멤버) | (종류별 기록·후기) 두 단으로
   const view = h('div', { class: ['page', 'page-detail', t ? t.cls : ''] },
     appBar({
       title: t ? t.label : '기록', back: '#/records',
@@ -212,18 +214,21 @@ function render(root, id, ctx) {
         h('button', { type: 'button', class: 'icon-btn', 'aria-label': '삭제', onClick: onDelete }, icon('trash')),
       ],
     }),
-    gallery(r, { start: galleryAt.get(r.id) || 0, onIndex: (i) => galleryAt.set(r.id, i) }),
-    hero,
-    members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null,
-    typeSecs,
-    review,
-    tags.length ? h('div', { class: 'dtags' }, tags.map((tg) => h('a', { class: 'tag', href: `#/records?tag=${encodeURIComponent(tg)}`, text: `#${tg}` }))) : null,
-    h('p', { class: 'dmeta' },
-      r.createdAt ? h('span', { text: `작성 ${fmtDateTime(r.createdAt)}` }) : null,
-      r.updatedAt && r.updatedAt !== r.createdAt ? h('span', { text: `수정 ${fmtDateTime(r.updatedAt)}` }) : null),
-    h('div', { class: 'dactions' },
-      h('a', { class: 'btn btn-soft', href: `#/edit/${encodeURIComponent(r.id)}` }, icon('edit'), h('span', { text: '수정하기' })),
-      h('button', { type: 'button', class: 'btn btn-ghost btn-danger-text', onClick: onDelete }, icon('trash'), h('span', { text: '삭제' }))));
+    h('div', { class: ['detail-grid', photos ? 'has-photos' : 'is-plain'] },
+      h('div', { class: 'detail-col detail-col-a' },
+        photos,
+        hero,
+        members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null),
+      h('div', { class: 'detail-col detail-col-b' },
+        typeSecs,
+        review,
+        tags.length ? h('div', { class: 'dtags' }, tags.map((tg) => h('a', { class: 'tag', href: `#/records?tag=${encodeURIComponent(tg)}`, text: `#${tg}` }))) : null,
+        h('p', { class: 'dmeta' },
+          r.createdAt ? h('span', { text: `작성 ${fmtDateTime(r.createdAt)}` }) : null,
+          r.updatedAt && r.updatedAt !== r.createdAt ? h('span', { text: `수정 ${fmtDateTime(r.updatedAt)}` }) : null),
+        h('div', { class: 'dactions' },
+          h('a', { class: 'btn btn-soft', href: `#/edit/${encodeURIComponent(r.id)}` }, icon('edit'), h('span', { text: '수정하기' })),
+          h('button', { type: 'button', class: 'btn btn-ghost btn-danger-text', onClick: onDelete }, icon('trash'), h('span', { text: '삭제' }))))));
   root.replaceChildren(view);
 }
 
