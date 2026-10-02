@@ -61,7 +61,7 @@ export function mount(root, ctx) {
   const view = h('section', { class: 'lock' },
     h('div', { class: 'lock-paper' },
       h('div', { class: 'lock-brand' },
-        h('img', { class: 'lock-logo', src: '/icon-192.png', alt: '', width: '88', height: '88' }),
+        h('span', { class: 'logo-mark lock-logo', 'aria-hidden': 'true' }, icon('ticket')),
         h('p', { class: 'lock-kicker', text: '우리 모임의 놀이 일기' }),
         h('h1', { class: 'lock-title', text: APP_NAME }),
         h('p', { class: 'lock-desc', text: '공유받은 링크로 들어와 주세요' })),

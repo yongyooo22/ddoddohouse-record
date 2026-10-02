@@ -166,7 +166,7 @@ export function mount(root, ctx) {
     } else {
       const shown = list.slice(0, limit);
       if (filters.sort === 'rating') {
-        out.push(h('div', { class: 'rlist' }, shown.map((r) => recordCard(r, { showMonth: true }))));
+        out.push(h('div', { class: 'rlist' }, shown.map((r) => recordCard(r))));
       } else {
         let cur = null;
         let group = null;

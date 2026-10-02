@@ -44,10 +44,11 @@ export function fmtDate(str, { weekday = true, year = true } = {}) {
   return weekday ? `${base} (${WEEKDAYS[d.getDay()]})` : base;
 }
 
-export function dayParts(str) {
+/** 카드용 짧은 날짜: 2026.10.01 */
+export function fmtDateDot(str) {
   const d = parseDate(str);
-  if (!d) return { day: '?', wd: '', month: '' };
-  return { day: String(d.getDate()), wd: WEEKDAYS[d.getDay()], month: `${d.getMonth() + 1}월`, dow: d.getDay() };
+  if (!d) return '날짜 없음';
+  return `${d.getFullYear()}.${pad(d.getMonth() + 1)}.${pad(d.getDate())}`;
 }
 
 export function fmtRemaining(sec) {

@@ -93,6 +93,46 @@ export async function openMemberEditor(member) {
 }
 
 // ── 목록 ──
+/** 이번 달 기록에서 멤버별로 함께한 횟수 (떠난 멤버 제외, 많은 순) */
+function monthTopMembers(records, now = new Date()) {
+  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const counts = new Map();
+  for (const r of records) {
+    if (!r || String(r.date || '').slice(0, 7) !== ym) continue;
+    for (const id of Array.isArray(r.members) ? r.members : []) counts.set(id, (counts.get(id) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([id]) => !memberInfo(id).missing)
+    .sort((a, b) => b[1] - a[1])
+    .map(([memberId, count]) => ({ memberId, count }));
+}
+
+/** 이번 달 가장 많이 함께한 멤버 (홈에서 옮겨 옴) */
+function monthMateCard() {
+  const tops = monthTopMembers(state.records);
+  const label = h('p', { class: 'mate-label', text: '이번 달 가장 많이 함께한 멤버' });
+  if (!tops.length) {
+    return h('section', { class: 'card mate mate-empty' }, label,
+      h('p', { class: 'muted', text: '이번 달 기록이 아직 없어요. 첫 기록을 남겨 볼까요?' }));
+  }
+  const best = tops[0];
+  const ties = tops.filter((t) => t.count === best.count);
+  const info = memberInfo(best.memberId);
+  return h('section', { class: 'card mate' }, label,
+    h('div', { class: 'mate-row' },
+      h('a', { class: 'mate-main', href: `#/member/${encodeURIComponent(best.memberId)}` },
+        avatar(info, 'lg'),
+        h('span', { class: 'mate-text' },
+          h('span', { class: 'mate-name', text: ties.length > 1 ? `${info.name} 외 ${ties.length - 1}명` : info.name }),
+          h('span', { class: 'mate-count', text: `${best.count}번 함께했어요` }))),
+      tops.length > 1
+        ? h('ol', { class: 'mate-others', 'aria-label': '다음 순위' }, tops.slice(1, 4).map((t) =>
+          h('li', { class: 'mate-other' }, avatar(t.memberId, 'xs'),
+            h('span', { class: 'mate-other-name', text: memberInfo(t.memberId).name }),
+            h('span', { class: 'mate-other-n', text: `${t.count}` }))))
+        : null));
+}
+
 function memberCounts() {
   const counts = new Map();
   for (const r of state.records) {
@@ -121,6 +161,7 @@ function renderList(root, ctx) {
     mems.length
       ? h('p', { class: 'page-sub', text: `함께하는 사람 ${mems.length}명` })
       : null,
+    mems.length ? monthMateCard() : null,
     mems.length
       ? h('ul', { class: 'mlist card' }, mems.map((m) => {
         const c = counts.get(m.id);
@@ -216,7 +257,7 @@ function renderProfile(root, id, ctx) {
       h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title', text: '최근 함께한 기록' }),
         total ? h('a', { class: 'link-more', href: `#/records?member=${encodeURIComponent(m.id)}` }, '모두 보기', icon('chevron')) : null),
       recent.length
-        ? h('div', { class: 'rlist' }, recent.map((r) => recordCard(r, { showMonth: true })))
+        ? h('div', { class: 'rlist' }, recent.map((r) => recordCard(r)))
         : h('p', { class: 'muted small pad', text: '기록에서 이 멤버를 고르면 여기에 모여요.' }))));
 }
 

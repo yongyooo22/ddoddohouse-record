@@ -1,9 +1,9 @@
 // 기록 카드 등 여러 화면에서 쓰는 조각
-import { h, icon } from '../dom.js';
-import { TYPES, BG_MODES } from '../constants.js';
-import { dayParts, fmtRemaining, fmtDate } from '../format.js';
-import { erOrdinals, memberInfo, photosOf } from '../store.js';
-import { typeBadge, starsView, avatarRow, stamp, memberTag, spoilerBlock } from '../ui.js';
+import { h, icon, starShape } from '../dom.js';
+import { TYPES } from '../constants.js';
+import { fmtDate, fmtDateDot } from '../format.js';
+import { erOrdinals, photosOf } from '../store.js';
+import { typeBadge, stamp } from '../ui.js';
 import { cardPhoto } from './photos.js';
 
 export const bgOf = (r) => (r && r.bg && typeof r.bg === 'object' ? r.bg : {});
@@ -43,57 +43,6 @@ export function recordStamp(r) {
   return null;
 }
 
-/** 목록 카드 핵심 정보 한 줄 */
-export function keyInfo(r) {
-  const items = [];
-  if (r.type === 'boardgame') {
-    const bg = bgOf(r);
-    const mode = BG_MODES.find((m) => m.key === bg.mode);
-    if (bg.mode !== 'coop') {
-      const winners = bgWinners(r);
-      if (winners.length) {
-        items.push(h('span', { class: 'ki ki-win' }, icon('trophy'),
-          h('span', { class: 'ki-list' }, winners.slice(0, 3).map((id) => memberTag(id)),
-            winners.length > 3 ? h('span', { class: 'ki-more', text: `외 ${winners.length - 3}명` }) : null)));
-      }
-    }
-    if (mode && bg.mode !== 'competitive') items.push(h('span', { class: 'ki ki-soft', text: `${mode.label}` }));
-  } else if (r.type === 'murdermystery') {
-    const mm = mmOf(r);
-    const roles = arr(mm.roles);
-    const culprits = roles.filter((x) => x && x.culprit).map((x) => x.memberId);
-    const withChar = roles.filter((x) => x && x.character);
-    const culpritEl = culprits.length
-      ? h('span', { class: 'ki ki-culprit' }, h('span', { class: 'ki-key', text: '범인' }),
-        h('span', { class: 'ki-list' }, culprits.slice(0, 3).map((id) => memberTag(id))))
-      : null;
-    const txt = withChar.slice(0, 4).map((x) => `${memberInfo(x.memberId).name}·${x.character}`).join('  ') +
-      (withChar.length > 4 ? ` 외 ${withChar.length - 4}` : '');
-    const rolesEl = withChar.length
-      ? h('span', { class: 'ki ki-roles' }, icon('mask'), h('span', { class: 'ki-text', text: txt }))
-      : null;
-    if (r.spoiler && (culpritEl || rolesEl)) {
-      // 누가 범인이었고 무슨 배역이었는지 = 시나리오의 범인 캐릭터 → 스포일러 기록이면 가림
-      const hidden = h('span', { class: 'ki-spoil' }, culpritEl, rolesEl);
-      items.push(h('span', { class: 'ki ki-roles' },
-        spoilerBlock(hidden, { label: '범인·배역 보기', inline: true, key: spoilerKey(r, 'roles') })));
-    } else {
-      if (culpritEl) items.push(culpritEl);
-      if (rolesEl) items.push(rolesEl);
-    }
-  } else if (r.type === 'escaperoom') {
-    const er = erOf(r);
-    if (er.cleared && er.remainingSec !== null && er.remainingSec !== undefined && er.remainingSec !== '') {
-      items.push(h('span', { class: 'ki' }, icon('clock'), h('span', { text: `${fmtRemaining(er.remainingSec)} 남김` })));
-    }
-    if (Number.isFinite(Number(er.hints))) {
-      items.push(h('span', { class: 'ki' }, icon('bulb'), h('span', { text: Number(er.hints) === 0 ? '노힌트' : `힌트 ${Number(er.hints)}` })));
-    }
-    if (er.brand) items.push(h('span', { class: 'ki ki-soft', text: [er.brand, er.branch].filter(Boolean).join(' ') }));
-  }
-  return items.length ? h('div', { class: 'rcard-info' }, items) : null;
-}
-
 /** 스포일러 펼침 기억용 키 (내용이 수정되면 다시 가림) */
 export function spoilerKey(r, part) {
   return `${r.id}:${part}:${r.updatedAt || ''}`;
@@ -106,40 +55,43 @@ export function ordinalLabel(r) {
   return n ? h('span', { class: 'ordinal', text: `${n}번째 방탈출` }) : null;
 }
 
-/** 목록/홈 기록 카드 */
-export function recordCard(r, { showMonth = false } = {}) {
+/** 방탈출 성공·실패만 카드에 작은 가로 배지로 (우승자·범인 등 자세한 결과는 상세에서) */
+function resultBadge(r) {
+  if (r.type !== 'escaperoom') return null;
+  const er = erOf(r);
+  if (er.cleared === true) return h('span', { class: 'rbadge rbadge-clear', text: '탈출 성공' });
+  if (er.cleared === false) return h('span', { class: 'rbadge rbadge-fail', text: '탈출 실패' });
+  return null;
+}
+
+/**
+ * 목록/홈 기록 카드 — 티켓 모양: 위(대표 사진 · 종류 · 제목 · 날짜) | 점선 | 아래(평점 · 한줄평)
+ * 우승자·멤버·배역·범인·스포일러 내용은 카드에 싣지 않고 상세 화면에서 보여 줌
+ */
+export function recordCard(r) {
   const t = TYPES[r.type];
-  const dp = dayParts(r.date);
-  const one = r.oneLiner
-    ? (r.spoiler
-      ? spoilerBlock(h('span', { text: r.oneLiner }), { label: '스포일러', inline: true, key: spoilerKey(r, 'one') })
-      : h('span', { class: 'rcard-one', text: r.oneLiner }))
-    : null;
-  const st = recordStamp(r);
   const photo = cardPhoto(r);
   const nPhotos = photosOf(r).length;
-  return h('article', { class: ['rcard', t ? t.cls : '', st ? 'has-stamp' : '', photo ? 'has-photo' : ''] },
-    h('div', { class: `rcard-date${dp.dow === 0 ? ' is-sun' : dp.dow === 6 ? ' is-sat' : ''}`, 'aria-hidden': 'true' },
-      showMonth ? h('span', { class: 'd-mon', text: dp.month }) : null,
-      h('span', { class: 'd-day', text: dp.day }),
-      h('span', { class: 'd-wd', text: dp.wd ? `(${dp.wd})` : '' })),
-    h('div', { class: 'rcard-body' },
-      h('div', { class: 'rcard-top' }, typeBadge(r.type), ordinalLabel(r),
-        r.spoiler ? h('span', { class: 'mini-flag', text: '스포' }) : null),
-      h('h3', { class: 'rcard-title' },
-        // 날짜 칸은 보기용(aria-hidden)이라 링크 이름에 날짜를 함께 넣어 스크린리더도 날짜를 듣게
-        h('a', {
-          class: 'card-link', href: `#/record/${encodeURIComponent(r.id)}`,
-          'aria-label': `${r.title || '(제목 없음)'}, ${fmtDate(r.date)}${nPhotos ? `, 사진 ${nPhotos}장` : ''}`,
-        }, r.title || '(제목 없음)')),
-      (Number(r.rating) > 0 || one)
-        ? h('div', { class: 'rcard-line' }, Number(r.rating) > 0 ? starsView(r.rating, { size: 'xs' }) : null, one)
-        : null,
-      keyInfo(r),
-      arr(r.members).length ? h('div', { class: 'rcard-foot' }, avatarRow(r.members, { max: 7, size: 'xs' })) : null),
-    // 사진이 있으면 오른쪽에 붙인 사진 위에 도장이 찍힘
-    photo ? h('div', { class: 'rcard-side' }, photo, st ? h('div', { class: 'rcard-stamp' }, st) : null) : null,
-    !photo && st ? h('div', { class: 'rcard-stamp' }, st) : null);
+  const rating = Number(r.rating) || 0;
+  // 스포일러가 있는 기록의 한줄평은 카드에 싣지 않음 (대신 다른 내용을 보여 주지도 않음)
+  const one = r.oneLiner && !r.spoiler ? r.oneLiner : '';
+  return h('article', { class: ['rcard', t ? t.cls : '', photo ? 'has-photo' : ''] },
+    h('div', { class: 'rcard-main' },
+      h('div', { class: 'rcard-thumb', 'aria-hidden': 'true' },
+        photo || h('span', { class: 'rcard-noimg' }, icon(t ? t.icon : 'book'))),
+      h('div', { class: 'rcard-head' },
+        h('div', { class: 'rcard-top' }, typeBadge(r.type), resultBadge(r)),
+        h('h3', { class: 'rcard-title' },
+          h('a', {
+            class: 'card-link', href: `#/record/${encodeURIComponent(r.id)}`,
+            'aria-label': `${r.title || '(제목 없음)'}, ${fmtDate(r.date)}${nPhotos ? `, 사진 ${nPhotos}장` : ''}`,
+          }, r.title || '(제목 없음)')),
+        h('p', { class: 'rcard-date', text: fmtDateDot(r.date) }))),
+    h('div', { class: 'rcard-stub' },
+      rating > 0
+        ? h('span', { class: 'rcard-rating', role: 'img', 'aria-label': `별점 ${rating}점` }, starShape('rcard-star'), h('span', { text: rating.toFixed(1) }))
+        : h('span', { class: 'rcard-rating is-empty', text: '평점 없음' }),
+      one ? h('p', { class: 'rcard-one', text: one }) : null));
 }
 
 /** 섹션 제목 */

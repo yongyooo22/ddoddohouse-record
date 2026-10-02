@@ -1,5 +1,6 @@
 // 앱 아이콘 PNG 생성 (외부 의존성 없음: zlib 로 직접 PNG 인코딩)
-// 디자인: 종이색 둥근 사각형 위에 잉크색 노트, 종류별 색 책갈피 끈 3개(보드게임·머미·방탈출)
+// 디자인: 크림색 둥근 사각형 위에 진초록 선으로 그린 티켓(양옆 반원 홈), 가운데 작은 금빛 별
+//        — 앱 안의 로고(js/dom.js 의 ticket 아이콘)와 같은 모양
 // 실행: node scripts/make-icons.mjs
 import { writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -14,17 +15,10 @@ const hex = (h, a = 1) => {
 };
 
 const C = {
-  paper: hex('#F5EFE4'),
-  paperEdge: hex('#E9E0D2'),
-  shadow: [70, 48, 26, 0.16],
-  cover: hex('#2B2622'),
-  spine: hex('#1D1916'),
-  spineHi: hex('#453D36'),
-  label: hex('#F5EFE4'),
-  labelLine: hex('#BDB2A3'),
-  green: hex('#2E8B62'),
-  wine: hex('#A3314A'),
-  amber: hex('#C57A12'),
+  paper: hex('#F4F1EC'),
+  paperEdge: hex('#E6E1D9'),
+  ink: hex('#2E5A46'), // 진초록 (앱의 강조색)
+  star: hex('#A9823F'), // 금빛
 };
 
 // ── 도형 (512 좌표계) ──
@@ -36,42 +30,25 @@ function inRoundRect(x, y, x0, y0, x1, y1, r) {
   return dx * dx + dy * dy <= r * r;
 }
 
-function inRibbon(x, y, x0, x1, y0, y1, notch) {
-  if (x < x0 || x > x1 || y < y0) return false;
-  const mid = (x0 + x1) / 2;
-  const half = (x1 - x0) / 2;
-  const edge = y1 - notch * (1 - Math.abs(x - mid) / half);
-  return y <= edge;
+/** 티켓 모양: 둥근 사각형에서 왼쪽·오른쪽 가운데(nx0·nx1, ny)를 반원으로 파냄 */
+function inTicket(x, y, x0, y0, x1, y1, r, notch, nx0, nx1, ny) {
+  if (!inRoundRect(x, y, x0, y0, x1, y1, r)) return false;
+  if (Math.hypot(x - nx0, y - ny) < notch) return false;
+  if (Math.hypot(x - nx1, y - ny) < notch) return false;
+  return true;
 }
 
-/** 노트 마크 레이어. 좌표는 512 기준, 반환 [r,g,b,a] 또는 null */
+/** 티켓 마크 레이어. 좌표는 512 기준, 반환 [r,g,b,a] 또는 null */
 function mark(x, y) {
-  const X0 = 142, X1 = 370, Y0 = 84, Y1 = 390;
-  // 책갈피 끈 (노트 아래로 삐져나옴)
-  const ribbons = [
-    [198, 222, C.green, 446],
-    [232, 256, C.wine, 462],
-    [266, 290, C.amber, 438],
-  ];
+  const X0 = 84, X1 = 428, Y0 = 140, Y1 = 372; // 티켓 바깥선
+  const R = 36, N = 40, W = 26; // 모서리 · 반원 홈 · 선 굵기
+  const cy = (Y0 + Y1) / 2;
   let out = null;
-  // 그림자
-  if (inRoundRect(x, y, X0 + 6, Y0 + 12, X1 + 6, Y1 + 12, 30)) out = C.shadow;
-  for (const [a, b, col, end] of ribbons) if (inRibbon(x, y, a, b, Y1 - 20, end, 12)) out = col;
-  // 표지
-  if (inRoundRect(x, y, X0, Y0, X1, Y1, 28)) {
-    out = C.cover;
-    if (x < X0 + 34) out = C.spine;
-    else if (x < X0 + 38) out = C.spineHi;
-    // 라벨
-    if (inRoundRect(x, y, 198, 138, 330, 212, 12)) {
-      out = C.label;
-      if (inRoundRect(x, y, 216, 160, 312, 168, 4)) out = C.labelLine;
-      if (inRoundRect(x, y, 216, 182, 280, 190, 4)) out = C.labelLine;
-    }
-    // 표지 아래쪽 작은 별 (기록/평점)
-    const sx = 264, sy = 300, R = 30, r = 12.5;
-    if (inStar(x - sx, y - sy, R, r)) out = C.amber;
-  }
+  // 선 = 바깥 티켓 − 안쪽 티켓 (안쪽은 선 굵기만큼 줄이고, 홈은 같은 중심에서 선 굵기만큼 크게)
+  const outer = inTicket(x, y, X0, Y0, X1, Y1, R, N, X0, X1, cy);
+  const inner = inTicket(x, y, X0 + W, Y0 + W, X1 - W, Y1 - W, R - W, N + W, X0, X1, cy);
+  if (outer && !inner) out = C.ink;
+  if (inStar(x - 256, y - cy, 50, 21)) out = C.star;
   return out;
 }
 
@@ -123,7 +100,7 @@ function render(size, { rounded, scale }) {
             col = C.paper.slice();
             if (rounded && !inRoundRect(u, v, 3, 3, 509, 509, 111)) col = C.paperEdge.slice();
             const mu = 256 + (u - 256) / scale;
-            const mv = 262 + (v - 256) / scale;
+            const mv = 256 + (v - 256) / scale;
             const m = mark(mu, mv);
             if (m) col = blend(col, m);
           }
