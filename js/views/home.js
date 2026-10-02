@@ -1,6 +1,7 @@
 // 홈 — 요약, 종류별 바로가기, 이번 달 멤버, 최근 기록
 import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, APP_NAME, WEEKDAYS } from '../constants.js';
+import { fmtDate } from '../format.js';
 import { state, recordsSorted, memberInfo, isFirstLoad, loadFailed } from '../store.js';
 import { overview } from '../stats.js';
 import { avatar, emptyState, loadingState, loadErrorState } from '../ui.js';
@@ -50,7 +51,17 @@ function render(root, ctx) {
     return;
   }
 
+  // 종류별 비율 막대 (앱 아이콘의 세 갈래 책갈피 끈과 같은 색)
+  const bar = h('div', { class: 'cover-bar', 'aria-hidden': 'true' });
+  for (const k of TYPE_KEYS) {
+    const n = byType[k] || 0;
+    if (!n) continue;
+    const seg = h('span', { class: `cover-bar-seg ${TYPES[k].cls}` });
+    seg.style.flexGrow = String(n);
+    bar.appendChild(seg);
+  }
   const cover = h('section', { class: 'cover', 'aria-label': '기록 요약' },
+    h('span', { class: 'cover-ribbons', 'aria-hidden': 'true' }, h('i'), h('i'), h('i')),
     h('div', { class: 'cover-main' },
       h('p', { class: 'cover-label', text: '지금까지 함께 남긴 기록' }),
       h('p', { class: 'cover-num' }, h('span', { class: 'cover-big', text: String(total) }), h('span', { class: 'cover-unit', text: '개' })),
@@ -59,13 +70,19 @@ function render(root, ctx) {
       h('li', { class: `cover-type ${TYPES[k].cls}` },
         h('span', { class: 'cover-dot', 'aria-hidden': 'true' }),
         h('span', { class: 'cover-tlabel', text: TYPES[k].short }),
-        h('span', { class: 'cover-tnum', text: String(byType[k] || 0) })))));
+        h('span', { class: 'cover-tnum', text: String(byType[k] || 0) })))),
+    bar);
 
-  const shortcuts = h('nav', { class: 'shortcuts', 'aria-label': '종류별 기록' }, TYPE_KEYS.map((k) =>
-    h('a', { class: `shortcut ${TYPES[k].cls}`, href: `#/records?type=${k}` },
+  const sorted = recordsSorted();
+  const shortcuts = h('nav', { class: 'shortcuts', 'aria-label': '종류별 기록' }, TYPE_KEYS.map((k) => {
+    const last = sorted.find((r) => r.type === k);
+    return h('a', { class: `shortcut ${TYPES[k].cls}`, href: `#/records?type=${k}` },
       h('span', { class: 'shortcut-ico', 'aria-hidden': 'true' }, icon(TYPES[k].icon)),
       h('span', { class: 'shortcut-label', text: TYPES[k].short }),
-      h('span', { class: 'shortcut-count', text: `${byType[k] || 0}회` }))));
+      h('span', { class: 'shortcut-count', text: `${byType[k] || 0}회` }),
+      h('span', { class: 'shortcut-sub', text: last ? `최근 ${fmtDate(last.date, { weekday: false, year: false })}` : '첫 기록을 기다려요' }),
+      icon('chevron', 'shortcut-go'));
+  }));
 
   // 이번 달 가장 많이 함께한 멤버
   const tops = monthTopMembers(records, now);
@@ -91,10 +108,11 @@ function render(root, ctx) {
   } else {
     mate = h('section', { class: 'card mate mate-empty' },
       h('p', { class: 'mate-label', text: '이번 달 가장 많이 함께한 멤버' }),
+      h('span', { class: 'mate-empty-ico', 'aria-hidden': 'true' }, icon('users')),
       h('p', { class: 'muted', text: '이번 달 기록이 아직 없어요. 첫 기록을 남겨 볼까요?' }));
   }
 
-  const recent = recordsSorted().slice(0, 5);
+  const recent = sorted.slice(0, 6);
   const recentSec = h('section', { class: 'home-recent' },
     sectionHead('최근 기록', { action: records.length ? h('a', { class: 'link-more', href: '#/records' }, '전체 보기', icon('chevron')) : null }),
     recent.length

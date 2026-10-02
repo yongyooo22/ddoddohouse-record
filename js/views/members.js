@@ -113,9 +113,9 @@ function renderList(root, ctx) {
   const pending = !mems.length && isFirstLoad();
   const failed = !mems.length && loadFailed();
   const addBtn = h('button', {
-    type: 'button', class: 'icon-btn icon-btn-soft', 'aria-label': '멤버 추가',
+    type: 'button', class: 'icon-btn icon-btn-soft head-add', 'aria-label': '멤버 추가',
     onClick: () => openMemberEditor(null),
-  }, icon('plus'));
+  }, icon('plus'), h('span', { class: 'head-label', text: '멤버 추가' }));
   root.replaceChildren(h('div', { class: 'page page-members' },
     h('header', { class: 'page-head' }, h('h1', { class: 'page-title', text: '멤버' }), addBtn),
     mems.length

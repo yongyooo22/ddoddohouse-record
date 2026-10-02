@@ -9,8 +9,14 @@ import { segmented, avatar, emptyState, scoreBars, loadingState, loadErrorState 
 const ui = { seg: 'all', minPlays: 1, showAllMembers: false };
 
 // ── 차트 조각 ──
-function tiles(items) {
-  return h('div', { class: `tiles tiles-${items.length}` }, items.map((it) =>
+/** 넓은 화면(12칸 격자)에서 차지할 칸 수 — span-5 · span-7 · span-12 (기본 6칸) */
+function span(el, cls) {
+  if (el && cls) el.classList.add(cls);
+  return el;
+}
+
+function tiles(items, cls = '') {
+  return h('div', { class: ['tiles', `tiles-${items.length}`, cls] }, items.map((it) =>
     h('div', { class: ['tile', it.cls] },
       h('span', { class: 'tile-label', text: it.label }),
       h('span', { class: 'tile-value' }, it.value, it.unit ? h('span', { class: 'tile-unit', text: it.unit }) : null),
@@ -123,15 +129,15 @@ function overviewView(records) {
 
   const typeTiles = TYPE_KEYS.map((k) => ({ label: TYPES[k].short, value: String(ov.byType[k] || 0), unit: '회', cls: `tile-type ${TYPES[k].cls}` }));
   return [
-    tiles([{ label: '전체 기록', value: String(ov.total), unit: '개', cls: 'tile-hero' }, { label: '이번 달', value: String(ov.thisMonth), unit: '개' }]),
-    tiles(typeTiles),
-    card('월별 기록', '최근 12개월 · 막대를 누르면 자세히',
-      columns(monthly, { legend: TYPE_KEYS.map((k) => ({ label: TYPES[k].short, cls: `fill-${k}` })) })),
-    card('요일별', favWd.length ? `주로 ${favWd.join('·')}요일에 모여요` : '',
-      columns(wd, { readoutDefault: Math.max(0, (ov.weekday || []).indexOf(maxWd)), highlightMax: true })),
-    card('멤버별 참여', `총 ${mc.length}명`,
+    tiles([{ label: '전체 기록', value: String(ov.total), unit: '개', cls: 'tile-hero' }, { label: '이번 달', value: String(ov.thisMonth), unit: '개' }], 'span-5'),
+    tiles(typeTiles, 'span-7'),
+    span(card('월별 기록', '최근 12개월 · 막대를 누르면 자세히',
+      columns(monthly, { legend: TYPE_KEYS.map((k) => ({ label: TYPES[k].short, cls: `fill-${k}` })) })), 'span-7'),
+    span(card('요일별', favWd.length ? `주로 ${favWd.join('·')}요일에 모여요` : '',
+      columns(wd, { readoutDefault: Math.max(0, (ov.weekday || []).indexOf(maxWd)), highlightMax: true })), 'span-5'),
+    span(card('멤버별 참여', `총 ${mc.length}명`,
       hbars(shown.map((x) => ({ label: mName(x.memberId), value: x.count, text: `${x.count}회`, lead: mLead(x.memberId), cls: `mc-${memberInfo(x.memberId).color} fill-member` }))),
-      moreBtn),
+      moreBtn), 'span-12'),
   ];
 }
 
@@ -155,8 +161,8 @@ function bgView(records) {
     tiles([
       { label: '플레이', value: String(s.plays), unit: '판', cls: 'tile-hero t-boardgame' },
       { label: '플레이한 게임', value: String((s.topGames || []).length), unit: '종' },
-    ]),
-    tw ? h('section', { class: 'card champ t-boardgame' },
+    ], tw ? 'span-5' : 'span-12'),
+    tw ? h('section', { class: 'card champ t-boardgame span-7' },
       h('span', { class: 'champ-ico', 'aria-hidden': 'true' }, icon('trophy')),
       avatar(tw.memberId, 'lg'),
       h('div', { class: 'champ-text' },
@@ -205,15 +211,15 @@ function mmView(records) {
       { label: '평균 별점', value: s.avgRating === null || s.avgRating === undefined ? '–' : fmtAvg(s.avgRating), sub: s.avgRating ? '5점 만점' : '평가 없음' },
       { label: '범인 검거율', value: fmtPct(c.rate), sub: `${c.caught + c.escaped}번 중 ${c.caught}번` },
     ]),
-    card('범인 검거', '검거 성공 vs 범인 도주',
-      splitMeter({ label: '검거', value: c.caught || 0, cls: 'fill-caught' }, { label: '도주', value: c.escaped || 0, cls: 'fill-escaped' })),
-    card('멤버별 기록', '범인 생존 = 범인일 때 도주율 (결과 기록된 판)', table),
-    card('제작사별', '',
-      hbars((s.byPublisher || []).slice(0, 10).map((p) => ({ label: p.name, value: p.count, text: `${p.count}회`, cls: 'fill-murdermystery' })), { emptyText: '제작사를 기록하면 보여요' })),
-    card('세부 점수 평균', '',
+    span(card('범인 검거', '검거 성공 vs 범인 도주',
+      splitMeter({ label: '검거', value: c.caught || 0, cls: 'fill-caught' }, { label: '도주', value: c.escaped || 0, cls: 'fill-escaped' })), 'span-5'),
+    span(card('멤버별 기록', '범인 생존 = 범인일 때 도주율 (결과 기록된 판)', table), 'span-12'),
+    span(card('제작사별', '',
+      hbars((s.byPublisher || []).slice(0, 10).map((p) => ({ label: p.name, value: p.count, text: `${p.count}회`, cls: 'fill-murdermystery' })), { emptyText: '제작사를 기록하면 보여요' })), 'span-12'),
+    span(card('세부 점수 평균', '',
       hasAvg
         ? scoreBars(MM_SCORES.map((x) => ({ label: x.label, value: avg[x.key] ? Math.round(avg[x.key] * 10) / 10 : 0 })), { cls: 'scorebars-mm' })
-        : h('p', { class: 'muted small', text: '세부 점수를 남기면 평균을 보여 드려요' })),
+        : h('p', { class: 'muted small', text: '세부 점수를 남기면 평균을 보여 드려요' })), 'span-7'),
   ];
 }
 

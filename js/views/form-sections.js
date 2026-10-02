@@ -54,7 +54,7 @@ function subHead(text, extra) {
 }
 
 function needMembers() {
-  return h('p', { class: 'fnote' }, icon('users'), h('span', { text: '위에서 함께한 멤버를 먼저 골라 주세요' }));
+  return h('p', { class: 'fnote' }, icon('users'), h('span', { text: '함께한 멤버를 먼저 골라 주세요' }));
 }
 
 function scoreRows(obj, defs, onChange) {

@@ -2481,6 +2481,134 @@ await step('사진: 다크 모드 · 320px · 가로 스크롤 없음', async ()
 
 await cp.close();
 
+// ── 노트북(가로) · 태블릿: 사이드바와 여러 단 배치 ───────────────
+const dc = await newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false });
+page = await dc.newPage();
+watch(page, '[desktop] ');
+theme = 'light';
+/** 두 요소가 나란히(같은 줄, a 가 왼쪽) 놓였는지 */
+const sideBySide = (a, b) => page.evaluate(([sa, sb]) => {
+  const x = document.querySelector(sa);
+  const y = document.querySelector(sb);
+  if (!x || !y) return false;
+  const p = x.getBoundingClientRect();
+  const q = y.getBoundingClientRect();
+  return Math.abs(p.top - q.top) < 2 && p.right <= q.left && p.width > 0 && q.width > 0;
+}, [a, b]);
+
+await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크롤 없음', async () => {
+  await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
+  await page.waitForSelector('.page-home .cover', { timeout: 8000 });
+  const side = await page.$eval('#tabbar', (e) => { const b = e.getBoundingClientRect(); return { l: b.left, w: b.width, h: b.height, dir: getComputedStyle(e).flexDirection }; });
+  check('메뉴가 왼쪽 사이드바 (화면 높이 전체)', side.l === 0 && side.w >= 200 && side.w <= 300 && side.h === 900 && side.dir === 'column', JSON.stringify(side));
+  check('사이드바: 이름 · 새 기록 버튼 · 설정', await page.isVisible('#tabbar .side-brand') && await page.isVisible('#tabbar .side-cta') && await page.isVisible('#tabbar .tab-settings') && !(await page.isVisible('#tabbar .tab-add')));
+  check('본문이 사이드바 오른쪽에서 시작', await page.$eval('#view', (e) => e.getBoundingClientRect().left >= 248));
+  check('홈: 요약 표지와 이번 달 멤버가 나란히', await sideBySide('.page-home > .cover', '.page-home > .mate'));
+  check('홈: 최근 기록 두 줄 배치', await sideBySide('.page-home .rlist > .rcard:nth-child(1)', '.page-home .rlist > .rcard:nth-child(2)'));
+  check('홈 머리의 톱니 버튼은 숨김 (설정은 사이드바에)', !(await page.isVisible('.page-home .home-head .icon-btn')));
+  await noOverflow('1440 홈');
+  await shot('desktop-home');
+
+  await page.click('#tabbar [data-tab="records"]');
+  await page.waitForSelector('.page-list .rcard');
+  check('목록: 필터가 왼쪽에 늘 보임 (필터 버튼 없음)', await page.isVisible('.page-list .filter-panel') && !(await page.isVisible('.page-list .list-tools button[aria-controls="list-filter"]')));
+  check('목록: 필터 | 결과 두 단', await page.evaluate(() => {
+    const f = document.querySelector('.page-list .filter-panel').getBoundingClientRect();
+    const r = document.querySelector('.page-list .list-results').getBoundingClientRect();
+    return f.right <= r.left;
+  }));
+  const chipSel = '.page-list .filter-panel .chip-member:has(.chip-label:text-is("영식"))';
+  await page.click(chipSel);
+  const found = await until(async () => { const t = await text('.page-list .list-count'); return t.includes('찾았어요') && t; }, 3000);
+  const shown = (await cardTitles()).length;
+  const expected = (await api('GET', '/api/data')).data.records.filter((r) => (r.members || []).includes(ids['영식'])).length;
+  check('필터 칩을 누르면 바로 걸러짐', !!found && (await page.getAttribute(chipSel, 'aria-pressed')) === 'true' && shown === expected, `${found} · 카드 ${shown} / 기대 ${expected}`);
+  await page.click('.page-list .filter-panel button:has-text("필터 초기화")');
+  await noOverflow('1440 목록');
+  await shot('desktop-list');
+
+  await go(`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail');
+  check('상세: (사진·요약) | (기록) 두 단', await sideBySide('.page-detail .detail-col-a', '.page-detail .detail-col-b'));
+  check('상세: 사진이 왼쪽 단 맨 위', !!(await page.$('.page-detail .detail-col-a > .dgallery:first-child')));
+  await noOverflow('1440 상세');
+  await shot('desktop-detail');
+
+  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
+  check('폼: 두 단', await sideBySide('.page-form .form-col-a', '.page-form .form-col-b'));
+  check('폼에서도 사이드바는 그대로 (휴대폰만 숨김)', await page.$eval('#tabbar', (e) => e.hidden && e.getBoundingClientRect().width > 0));
+  check('저장 버튼이 오른쪽 아래에 보임', await page.$eval('.page-form .save-btn', (e) => { const b = e.getBoundingClientRect(); return b.bottom <= innerHeight && b.right > innerWidth - 120; }));
+  await noOverflow('1440 폼');
+  await shot('desktop-form');
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await sleep(150);
+
+  await go('#/stats', '.page-stats');
+  check('통계: 숫자 타일이 한 줄 (전체·이번 달 | 종류별)', await sideBySide('.page-stats .stats-body > .tiles-2', '.page-stats .stats-body > .tiles-3'));
+  check('통계: 월별 · 요일별 차트가 나란히', await sideBySide('.page-stats .stats-body > .chart-card:nth-child(3)', '.page-stats .stats-body > .chart-card:nth-child(4)'));
+  await noOverflow('1440 통계');
+  await shot('desktop-stats');
+  for (const seg of ['보드게임', '머미', '방탈출']) {
+    await page.click(`.page-stats .seg-type .seg-item:has-text("${seg}")`);
+    await noOverflow(`1440 통계 ${seg}`);
+  }
+  await page.click('.page-stats .seg-type .seg-item:has-text("전체")');
+
+  await page.click('#tabbar [data-tab="members"]');
+  await page.waitForSelector('.page-members .mlist');
+  check('멤버: 카드 격자', await sideBySide('.page-members .mlist li:nth-child(1)', '.page-members .mlist li:nth-child(2)'));
+  check('멤버 추가 버튼에 글자', (await text('.page-members .page-head button[aria-label="멤버 추가"]')) === '멤버 추가');
+  await noOverflow('1440 멤버');
+  await go(`#/member/${encodeURIComponent(ids['영식'])}`, '.page-profile');
+  check('프로필: 소개 | 종류별 타일 나란히', await sideBySide('.page-profile > .phero', '.page-profile > .ptiles'));
+  await noOverflow('1440 프로필');
+
+  await page.click('#tabbar .tab-settings');
+  await page.waitForSelector('.page-settings');
+  check('설정: 사이드바에서 열림 · 표시', (await page.getAttribute('#tabbar .tab-settings', 'aria-current')) === 'page');
+  check('설정: 두 단', await sideBySide('.page-settings .set-col:nth-child(1)', '.page-settings .set-col:nth-child(2)'));
+  await noOverflow('1440 설정');
+  await shot('desktop-settings');
+
+  await page.click('#tabbar .side-cta');
+  await page.waitForSelector('.page-picker');
+  check('새 기록: 세 종류가 한 줄', await sideBySide('.page-picker .pick.t-boardgame', '.page-picker .pick.t-murdermystery'));
+  await noOverflow('1440 종류 선택');
+});
+
+await step('태블릿 1024px: 왼쪽 레일 · 가로 스크롤 없음', async () => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await go('#/', '.page-home');
+  const rail = await page.$eval('#tabbar', (e) => e.getBoundingClientRect().width);
+  check('메뉴가 좁은 레일', rail >= 80 && rail <= 100, String(rail));
+  check('레일에도 설정', await page.isVisible('#tabbar .tab-settings'));
+  for (const [hash, sel] of [['#/', '.page-home'], ['#/records', '.page-list'], [`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail'], [`#/edit/${encodeURIComponent(ids.mm)}`, '.page-form'], ['#/stats', '.page-stats'], ['#/settings', '.page-settings']]) {
+    await go(hash, sel);
+    await noOverflow(`1024 ${hash}`);
+    if (sel === '.page-form') { await page.click('.page-form .savebar button:has-text("취소")'); await sleep(150); }
+  }
+  await go('#/records', '.page-list');
+  check('1024: 필터는 버튼으로 여닫음', await page.isVisible('.page-list .list-tools button[aria-controls="list-filter"]'));
+  await page.setViewportSize({ width: 1440, height: 900 });
+});
+
+await step('노트북 잠금 화면: 표지 | 입장 코드 두 칸', async () => {
+  const lc = await newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1, isMobile: false, hasTouch: false });
+  const lp = await lc.newPage();
+  watch(lp, '[desktop-lock] ');
+  await lp.goto(`${BASE}/`);
+  await lp.waitForSelector('.lock #lock-key');
+  check('메뉴 숨김', await lp.$eval('#tabbar', (e) => e.getBoundingClientRect().width === 0));
+  check('표지와 입장 코드가 나란히', await lp.evaluate(() => {
+    const a = document.querySelector('.lock-brand').getBoundingClientRect();
+    const b = document.querySelector('.lock-body').getBoundingClientRect();
+    return Math.abs(a.top - b.top) < 2 && a.right <= b.left;
+  }));
+  await lp.screenshot({ path: path.join(SHOTS, 'desktop-lock.png') });
+  await lc.close();
+});
+
+await dc.close();
+
 // ── 마무리 ──────────────────────────────────────────────────
 currentStep = '전체';
 console.log('\n[전체]');

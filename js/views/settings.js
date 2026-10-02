@@ -434,57 +434,61 @@ function render(root) {
     onChange: (v) => { setTheme(v); if (ctxRef) ctxRef.applyTheme(); },
   });
 
+  const connSec = h('section', { class: 'card set-sec' },
+    h('h2', { class: 'set-title', text: '연결 상태' }),
+    h('div', { class: `conn ${st.cls}` },
+      h('span', { class: 'conn-dot', 'aria-hidden': 'true' }),
+      h('div', { class: 'conn-text' },
+        h('p', { class: 'conn-label', text: st.label }),
+        h('p', { class: 'conn-desc', text: st.desc }),
+        h('p', { class: 'conn-meta', text: `기록 ${state.records.length}개 · 멤버 ${state.members.length}명${state.lastSync ? ` · ${relTime(state.lastSync)} 동기화` : ''}` })),
+      refreshBtn));
+  const backupSec = h('section', { class: 'card set-sec' },
+    h('h2', { class: 'set-title', text: '백업' }),
+    h('p', { class: 'set-desc', text: '모든 기록과 멤버를 JSON 파일로 저장하거나, 백업 파일에서 다시 불러올 수 있어요.' }),
+    switchRow({
+      checked: exportPhotos, label: '사진 포함', icon: 'image',
+      desc: referencedPhotos().length ? `사진 ${referencedPhotos().length}장 · 파일이 커질 수 있어요` : '기록에 붙인 사진도 파일에 넣어요',
+      onChange: (v) => { exportPhotos = v; },
+    }),
+    h('div', { class: 'set-actions' },
+      h('button', {
+        type: 'button', class: 'btn btn-soft',
+        onClick: async (e) => {
+          const b = e.currentTarget;
+          b.disabled = true;
+          try { await exportData(); } catch { toast('내보내기 중 문제가 생겼어요', 'error'); }
+          b.disabled = false;
+        },
+      }, icon('download'), h('span', { text: '내보내기' })),
+      // 진짜 버튼이어야 키보드(Tab)로도 닿음 — 숨긴 파일 입력을 대신 열어 줌
+      h('button', { type: 'button', class: 'btn btn-soft', onClick: () => fileIn.click() }, icon('upload'), h('span', { text: '가져오기' })),
+      fileIn));
+  const themeSec = h('section', { class: 'card set-sec' },
+    h('h2', { class: 'set-title', text: '화면 테마' }),
+    themeSeg);
+  const deviceSec = h('section', { class: 'card set-sec' },
+    h('h2', { class: 'set-title', text: '이 기기' }),
+    h('p', { class: 'set-desc', text: '입장 코드와 기기에 저장된 기록 사본·사진을 지워요. 다시 들어오려면 공유 링크가 필요해요. 서버의 기록은 지워지지 않아요.' }),
+    h('button', {
+      type: 'button', class: 'btn btn-danger-soft btn-block',
+      onClick: async () => {
+        const ok = await confirmDialog('잠금 해제 정보를 지울까요?',
+          '이 기기에서 입장 코드와 저장된 사본, 받아 둔 사진이 지워지고 잠금 화면으로 돌아가요. 공용·가족 기기라면 브라우저 방문 기록에서도 이 사이트를 지워 주세요 — 공유 링크에 코드가 들어 있어서 방문 기록·주소 자동완성에 남아 있을 수 있어요.',
+          { ok: '지우기', danger: true });
+        if (!ok) return;
+        wipeLocal();
+        clearHttpImageCache(); // 브라우저 캐시에 남은 사진까지
+        if (ctxRef) ctxRef.lock('이 기기에서 잠금 해제 정보를 지웠어요');
+      },
+    }, icon('lock'), h('span', { text: '이 기기에서 잠금 해제 정보 지우기' })));
+
   root.replaceChildren(h('div', { class: 'page page-settings' },
     appBar({ title: '설정', back: '#/' }),
-    h('section', { class: 'card set-sec' },
-      h('h2', { class: 'set-title', text: '연결 상태' }),
-      h('div', { class: `conn ${st.cls}` },
-        h('span', { class: 'conn-dot', 'aria-hidden': 'true' }),
-        h('div', { class: 'conn-text' },
-          h('p', { class: 'conn-label', text: st.label }),
-          h('p', { class: 'conn-desc', text: st.desc }),
-          h('p', { class: 'conn-meta', text: `기록 ${state.records.length}개 · 멤버 ${state.members.length}명${state.lastSync ? ` · ${relTime(state.lastSync)} 동기화` : ''}` })),
-        refreshBtn)),
-    storageSection(),
-    h('section', { class: 'card set-sec' },
-      h('h2', { class: 'set-title', text: '백업' }),
-      h('p', { class: 'set-desc', text: '모든 기록과 멤버를 JSON 파일로 저장하거나, 백업 파일에서 다시 불러올 수 있어요.' }),
-      switchRow({
-        checked: exportPhotos, label: '사진 포함', icon: 'image',
-        desc: referencedPhotos().length ? `사진 ${referencedPhotos().length}장 · 파일이 커질 수 있어요` : '기록에 붙인 사진도 파일에 넣어요',
-        onChange: (v) => { exportPhotos = v; },
-      }),
-      h('div', { class: 'set-actions' },
-        h('button', {
-          type: 'button', class: 'btn btn-soft',
-          onClick: async (e) => {
-            const b = e.currentTarget;
-            b.disabled = true;
-            try { await exportData(); } catch { toast('내보내기 중 문제가 생겼어요', 'error'); }
-            b.disabled = false;
-          },
-        }, icon('download'), h('span', { text: '내보내기' })),
-        // 진짜 버튼이어야 키보드(Tab)로도 닿음 — 숨긴 파일 입력을 대신 열어 줌
-        h('button', { type: 'button', class: 'btn btn-soft', onClick: () => fileIn.click() }, icon('upload'), h('span', { text: '가져오기' })),
-        fileIn)),
-    h('section', { class: 'card set-sec' },
-      h('h2', { class: 'set-title', text: '화면 테마' }),
-      themeSeg),
-    h('section', { class: 'card set-sec' },
-      h('h2', { class: 'set-title', text: '이 기기' }),
-      h('p', { class: 'set-desc', text: '입장 코드와 기기에 저장된 기록 사본·사진을 지워요. 다시 들어오려면 공유 링크가 필요해요. 서버의 기록은 지워지지 않아요.' }),
-      h('button', {
-        type: 'button', class: 'btn btn-danger-soft btn-block',
-        onClick: async () => {
-          const ok = await confirmDialog('잠금 해제 정보를 지울까요?',
-            '이 기기에서 입장 코드와 저장된 사본, 받아 둔 사진이 지워지고 잠금 화면으로 돌아가요. 공용·가족 기기라면 브라우저 방문 기록에서도 이 사이트를 지워 주세요 — 공유 링크에 코드가 들어 있어서 방문 기록·주소 자동완성에 남아 있을 수 있어요.',
-            { ok: '지우기', danger: true });
-          if (!ok) return;
-          wipeLocal();
-          clearHttpImageCache(); // 브라우저 캐시에 남은 사진까지
-          if (ctxRef) ctxRef.lock('이 기기에서 잠금 해제 정보를 지웠어요');
-        },
-      }, icon('lock'), h('span', { text: '이 기기에서 잠금 해제 정보 지우기' }))),
+    // 넓은 화면은 두 단: (연결 상태·사진 저장 공간) | (백업·테마·이 기기). 휴대폰은 같은 순서로 한 줄
+    h('div', { class: 'set-grid' },
+      h('div', { class: 'set-col' }, connSec, storageSection()),
+      h('div', { class: 'set-col' }, backupSec, themeSec, deviceSec)),
     h('footer', { class: 'set-foot' },
       h('img', { src: '/icon-192.png', alt: '', width: '40', height: '40', class: 'set-logo' }),
       h('p', { text: `${APP_NAME} · v${APP_VERSION}` }),

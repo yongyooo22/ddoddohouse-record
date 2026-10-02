@@ -57,16 +57,19 @@ export function mount(root, ctx) {
     }
   });
 
+  // 위(넓은 화면은 왼쪽)는 어두운 표지, 아래(오른쪽)는 입장 코드 칸
   const view = h('section', { class: 'lock' },
     h('div', { class: 'lock-paper' },
-      h('img', { class: 'lock-logo', src: '/icon-192.png', alt: '', width: '88', height: '88' }),
-      h('p', { class: 'lock-kicker', text: '우리 모임의 놀이 일기' }),
-      h('h1', { class: 'lock-title', text: APP_NAME }),
-      h('p', { class: 'lock-desc', text: '공유받은 링크로 들어와 주세요' }),
-      ctx.message ? h('p', { class: 'lock-notice', role: 'status' }, icon('info'), h('span', { text: ctx.message })) : null,
-      form,
-      standalone() ? h('p', { class: 'lock-hint' }, icon('info'), h('span', { text: '홈 화면 앱은 브라우저와 저장 공간이 달라요. 공유받은 링크를 통째로 복사해 위 칸에 붙여넣어 주세요.' })) : null,
-      h('p', { class: 'lock-hint' }, icon('lock'), h('span', { text: '코드는 이 기기에만 저장돼요. 다른 사람에게 링크를 보여주지 마세요. 공용 기기라면 시크릿(비공개) 창에서 코드를 붙여넣어 여세요.' }))));
+      h('div', { class: 'lock-brand' },
+        h('img', { class: 'lock-logo', src: '/icon-192.png', alt: '', width: '88', height: '88' }),
+        h('p', { class: 'lock-kicker', text: '우리 모임의 놀이 일기' }),
+        h('h1', { class: 'lock-title', text: APP_NAME }),
+        h('p', { class: 'lock-desc', text: '공유받은 링크로 들어와 주세요' })),
+      h('div', { class: 'lock-body' },
+        ctx.message ? h('p', { class: 'lock-notice', role: 'status' }, icon('info'), h('span', { text: ctx.message })) : null,
+        form,
+        standalone() ? h('p', { class: 'lock-hint' }, icon('info'), h('span', { text: '홈 화면 앱은 브라우저와 저장 공간이 달라요. 공유받은 링크를 통째로 복사해 위 칸에 붙여넣어 주세요.' })) : null,
+        h('p', { class: 'lock-hint' }, icon('lock'), h('span', { text: '코드는 이 기기에만 저장돼요. 다른 사람에게 링크를 보여주지 마세요. 공용 기기라면 시크릿(비공개) 창에서 코드를 붙여넣어 여세요.' })))));
   root.appendChild(view);
   setTimeout(() => { if (!ctx.message) input.focus({ preventScroll: true }); }, 50);
   return {};
