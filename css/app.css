@@ -801,6 +801,41 @@ a.sum-link:focus-visible { outline-offset: -3px; }
 .gcard-meta { display: flex; flex-wrap: wrap; gap: 0 8px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .gcard-plays { color: var(--ink-2); font-weight: 650; }
 .gcard-rating { display: inline-flex; flex: none; align-items: center; gap: 4px; align-self: flex-start; margin-top: 3px; font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 등록한 게임: 오른쪽 위 메뉴(⋯) 버튼, 그 아래 평균 별점. 메모 한 줄 */
+.gcard-side { display: flex; flex: none; flex-direction: column; align-items: flex-end; align-self: stretch; gap: 2px; }
+.gcard-more { position: relative; z-index: 2; width: 40px; height: 40px; margin: -6px -10px 0 0; color: var(--ink-3); }
+.gcard-more .ico { width: 20px; height: 20px; }
+.gcard-side .gcard-rating { margin-top: 0; }
+.gcard-more + .gcard-rating { margin-top: auto; margin-bottom: 2px; }
+.gcard-memo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 12.5px; }
+.gcard.is-unplayed .gcard-plays { color: var(--ink-3); font-weight: 600; }
+button.card-link { padding: 0; border: 0; background: none; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
+/* 소장 머리: 휴대폰에서도 '게임 등록' 글자를 함께 */
+.page-collection .head-add { display: inline-flex; gap: 6px; width: auto; padding: 0 15px 0 12px; font-size: 14.5px; font-weight: 650; }
+.page-collection .head-add .ico { width: 18px; height: 18px; }
+.page-collection .head-label { display: inline; }
+/* 소장 게임 등록 창 */
+.gform { display: flex; flex-direction: column; gap: 16px; }
+.gform-lead { margin-top: -4px; color: var(--ink-2); font-size: 14px; }
+.gform .form-err:empty { display: none; }
+.gform-added { display: flex; padding: 10px 14px; border-radius: 12px; background: var(--accent-soft); color: var(--accent-ink); font-size: 13.5px; font-weight: 600; line-height: 1.5; }
+/* 등록한 게임 메뉴 */
+.gmenu { display: flex; flex-direction: column; gap: 12px; }
+.gmenu-info { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: -4px; }
+.gmenu-stat { color: var(--ink-2); font-size: 13.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.gmenu-memo { padding: 10px 14px; border-radius: 12px; background: var(--surface-2); color: var(--ink-2); font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.gmenu-list { display: flex; flex-direction: column; gap: 2px; margin: 2px -8px 0; }
+.gmenu-item {
+  display: flex; align-items: center; gap: 12px; min-height: 52px; padding: 0 10px;
+  border: 0; border-radius: 12px; background: none; color: var(--ink);
+  font: inherit; font-size: 15px; font-weight: 650; text-align: left; cursor: pointer; transition: background-color .18s;
+}
+.gmenu-item > .ico:first-child { box-sizing: content-box; width: 18px; height: 18px; padding: 7px; border-radius: 10px; background: var(--surface-3); color: var(--ink-2); }
+.gmenu-item span { flex: 1; min-width: 0; }
+.gmenu-go { width: 16px; height: 16px; color: var(--ink-3); }
+.gmenu-item.is-danger { color: var(--danger); }
+.gmenu-item.is-danger > .ico:first-child { background: var(--danger-soft); color: var(--danger); }
+.gmenu-item:active { background: var(--surface-2); }
 /* 대여한 게임 */
 .blist { margin: 0; padding: 4px 0; list-style: none; }
 .blist li + li { border-top: 1px solid var(--line); }
@@ -1399,7 +1434,8 @@ html.vw-open, html.vw-open body { overflow: hidden; }
   .tip:hover { border-color: var(--line-2); box-shadow: var(--shadow-hover); }
   .mrow:hover, .tag:hover { border-color: var(--line-2); color: var(--ink); }
   a.mrow:hover { background: var(--surface); }
-  .mlist-row:hover, .brow:hover { background: var(--surface-2); }
+  .mlist-row:hover, .brow:hover, .gmenu-item:hover { background: var(--surface-2); }
+  .gcard-more:hover { background: var(--surface-2); color: var(--ink); }
   .col:hover:not([aria-pressed="true"]) { background: color-mix(in srgb, var(--surface-3) 60%, transparent); }
   .dg-thumb:hover { opacity: .85; transform: translateY(-1px); }
   .emoji-pick:hover { border-color: var(--line-2); background: var(--surface); }

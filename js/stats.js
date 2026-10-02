@@ -386,17 +386,24 @@ export function memberProfile(records, memberId) {
 
 // ── 소장 목록 ────────────────────────────────────────────────
 
+const OWNABLE = ['boardgame', 'murdermystery'];
+
 /**
  * 보드게임·머미 기록을 같은 종류·같은 제목끼리 한 게임으로 묶어서,
- * '내 소장'으로 표시한 판이 하나라도 있으면 owned, 아니고 '대여'로 한 판이 있으면 borrowed 에 담는다.
- * 횟수·날짜·평균 별점은 그 게임의 모든 판으로 센다. 두 목록 모두 최근에 한 게임부터.
+ * 소장 목록에 등록한 게임(registered)이거나 '내 소장'으로 표시한 판이 하나라도 있으면 owned,
+ * 아니고 '대여'로 한 판이 있으면 borrowed 에 담는다. 등록한 게임은 기록이 없어도 owned 에 들어간다.
+ * 횟수·날짜·평균 별점은 그 게임의 모든 판으로 센다. 두 목록 모두 최근에 한 게임부터
+ * (owned 의 아직 안 해 본 게임은 맨 뒤에, 최근에 등록한 것부터).
+ * @param {object[]} records
+ * @param {object[]} [registered]  소장 목록에 바로 등록한 게임 [{id, type, title, memo, createdAt}]
  * @returns {{ owned: Game[], borrowed: Game[] }}
- *   Game = { key, type, title(가장 최근 판의 제목), plays, lastDate, firstDate, avgRating(없으면 null),
- *            latestId, cover(가장 최근 사진 id 또는 null), lenders(빌려준 사람, 최근 순) }
+ *   Game = { key, type, title(등록한 이름, 없으면 가장 최근 판의 제목), plays, lastDate, firstDate (안 해 봤으면 ''),
+ *            avgRating(없으면 null), latestId(없으면 null), cover(가장 최근 사진 id 또는 null), lenders(빌려준 사람, 최근 순),
+ *            gameId(등록한 게임 id, 기록으로만 모인 게임은 null), memo, addedAt(등록한 시각 또는 null) }
  */
-export function collectionOf(records) {
+export function collectionOf(records, registered = []) {
   const list = arr(records)
-    .filter((r) => isRecord(r) && (r.type === 'boardgame' || r.type === 'murdermystery'))
+    .filter((r) => isRecord(r) && OWNABLE.includes(r.type))
     .sort(byLatest);
   const games = new Map();
   for (const r of list) {
@@ -406,7 +413,7 @@ export function collectionOf(records) {
     let g = games.get(key);
     if (!g) {
       g = {
-        key, type: r.type, title: str(r.title).trim().replace(/\s+/g, ' '), plays: 0,
+        key, type: r.type, title: cleanTitle(r.title), plays: 0,
         lastDate: str(r.date), firstDate: str(r.date), latestId: r.id, cover: null, lenders: [],
         ratings: [], mine: 0, borrowed: 0,
       };
@@ -425,14 +432,41 @@ export function collectionOf(records) {
       if (who && !g.lenders.some((x) => groupKey(x) === groupKey(who))) g.lenders.push(who);
     }
   }
+  // 등록한 게임 (같은 게임이 둘 등록돼 있으면 먼저 등록한 것)
+  const regs = new Map();
+  const regList = arr(registered)
+    .filter((x) => x && typeof x === 'object' && OWNABLE.includes(x.type) && groupKey(x.title))
+    .sort((a, b) => cmpStr(a.createdAt, b.createdAt));
+  for (const x of regList) {
+    const key = `${x.type}:${groupKey(x.title)}`;
+    if (!regs.has(key)) regs.set(key, x);
+  }
+  const withReg = (g, reg) => ({
+    ...g, title: cleanTitle(reg.title), gameId: typeof reg.id === 'string' && reg.id ? reg.id : null,
+    memo: str(reg.memo).trim(), addedAt: str(reg.createdAt) || null,
+  });
   const owned = [];
   const borrowed = [];
   for (const { ratings, mine, borrowed: nb, ...game } of games.values()) {
-    const out = { ...game, avgRating: avg(ratings) };
-    if (mine) owned.push(out);
+    const out = { ...game, avgRating: avg(ratings), gameId: null, memo: '', addedAt: null };
+    const reg = regs.get(game.key);
+    if (reg) {
+      regs.delete(game.key);
+      owned.push(withReg(out, reg));
+    } else if (mine) owned.push(out);
     else if (nb) borrowed.push(out);
   }
+  // 아직 기록이 없는 등록 게임 — 최근에 등록한 것부터
+  for (const [key, reg] of [...regs].reverse()) {
+    owned.push(withReg({
+      key, type: reg.type, title: '', plays: 0, lastDate: '', firstDate: '', latestId: null, cover: null, lenders: [], avgRating: null,
+    }, reg));
+  }
   return { owned, borrowed };
+}
+
+function cleanTitle(s) {
+  return str(s).trim().replace(/\s+/g, ' ');
 }
 
 // ── 사진 저장 공간 ──────────────────────────────────────────

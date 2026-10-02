@@ -5,7 +5,7 @@ import {
   state, recordById, upsertRecord, membersSorted, memberInfo, titlesFor, latestWithTitle, usedTags,
   getDraft, setDraft, clearDraftIf, isFirstLoad, playedBy, photosOf,
 } from '../store.js';
-import { todayStr, yesterdayStr, defaultRecordDate, fmtDate, relTime, parseDate, fmtDateTime } from '../format.js';
+import { todayStr, yesterdayStr, defaultRecordDate, fmtDate, relTime, parseDate, fmtDateTime, nameKey } from '../format.js';
 import * as api from '../api.js';
 import { navigate, goBack } from '../nav.js';
 import {
@@ -312,6 +312,15 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
     adoptDraftId();
     dirty = true;
   }
+  // 소장 탭의 '이 게임으로 새 기록 쓰기': #/new/<종류>?title=…&own=1 → 제목과 소장 여부(내 소장)를 채워 둠
+  const presetTitle = isNew && !dirty && query && typeof query.title === 'string'
+    ? Array.from(query.title.trim()).slice(0, LIMITS.title).join('') : '';
+  const ownPreset = !!presetTitle && query.own === '1' && (type === 'boardgame' || type === 'murdermystery');
+  if (presetTitle) {
+    m.title = presetTitle;
+    if (ownPreset && type === 'boardgame') m.bg.ownership = 'mine';
+    if (ownPreset && type === 'murdermystery') Object.assign(m.mm, { format: 'box', ownership: 'mine' });
+  }
 
   const ctl = {
     changed,
@@ -335,7 +344,11 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
   const holder = {};
 
   function sectionCommon() {
-    const titles = titlesFor(type);
+    // 이전 기록 제목 + 소장 목록에만 등록한 게임 이름 (같은 이름으로 써야 소장 탭에서 한 게임으로 모임)
+    const titles = [...titlesFor(type)];
+    for (const g of state.games) {
+      if (g.type === type && g.title && !titles.some((x) => nameKey(x) === nameKey(g.title))) titles.push(g.title);
+    }
     const listId = nextId('titles');
     const titleInput = textInput(m.title, { max: LIMITS.title, placeholder: t.titlePlaceholder, list: listId, cls: 'input-title' });
     titleInput.required = true;
@@ -350,6 +363,8 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
       st = setTimeout(() => { showSuggest(suggest); photos.refreshSuggest(); }, 350);
     });
     titleInput.addEventListener('change', () => { showSuggest(suggest); photos.refreshSuggest(); });
+    // 소장 탭에서 제목을 채워 왔으면 이전 기록 불러오기·이전 대표 사진 제안도 바로
+    if (presetTitle && m.title === presetTitle) setTimeout(() => { if (alive && suggest.isConnected) { showSuggest(suggest); photos.refreshSuggest(); } }, 0);
 
     const dateInput = h('input', { type: 'date', class: 'input', value: m.date, max: '2100-12-31', min: '1900-01-01', required: true, 'data-field': 'date', id: nextId('date') });
     const quick = [['오늘', todayStr], ['어제', yesterdayStr]].map(([label, fn]) => {
@@ -436,15 +451,18 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
       set(m.bg, 'mode', prev.bg.mode, '방식');
       set(m.bg, 'expansion', prev.bg.expansion, '확장판');
       set(m.bg, 'place', prev.bg.place, '장소');
-      set(m.bg, 'ownership', prev.bg.ownership, '소장 여부');
-      if (prev.bg.ownership === 'borrowed') set(m.bg, 'lender', prev.bg.lender, '빌려준 사람');
+      // 소장 탭에서 '내 소장'으로 채워 왔으면 이전 판(빌려서 했을 수도 있음)의 소장 여부로 바꾸지 않음
+      if (!ownPreset) {
+        set(m.bg, 'ownership', prev.bg.ownership, '소장 여부');
+        if (prev.bg.ownership === 'borrowed') set(m.bg, 'lender', prev.bg.lender, '빌려준 사람');
+      }
     } else if (type === 'murdermystery' && prev.mm) {
       set(m.mm, 'publisher', prev.mm.publisher, '제작사');
-      set(m.mm, 'format', prev.mm.format, '형태');
+      if (!ownPreset) set(m.mm, 'format', prev.mm.format, '형태');
       set(m.mm, 'store', prev.mm.store, '매장');
       set(m.mm, 'playerCount', prev.mm.playerCount, '인원');
       set(m.mm, 'playTimeMin', prev.mm.playTimeMin, '시간');
-      if (prev.mm.format === 'box') {
+      if (prev.mm.format === 'box' && !ownPreset) {
         set(m.mm, 'ownership', prev.mm.ownership, '소장 여부');
         if (prev.mm.ownership === 'borrowed') set(m.mm, 'lender', prev.mm.lender, '빌려준 사람');
       }

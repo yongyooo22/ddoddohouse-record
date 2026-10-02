@@ -478,9 +478,46 @@ describe('소장', () => {
     assert.deepEqual(borrowed.map((g) => [g.title, g.plays, g.lenders]), [['스플렌더', 3, ['준호', '영식']]]);
   });
 
+  test('collectionOf: 등록한 게임은 기록이 없어도 소장, 기록이 있으면 횟수·별점·사진을 합침', () => {
+    const reg = (id, type, title, createdAt, memo = '') => ({ id, type, title, memo, createdAt, updatedAt: createdAt });
+    const { owned, borrowed } = collectionOf([c1, c2, c3, s1, s2, s3, box, sameTitleMm], [
+      reg('g1', 'boardgame', '아그리콜라', '2026-09-01T00:00:00.000Z', '확장 포함'),
+      reg('g2', 'boardgame', ' 스플렌더  ', '2026-09-02T00:00:00.000Z'), // 빌려서 하던 게임을 삼 → 대여 목록에서 소장으로
+      reg('g4', 'boardgame', 'CATAN', '2026-09-04T00:00:00.000Z', '나중에 또 등록'), // 같은 게임이 둘이면 먼저 등록한 것
+      reg('g3', 'boardgame', 'catan ', '2026-09-03T00:00:00.000Z'),
+      reg('g5', 'murdermystery', '카탄', '2026-09-05T00:00:00.000Z'), // 머미 '카탄'은 기록(k3)이 있는 다른 게임
+      reg('g6', 'murdermystery', '열차 밖의 밤', '2026-09-06T00:00:00.000Z'),
+      reg('g7', 'escaperoom', '연구소', '2026-09-07T00:00:00.000Z'), // 방탈출은 소장 목록에 없음
+      { id: 'g8', type: 'boardgame', title: '   ' }, null, 3,
+    ]);
+    // 기록이 있는 게임이 최근에 한 순, 그 뒤에 아직 안 해 본 등록 게임이 최근에 등록한 순
+    assert.deepEqual(owned.map((g) => [g.key, g.plays, g.gameId]), [
+      ['boardgame:카탄', 3, null], ['boardgame:스플렌더', 3, 'g2'], ['murdermystery:카탄', 1, 'g5'],
+      ['murdermystery:마지막 야간열차', 1, null], ['murdermystery:열차 밖의 밤', 0, 'g6'], ['boardgame:catan', 0, 'g3'],
+      ['boardgame:아그리콜라', 0, 'g1'],
+    ]);
+    const splendor = owned[1];
+    assert.equal(splendor.title, '스플렌더'); // 등록한 이름(공백 정리)
+    assert.equal(splendor.lastDate, '2026-08-09');
+    assert.equal(splendor.addedAt, '2026-09-02T00:00:00.000Z');
+    assert.deepEqual(splendor.lenders, ['준호', '영식']);
+    const agricola = owned.at(-1);
+    assert.deepEqual(agricola, {
+      key: 'boardgame:아그리콜라', type: 'boardgame', title: '아그리콜라', plays: 0, lastDate: '', firstDate: '', latestId: null,
+      cover: null, lenders: [], avgRating: null, gameId: 'g1', memo: '확장 포함', addedAt: '2026-09-01T00:00:00.000Z',
+    });
+    assert.deepEqual([owned[0].memo, owned[0].addedAt], ['', null]);
+    assert.deepEqual([owned[5].title, owned[5].memo], ['catan', '']);
+    assert.deepEqual(borrowed, []);
+    // 등록 목록을 안 주면 예전과 같음
+    assert.deepEqual(collectionOf([s1]).owned, []);
+  });
+
   test('collectionOf: 빈 입력·이상한 값에도 죽지 않음', () => {
     assert.deepEqual(collectionOf(null), { owned: [], borrowed: [] });
     assert.deepEqual(collectionOf([null, 3, { type: 'boardgame', title: '', bg: { ownership: 'mine' } }]), { owned: [], borrowed: [] });
+    assert.deepEqual(collectionOf(null, 'x'), { owned: [], borrowed: [] });
+    assert.deepEqual(collectionOf([], [{ type: 'boardgame', title: '카탄' }]).owned.map((g) => [g.title, g.gameId, g.addedAt]), [['카탄', null, null]]);
   });
 });
 

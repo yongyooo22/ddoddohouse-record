@@ -1097,6 +1097,160 @@ await step('소장 탭 · 소장 여부 필터 · 이전 기록에서 불러오�
   }
 });
 
+await step('소장 게임 등록 (기록 없이) · 계속 등록 · 메뉴 · 고치기 · 기록 쓰기 · 빼기 · 백업', async () => {
+  const serverGames = async () => (await api('GET', '/api/data')).data.games;
+  const gcard = (title) => `.page-collection .gcard:has(.card-link:text-is("${title}"))`;
+  const madeRecords = [];
+  const todayDot = TODAY.replace(/-/g, '.');
+  try {
+    await tab('collection', '.page-collection');
+    const before = await texts('.page-collection .gcard-title');
+    const playedToday = (await texts('.page-collection .gcard-last')).filter((x) => x === `최근 ${todayDot}`).length;
+    check('머리에 ‘게임 등록’ 버튼 (휴대폰에서도 글자)', (await text('.page-collection .head-add')) === '게임 등록' && await page.isVisible('.page-collection .head-add .head-label'));
+    await page.click('.page-collection .head-add');
+    await page.waitForSelector(dlg);
+    check('등록 창', (await text(`${dlg} .dlg-title`)) === '소장 게임 등록' &&
+      JSON.stringify(await texts(`${dlg} .dlg-actions button`)) === JSON.stringify(['닫기', '계속 등록', '등록']), JSON.stringify(await texts(`${dlg} .dlg-actions button`)));
+    check('이름 칸에 바로 초점', await page.evaluate(() => document.activeElement && document.activeElement.dataset.field === 'game-title'));
+    const nameLabel = `${dlg} .field:has([data-field="game-title"]) .field-label`;
+    check('기본 종류 보드게임 · 게임 이름', (await page.$eval(`${dlg} .seg-input:checked`, (e) => e.value)) === 'boardgame' && (await text(nameLabel)) === '게임 이름');
+    const options = await page.$$eval(`${dlg} datalist option`, (els) => els.map((e) => e.value));
+    check('이름 추천에 이미 소장한 게임은 없음', !options.includes('테라포밍 마스'), JSON.stringify(options));
+    await noOverflow('소장 게임 등록 창');
+    await shot('25b-collection-register');
+
+    // 빈 이름은 막음
+    await dialogButton('등록');
+    check('빈 이름 → 안내 · 창 유지', (await text(`${dlg} .form-err`)) === '게임 이름을 적어 주세요' && !!(await page.$(dlg)));
+    // 계속 등록: 저장하고 칸을 비운 채 창 유지
+    await page.fill('[data-field="game-title"]', '아그리콜라');
+    await page.fill('[data-field="game-memo"]', '확장 포함');
+    await dialogButton('계속 등록');
+    const addedLine = await until(async () => { const t = await text(`${dlg} .gform-added`); return t.includes('아그리콜라') && t; });
+    check('계속 등록 → 창 유지 · 방금 넣은 이름 안내 · 칸 비움', !!addedLine && (await page.inputValue('[data-field="game-title"]')) === '' &&
+      (await page.inputValue('[data-field="game-memo"]')) === '' && await page.evaluate(() => document.activeElement.dataset.field === 'game-title'), String(addedLine));
+    // 같은 종류·같은 이름(공백·대소문자 무시)은 한 번만
+    await page.fill('[data-field="game-title"]', '  아그리콜라 ');
+    await dialogButton('계속 등록');
+    check('같은 이름 → 이미 등록', !!(await until(async () => (await text(`${dlg} .form-err`)) === '이미 등록한 게임이에요')));
+    // 머미(보드게임형)로 바꿔 Enter 로 등록하고 닫기
+    await page.click(`${dlg} .seg-item:has-text("머미")`);
+    check('머미 → 시나리오 이름', (await text(nameLabel)) === '시나리오 이름' && (await text(`${dlg} .form-err`)) === '');
+    await page.fill('[data-field="game-title"]', '열차 밖의 밤');
+    await page.press('[data-field="game-title"]', 'Enter');
+    await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
+    check('닫으면 몇 개 등록했는지 알림', !!(await toastSeen(/소장 게임 2개를 등록했어요/)), String(await texts('.toast')));
+    let games = await serverGames();
+    const agri = games.find((g) => g.title === '아그리콜라');
+    check('서버: 등록한 게임 2개 (종류·메모)', games.length === 2 && agri && agri.type === 'boardgame' && agri.memo === '확장 포함' &&
+      games.some((g) => g.type === 'murdermystery' && g.title === '열차 밖의 밤'), JSON.stringify(games));
+
+    // 목록: 기록이 없어도 소장에 보임
+    const after = await texts('.page-collection .gcard-title');
+    check('소장 목록에 함께 보임 · 개수', after.length === before.length + 2 && after.includes('아그리콜라') && after.includes('열차 밖의 밤') &&
+      (await text('.page-collection .list-count')) === `보드게임·머미 ${before.length + 2}개`, JSON.stringify(after));
+    // 최근 순 = 마지막으로 한 날과 등록한 날 중 늦은 날 → 오늘 등록한 게임은 예전에 한 게임보다 위 (오늘 한 게임 다음)
+    check('최근 순: 방금 등록한 게임이 위로', after.indexOf('열차 밖의 밤') < after.indexOf('아그리콜라') && after.indexOf('아그리콜라') < playedToday + 2, `${JSON.stringify(after)} · 오늘 한 게임 ${playedToday}`);
+    check('안 해 본 게임 카드: 안내 · 등록일 · 메모 · 메뉴 버튼', (await text(`${gcard('아그리콜라')} .gcard-plays`)) === '아직 안 해 봤어요' &&
+      (await text(`${gcard('아그리콜라')} .gcard-last`)) === `${todayDot} 등록` && (await text(`${gcard('아그리콜라')} .gcard-memo`)) === '확장 포함' &&
+      !!(await page.$(`${gcard('아그리콜라')} .gcard-more`)) && !(await page.$(`${gcard('테라포밍 마스')} .gcard-more`)), await text(gcard('아그리콜라')));
+    await page.selectOption('.page-collection select[aria-label="정렬"]', 'plays');
+    check('많이 한 순: 안 해 본 게임은 뒤로', (await texts('.page-collection .gcard-title')).slice(-2).every((x) => ['아그리콜라', '열차 밖의 밤'].includes(x)));
+    await page.selectOption('.page-collection select[aria-label="정렬"]', 'recent');
+    await page.click('.page-collection .seg-type .seg-item:has-text("머미")');
+    check('종류 고르기에도 등록한 게임', (await texts('.page-collection .gcard-title')).includes('열차 밖의 밤') && !(await texts('.page-collection .gcard-title')).includes('아그리콜라'));
+    await page.click('.page-collection .seg-type .seg-item:has-text("전체")');
+    await noOverflow('소장 (등록한 게임)');
+    await shot('25c-collection-games');
+
+    // 메뉴(⋯): 안 해 본 게임이라 '기록 보기'는 없음
+    await page.click(`${gcard('아그리콜라')} .gcard-more`);
+    await page.waitForSelector(dlg);
+    check('메뉴: 제목 · 메모 · 항목', (await text(`${dlg} .dlg-title`)) === '아그리콜라' && (await text(`${dlg} .gmenu-memo`)) === '확장 포함' &&
+      JSON.stringify(await texts(`${dlg} .gmenu-item`)) === JSON.stringify(['이 게임으로 새 기록 쓰기', '이름·메모 고치기', '소장에서 빼기']), JSON.stringify(await texts(`${dlg} .gmenu-item`)));
+    await shot('25d-collection-game-menu');
+    await page.click(`${dlg} .gmenu-item:has-text("이름·메모 고치기")`);
+    await page.waitForSelector(`${dlg} .dlg-title:text-is("소장 게임 수정")`);
+    check('고치기: 지금 값 · 취소/저장', (await page.inputValue('[data-field="game-title"]')) === '아그리콜라' && (await page.inputValue('[data-field="game-memo"]')) === '확장 포함' &&
+      JSON.stringify(await texts(`${dlg} .dlg-actions button`)) === JSON.stringify(['취소', '저장']));
+    await page.fill('[data-field="game-memo"]', '확장 2개 포함');
+    await dialogButton('저장');
+    await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
+    check('고친 메모 반영 (같은 id)', !!(await toastSeen(/소장 게임을 고쳤어요/)) && (await text(`${gcard('아그리콜라')} .gcard-memo`)) === '확장 2개 포함' &&
+      (await serverGames()).find((g) => g.id === agri.id).memo === '확장 2개 포함');
+
+    // 안 해 본 게임 카드를 누르면 메뉴 → 이 게임으로 새 기록 쓰기 (제목 · 보드게임형 · 내 소장)
+    await page.click(`${gcard('열차 밖의 밤')} .card-link`);
+    await page.waitForSelector(dlg);
+    await page.click(`${dlg} .gmenu-item:has-text("이 게임으로 새 기록 쓰기")`);
+    await page.waitForSelector('.page-form');
+    check('새 기록: 제목 채움', (await page.inputValue('[data-field="title"]')) === '열차 밖의 밤');
+    check('새 기록: 보드게임형 · 내 소장', await page.isVisible('.page-form .own-fields .seg-own') &&
+      (await page.$eval('.page-form .seg-own .seg-input:checked', (e) => e.value)) === 'mine');
+    await page.click('.save-btn');
+    await page.waitForSelector('.page-detail', { timeout: 8000 });
+    madeRecords.push(decodeURIComponent(page.url().split('#/record/')[1] || ''));
+    const rec = (await api('GET', '/api/data')).data.records.find((r) => r.id === madeRecords[0]);
+    check('저장된 기록: 보드게임형 · 내 소장', rec && rec.title === '열차 밖의 밤' && rec.mm.format === 'box' && rec.mm.ownership === 'mine', JSON.stringify(rec && rec.mm));
+    await tab('collection', '.page-collection');
+    check('기록을 쓰면 횟수가 붙고 그 게임 기록으로 이어짐', (await text(`${gcard('열차 밖의 밤')} .gcard-plays`)) === '1번 했어요' &&
+      !!(await page.$(`${gcard('열차 밖의 밤')} a.card-link`)) && !!(await page.$(`${gcard('열차 밖의 밤')} .gcard-more`)));
+    await page.click(`${gcard('열차 밖의 밤')} .gcard-more`);
+    await page.waitForSelector(dlg);
+    check('해 본 게임 메뉴엔 기록 보기', (await texts(`${dlg} .gmenu-item`))[0] === '기록 1개 보기');
+
+    // 소장에서 빼기: '내 소장'으로 쓴 기록이 있으면 목록에는 남음
+    await page.click(`${dlg} .gmenu-item:has-text("소장에서 빼기")`);
+    await page.waitForSelector(`${dlg} .dlg-title:text-is("이 게임을 소장에서 뺄까요?")`);
+    await dialogButton('빼기');
+    check('뺐지만 내 소장 기록이 있어 남는다고 알림', !!(await toastSeen(/목록에는 계속 보여요/)) && !!(await page.$(gcard('열차 밖의 밤'))) &&
+      !(await page.$(`${gcard('열차 밖의 밤')} .gcard-more`)));
+    games = await serverGames();
+    check('서버: 등록 하나만 남음', games.length === 1 && games[0].id === agri.id, JSON.stringify(games));
+
+    // 설정: 숫자 · 내보내기에 소장 게임 포함 · 가져오기
+    await tab('settings', '.page-settings');
+    check('설정: 소장 게임 개수', (await text('.conn-meta')).includes('소장 게임 1개'), await text('.conn-meta'));
+    const [dl] = await Promise.all([page.waitForEvent('download'), page.click('.page-settings button:has-text("내보내기")')]);
+    const exported = JSON.parse(readFileSync(await dl.path(), 'utf8'));
+    check('내보내기: 소장 게임 포함', Array.isArray(exported.games) && exported.games.length === 1 && exported.games[0].memo === '확장 2개 포함', JSON.stringify(exported.games));
+    check('내보내기 토스트에 소장 게임', !!(await toastSeen(/소장 게임 1개/)));
+    const backup = path.join(SHOTS, '..', 'games-backup.json');
+    writeFileSync(backup, JSON.stringify({
+      app: 'ddoddohouse-record', version: 1, records: [], members: [],
+      games: [
+        { id: 'bk-game-1', type: 'boardgame', title: '카르카손', memo: '', createdAt: '2025-01-02T03:04:05.000Z' },
+        { id: 'bk-game-2', type: 'boardgame', title: '아그리콜라 ', memo: '다른 기기' }, // 이름이 같은 게임은 이미 있음
+        { id: 'bk-game-3', type: 'escaperoom', title: '연구소' }, // 방탈출은 소장 게임이 아님 → 무시
+      ],
+    }));
+    await page.setInputFiles('#import-file', backup);
+    await page.waitForSelector(dlg);
+    const counts = await text(`${dlg} .import-counts`);
+    check('가져오기 미리보기: 소장 게임 새로 1 · 이미 있음 1', counts.includes('소장 게임 2개 — 새로 1 · 이미 있음 1'), counts);
+    await dialogButton('가져오기');
+    check('가져오기 완료 (실패 없음)', !!(await toastSeen(/가져오기 완료: 성공 1(?!\d)(?!.*실패)/, 8000)), String(await texts('.toast')));
+    games = await serverGames();
+    const carc = games.find((g) => g.id === 'bk-game-1');
+    check('서버: 같은 id·등록 시각으로 · 같은 이름은 그대로', games.length === 2 && carc && carc.createdAt === '2025-01-02T03:04:05.000Z' &&
+      games.find((g) => g.id === agri.id).memo === '확장 2개 포함', JSON.stringify(games));
+
+    // 마지막 등록 게임을 빼면 목록에서도 사라짐
+    await tab('collection', '.page-collection');
+    check('가져온 게임도 소장에', (await texts('.page-collection .gcard-title')).includes('카르카손'));
+    await page.click(`${gcard('아그리콜라')} .gcard-more`);
+    await page.waitForSelector(dlg);
+    await page.click(`${dlg} .gmenu-item:has-text("소장에서 빼기")`);
+    await page.waitForSelector(`${dlg} .dlg-title:text-is("이 게임을 소장에서 뺄까요?")`);
+    await dialogButton('빼기');
+    check('기록 없는 게임을 빼면 목록에서 사라짐', !!(await toastSeen(/소장에서 뺐어요/)) && !!(await until(async () => !(await page.$(gcard('아그리콜라'))))));
+  } finally {
+    for (const id of madeRecords) if (id) await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
+    for (const g of await serverGames()) await api('DELETE', `/api/games?id=${encodeURIComponent(g.id)}`);
+    await syncFromServer();
+  }
+});
+
 let exportFile = null;
 await step('설정: 내보내기 · 가져오기', async () => {
   await tab('home', '.page-home');
@@ -2761,11 +2915,22 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   await noOverflow('1440 목록');
   await shot('desktop-list');
 
+  // 기록 없이 등록한 게임도 함께 (메모 · 메뉴 버튼) — 찍고 나서 지움
+  const deskGame = (await api('POST', '/api/games', { game: { type: 'boardgame', title: '아그리콜라', memo: '확장 포함 · 1~4인' } })).data.game;
   await page.click('#tabbar [data-tab="collection"]');
   await page.waitForSelector('.page-collection');
   check('소장: 사이드바에서 열림 · 표시', (await page.getAttribute('#tabbar [data-tab="collection"]', 'aria-current')) === 'page');
+  await syncFromServer();
+  check('소장: 등록한 게임 카드 (메뉴 버튼)', !!(await until(() => page.$('.page-collection .gcard:has(.card-link:text-is("아그리콜라")) .gcard-more'))));
   await noOverflow('1440 소장');
   await shot('desktop-collection');
+  await page.click('.page-collection .head-add');
+  await page.waitForSelector(dlg);
+  await noOverflow('1440 소장 게임 등록 창');
+  await shot('desktop-collection-register');
+  await dialogButton('닫기');
+  await api('DELETE', `/api/games?id=${encodeURIComponent(deskGame.id)}`);
+  await syncFromServer();
 
   await go(`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail');
   check('상세: (사진·요약) | (기록) 두 단', await sideBySide('.page-detail .detail-col-a', '.page-detail .detail-col-b'));

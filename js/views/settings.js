@@ -1,7 +1,7 @@
 // 설정 — 연결 상태, 사진 저장 공간, 내보내기/가져오기, 테마, 잠금 해제 정보 지우기
 import { h, icon } from '../dom.js';
 import { APP_NAME, APP_VERSION, TYPE_KEYS } from '../constants.js';
-import { state, getTheme, setTheme, wipeLocal, upsertRecord, upsertMember, recordById, referencedPhotos, photosOf, getDraft } from '../store.js';
+import { state, getTheme, setTheme, wipeLocal, upsertRecord, upsertMember, upsertGame, recordById, referencedPhotos, photosOf, getDraft } from '../store.js';
 import { relTime, dateStamp, nameKey, fmtBytes } from '../format.js';
 import { storageUsage } from '../stats.js';
 import * as api from '../api.js';
@@ -15,6 +15,8 @@ let rootRef = null;
 let exportPhotos = true; // 내보내기에 사진 포함 (기본 켬)
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const GAME_KINDS = ['boardgame', 'murdermystery'];
+const gameKey = (g) => `${g.type}:${nameKey(g.title)}`;
 const B64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
 
 // ── 사진 저장 공간 ──
@@ -199,6 +201,7 @@ async function exportData() {
     exportedAt: new Date().toISOString(),
     records: state.records,
     members: state.members,
+    games: state.games,
   };
   // 사진은 크기가 커서 한 덩어리 문자열로 만들지 않고 Blob 조각으로 이어 붙임
   const head = JSON.stringify(payload, null, 2);
@@ -217,7 +220,8 @@ async function exportData() {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 4000);
   const photoPart = exportPhotos ? `, 사진 ${images.length}장` : '';
-  toast(`기록 ${state.records.length}개, 멤버 ${state.members.length}명${photoPart}을 내보냈어요${failed ? ` (사진 ${failed}장은 받지 못했어요)` : ''}`, failed ? 'error' : 'ok', 4000);
+  const gamePart = state.games.length ? `, 소장 게임 ${state.games.length}개` : '';
+  toast(`기록 ${state.records.length}개, 멤버 ${state.members.length}명${gamePart}${photoPart}을 내보냈어요${failed ? ` (사진 ${failed}장은 받지 못했어요)` : ''}`, failed ? 'error' : 'ok', 4000);
 }
 
 function parseBackup(text) {
@@ -227,6 +231,7 @@ function parseBackup(text) {
   if (!data || typeof data !== 'object') return null;
   const records = Array.isArray(data.records) ? data.records.filter((r) => r && typeof r === 'object' && TYPE_KEYS.includes(r.type)) : [];
   const members = Array.isArray(data.members) ? data.members.filter((m) => m && typeof m === 'object' && typeof m.name === 'string') : [];
+  const games = Array.isArray(data.games) ? data.games.filter((g) => g && typeof g === 'object' && GAME_KINDS.includes(g.type) && typeof g.title === 'string' && g.title.trim()) : [];
   const seen = new Set();
   const images = Array.isArray(data.images) ? data.images.filter((im) => {
     const ok = im && typeof im === 'object' && typeof im.id === 'string' && ID_RE.test(im.id) && !seen.has(im.id) &&
@@ -234,8 +239,8 @@ function parseBackup(text) {
     if (ok) seen.add(im.id);
     return ok;
   }) : [];
-  if (!records.length && !members.length) return null;
-  return { records, members, images };
+  if (!records.length && !members.length && !games.length) return null;
+  return { records, members, games, images };
 }
 
 const TRANSIENT = ['timeout', 'network', 'server_error', 'not_configured'];
@@ -304,6 +309,11 @@ async function importFlow(file) {
     else if (m.id !== ex && !memIds.has(m.id)) remap.set(m.id, ex);
   }
   const isMerged = (m) => (m.id ? remap.has(m.id) : sameName.has(m));
+  // 소장 게임: 같은 id 또는 같은 종류·같은 이름이 이미 있으면 '이미 있음' (이름이 같으면 새로 만들지 않음)
+  const gameIds = new Set(state.games.map((g) => g.id));
+  const gameKeys = new Map(state.games.map((g) => [gameKey(g), g.id]));
+  const sameGame = (g) => (g.id && gameIds.has(g.id)) || gameKeys.has(gameKey(g));
+  const newGames = data.games.filter((g) => !sameGame(g)).length;
   const newRecs = data.records.filter((r) => !r.id || !recIds.has(r.id)).length;
   const newMems = data.members.filter((m) => (!m.id || !memIds.has(m.id)) && !isMerged(m)).length;
   const mergedN = data.members.filter(isMerged).length;
@@ -313,6 +323,7 @@ async function importFlow(file) {
     h('ul', { class: 'import-counts' },
       h('li', {}, h('strong', { text: `기록 ${data.records.length}개` }), h('span', { text: ` — 새로 ${newRecs} · 이미 있음 ${data.records.length - newRecs}` })),
       h('li', {}, h('strong', { text: `멤버 ${data.members.length}명` }), h('span', { text: ` — 새로 ${newMems} · 이미 있음 ${data.members.length - newMems}` })),
+      data.games.length ? h('li', {}, h('strong', { text: `소장 게임 ${data.games.length}개` }), h('span', { text: ` — 새로 ${newGames} · 이미 있음 ${data.games.length - newGames}` })) : null,
       data.images.length ? h('li', {}, h('strong', { text: `사진 ${data.images.length}장` }), h('span', { text: ' — 가져오는 기록의 사진만 올리고, 서버에 이미 있으면 건너뛰어요' })) : null,
       mergedN ? h('li', { class: 'import-merge' }, h('span', { text: `이름이 같은 멤버 ${mergedN}명은 지금 있는 멤버로 합쳐서 기록을 이어 붙여요` })) : null),
     h('p', { class: 'field-label', text: '이미 있는 항목은' }),
@@ -361,7 +372,9 @@ async function importFlow(file) {
   // 가져오는 기록이 쓰는 사진만 올림 (건너뛰는 기록의 사진까지 올리면 어디에도 안 쓰이는 사진만 쌓임)
   const needed = new Set(records.flatMap((r) => photosOf(r)));
   const images = data.images.filter((im) => needed.has(im.id));
-  const total = members.length + images.length + records.length;
+  // 덮어쓰기는 같은 id 만 (이름만 같은 다른 id 는 건너뜀 — 서버도 같은 이름은 하나만 받음)
+  const games = data.games.filter((g) => (mode === 'overwrite' && g.id && gameIds.has(g.id)) || !sameGame(g));
+  const total = members.length + games.length + images.length + records.length;
   let done = 0, okN = 0, failN = 0;
   const tick = () => {
     done++;
@@ -378,6 +391,19 @@ async function importFlow(file) {
       okN++;
     } catch (e) {
       failN++;
+      if (STOP.includes(e.code)) { cancelled = true; }
+    }
+    tick();
+  }
+  for (const g of games) {
+    if (cancelled) break;
+    try {
+      const res = await api.saveGame({ id: g.id, type: g.type, title: g.title, memo: typeof g.memo === 'string' ? g.memo : '', createdAt: g.createdAt });
+      upsertGame(res.game);
+      okN++;
+    } catch (e) {
+      // 다른 기기에서 같은 이름을 먼저 등록함 → 이미 있는 것으로 보고 건너뜀
+      if (!(e.code === 'invalid' && e.data && e.data.reason === 'duplicate')) failN++;
       if (STOP.includes(e.code)) { cancelled = true; }
     }
     tick();
@@ -455,11 +481,11 @@ function render(root) {
       h('div', { class: 'conn-text' },
         h('p', { class: 'conn-label', text: st.label }),
         h('p', { class: 'conn-desc', text: st.desc }),
-        h('p', { class: 'conn-meta', text: `기록 ${state.records.length}개 · 멤버 ${state.members.length}명${state.lastSync ? ` · ${relTime(state.lastSync)} 동기화` : ''}` })),
+        h('p', { class: 'conn-meta', text: `기록 ${state.records.length}개 · 멤버 ${state.members.length}명${state.games.length ? ` · 소장 게임 ${state.games.length}개` : ''}${state.lastSync ? ` · ${relTime(state.lastSync)} 동기화` : ''}` })),
       refreshBtn));
   const backupSec = h('section', { class: 'card set-sec' },
     h('h2', { class: 'set-title', text: '백업' }),
-    h('p', { class: 'set-desc', text: '모든 기록과 멤버를 JSON 파일로 저장하거나, 백업 파일에서 다시 불러올 수 있어요.' }),
+    h('p', { class: 'set-desc', text: '모든 기록·멤버·소장 게임을 JSON 파일로 저장하거나, 백업 파일에서 다시 불러올 수 있어요.' }),
     switchRow({
       checked: exportPhotos, label: '사진 포함', icon: 'image',
       desc: referencedPhotos().length ? `사진 ${referencedPhotos().length}장 · 파일이 커질 수 있어요` : '기록에 붙인 사진도 파일에 넣어요',

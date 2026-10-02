@@ -8,10 +8,12 @@ import {
   UPSERT_SCRIPT,
   RECORDS_KEY,
   MEMBERS_KEY,
+  GAMES_KEY,
   MAX_RECORDS,
   MAX_MEMBERS,
+  MAX_GAMES,
 } from '../lib/handler.js';
-import { validateRecord, validateMember } from '../lib/validate.js';
+import { validateRecord, validateMember, validateGame } from '../lib/validate.js';
 import { keyMatches, clientIp, readSecret, FAIL_SCRIPT } from '../lib/auth.js';
 import { pairsToObject, wrapUpstash, createRedisFromEnv } from '../lib/redis.js';
 import { createMemoryRedis, startDevServer, sourceToRegExp } from '../scripts/dev.mjs';
@@ -217,6 +219,7 @@ describe('인증', () => {
     assert.equal(res.statusCode, 200);
     assert.deepEqual(res.body.records, []);
     assert.deepEqual(res.body.members, []);
+    assert.deepEqual(res.body.games, []);
     assert.ok(!Number.isNaN(Date.parse(res.body.serverTime)));
     assert.equal(await redis.get('ddh:fail:1.2.3.4'), '1');
   });
@@ -630,6 +633,32 @@ describe('멤버 검증', () => {
   });
 });
 
+describe('소장 게임 검증', () => {
+  test('종류·이름·메모 (알 수 없는 필드는 버림)', () => {
+    assert.deepEqual(validateGame({ type: 'boardgame', title: '  테라포밍   마스 ', memo: ' 확장 포함 ', plays: 3, bg: {} }), {
+      ok: true,
+      value: { type: 'boardgame', title: '테라포밍 마스', memo: '확장 포함' },
+    });
+    assert.deepEqual(validateGame({ type: 'murdermystery', title: '붉은 저택' }).value, { type: 'murdermystery', title: '붉은 저택', memo: '' });
+    // 방탈출은 가지고 있을 수 없음
+    assert.equal(validateGame({ type: 'escaperoom', title: '연구소' }).field, 'type');
+    assert.equal(validateGame({ title: '카탄' }).field, 'type');
+    assert.equal(validateGame({ type: 'boardgame', title: '   ' }).field, 'title');
+    assert.equal(validateGame({ type: 'boardgame', title: '가'.repeat(81) }).field, 'title');
+    assert.equal(validateGame({ type: 'boardgame', title: '가'.repeat(80) }).ok, true);
+    assert.equal(validateGame({ type: 'boardgame', title: '카탄', memo: '가'.repeat(101) }).field, 'memo');
+    assert.equal(validateGame({ type: 'boardgame', title: '카탄', memo: 3 }).field, 'memo');
+    assert.equal(validateGame({ type: 'boardgame', title: '카\n탄\u202E' }).value.title, '카 탄');
+    assert.equal(validateGame({ type: 'boardgame', title: '카탄', id: 'bad id' }).field, 'id');
+    assert.equal(validateGame({ type: 'boardgame', title: '카탄', id: 'constructor' }).field, 'id');
+    // 가져오기: 유효한 createdAt 만 유지, updatedAt 은 서버가 정함
+    assert.deepEqual(validateGame({ type: 'boardgame', title: '카탄', createdAt: '2024-05-05T01:02:03.000Z', updatedAt: 'x' }).value,
+      { type: 'boardgame', title: '카탄', memo: '', createdAt: '2024-05-05T01:02:03.000Z' });
+    assert.equal(validateGame({ type: 'boardgame', title: '카탄', createdAt: 'yesterday' }).value.createdAt, undefined);
+    for (const v of [null, 'x', [], 3]) assert.deepEqual(validateGame(v), { ok: false, field: 'game' });
+  });
+});
+
 // ── 저장소 시나리오 (가짜 / 실제 Redis 공통) ──────────────────
 
 function storageSuite(label, makeRedis) {
@@ -882,6 +911,67 @@ function storageSuite(label, makeRedis) {
       const edit = await post('members', { member: { id: 'mem-3', name: '이름변경' } });
       assert.equal(edit.statusCode, 200);
       await redis.hdel(MEMBERS_KEY, ...Object.keys(filler));
+    });
+
+    test('소장 게임: 등록/수정/같은 종류·같은 이름 중복/삭제, /api/data 에 생성순으로', async () => {
+      await redis.flushall();
+      let clock = Date.parse('2026-10-02T10:00:00.000Z');
+      const { post, del, call } = fresh({ now: () => new Date((clock += 1000)) });
+      const a = await post('games', { game: { type: 'boardgame', title: 'Catan', memo: '5-6인 확장' } });
+      assert.equal(a.statusCode, 200);
+      const catan = a.body.game;
+      assert.match(catan.id, UUID_RE);
+      assert.equal(catan.createdAt, catan.updatedAt);
+      assert.deepEqual(JSON.parse(await redis.hget(GAMES_KEY, catan.id)), catan);
+
+      // 대소문자·공백만 다른 이름은 같은 게임 → 400 + 이미 있는 게임
+      const dup = await post('games', { game: { type: 'boardgame', title: '  catan ' } });
+      assert.equal(dup.statusCode, 400);
+      assert.deepEqual(dup.body, { error: 'invalid', field: 'title', reason: 'duplicate', current: catan });
+      // 종류가 다르면 같은 이름도 됨
+      const mm = await post('games', { game: { type: 'murdermystery', title: 'catan' } });
+      assert.equal(mm.statusCode, 200);
+
+      // 자기 자신은 같은 이름으로 수정 가능, createdAt 유지·updatedAt 갱신
+      const same = await post('games', { game: { ...catan, title: 'CATAN', memo: '' } });
+      assert.equal(same.statusCode, 200);
+      assert.equal(same.body.game.title, 'CATAN');
+      assert.equal(same.body.game.memo, '');
+      assert.equal(same.body.game.createdAt, catan.createdAt);
+      assert.ok(same.body.game.updatedAt > catan.updatedAt);
+
+      assert.deepEqual((await post('games', { game: { type: 'escaperoom', title: '연구소' } })).body, { error: 'invalid', field: 'type' });
+      assert.deepEqual((await post('games', {})).body, { error: 'invalid', field: 'game' });
+      assert.equal((await call('games', { method: 'GET' })).statusCode, 405);
+
+      const data = await call('data');
+      assert.deepEqual(data.body.games.map((g) => [g.type, g.title]), [['boardgame', 'CATAN'], ['murdermystery', 'catan']]);
+
+      assert.deepEqual((await del('games', catan.id)).body, { ok: true });
+      assert.equal((await del('games', catan.id)).statusCode, 404);
+      assert.deepEqual((await del('games', 'bad id')).body, { error: 'invalid', field: 'id' });
+      // 삭제 후엔 같은 이름 다시 등록 가능, 가져오기는 id·createdAt 유지
+      const again = await post('games', { game: { id: 'import-g1', type: 'boardgame', title: 'catan', createdAt: '2024-05-05T01:02:03.000Z' } });
+      assert.equal(again.statusCode, 200);
+      assert.equal(again.body.game.id, 'import-g1');
+      assert.equal(again.body.game.createdAt, '2024-05-05T01:02:03.000Z');
+      // 인증은 다른 API 와 같음
+      assert.equal((await post('games', { game: { type: 'boardgame', title: '몰래' } }, { key: 'wrong-key' })).statusCode, 401);
+      assert.equal((await call('games', { method: 'DELETE', query: { id: 'import-g1' }, key: null })).statusCode, 401);
+    });
+
+    test('소장 게임 한도 1000: 새 게임은 409 limit, 기존 게임 수정은 가능', async () => {
+      await redis.flushall();
+      const filler = {};
+      for (let i = 0; i < MAX_GAMES; i++) filler[`game-${i}`] = JSON.stringify({ id: `game-${i}`, type: 'boardgame', title: `게임${i}` });
+      await redis.hset(GAMES_KEY, filler);
+      const { post } = fresh();
+      const over = await post('games', { game: { type: 'boardgame', title: '새 게임' } });
+      assert.equal(over.statusCode, 409);
+      assert.deepEqual(over.body, { error: 'limit' });
+      const edit = await post('games', { game: { id: 'game-3', type: 'murdermystery', title: '이름변경' } });
+      assert.equal(edit.statusCode, 200);
+      await redis.hdel(GAMES_KEY, ...Object.keys(filler));
     });
 
     test('레이트리밋 카운터 (INCR/EXPIRE/GET)', async () => {
