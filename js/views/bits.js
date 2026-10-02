@@ -65,20 +65,20 @@ function resultBadge(r) {
   return null;
 }
 
-/** 소장 여부 글자: '내 소장' · '빌림 · 영식' · '' (미기록·해당 없음) */
+/** 소장 여부 글자: '내 소장' · '대여 · 영식' · '' (미기록·해당 없음) */
 export function ownershipText(r) {
   const own = ownershipOf(r);
   if (own === 'mine') return '내 소장';
   if (own !== 'borrowed') return '';
   const who = lenderOf(r);
-  return who ? `빌림 · ${who}` : '빌림';
+  return who ? `대여 · ${who}` : '대여';
 }
 
-/** 보드게임·머미: 내 소장 / 빌림을 같은 자리에 작은 배지로 */
+/** 보드게임·머미: 내 소장 / 대여를 같은 자리에 작은 배지로 */
 function ownershipBadge(r) {
   const own = ownershipOf(r);
   if (own === 'mine') return h('span', { class: 'rbadge rbadge-own', text: '내 소장' });
-  if (own === 'borrowed') return h('span', { class: 'rbadge rbadge-borrow', text: '빌림' });
+  if (own === 'borrowed') return h('span', { class: 'rbadge rbadge-borrow', text: '대여' });
   return null;
 }
 

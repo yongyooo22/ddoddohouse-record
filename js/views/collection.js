@@ -1,4 +1,4 @@
-// 소장 — '내 소장'으로 남긴 보드게임·머미를 게임별로 모아 보기 (+ 빌려서 해 본 게임)
+// 소장 — '내 소장'으로 남긴 보드게임·머미를 게임별로 모아 보기 (+ 대여한 게임)
 import { h, icon, starShape } from '../dom.js';
 import { TYPES } from '../constants.js';
 import { state, isFirstLoad, loadFailed } from '../store.js';
@@ -56,7 +56,7 @@ function borrowedRow(g) {
     h('a', { class: 'brow', href: gameHref(g) },
       h('span', { class: 'brow-text' },
         h('span', { class: 'brow-title', text: g.title }),
-        h('span', { class: 'brow-sub', text: [t.short, g.lenders.length ? `${g.lenders.join(', ')}에게 빌림` : '빌림', `${g.plays}번`].join(' · ') })),
+        h('span', { class: 'brow-sub', text: [t.short, `${g.plays}번`, g.lenders.length ? `빌려준 사람 ${g.lenders.join(', ')}` : ''].filter(Boolean).join(' · ') })),
       icon('chevron', 'brow-go')));
 }
 
@@ -106,8 +106,8 @@ export function mount(root, ctx) {
     }
     const borrowedSec = shownBorrowed.length
       ? h('section', { class: 'borrowed' },
-        sectionHead('빌려서 해 본 게임', {
-          action: h('a', { class: 'link-more', href: '#/records?own=borrowed' }, '빌린 기록 보기', icon('chevron')),
+        sectionHead('대여한 게임', {
+          action: h('a', { class: 'link-more', href: '#/records?own=borrowed' }, '대여 기록 보기', icon('chevron')),
         }),
         h('ul', { class: 'blist card' }, shownBorrowed.map(borrowedRow)))
       : null;
