@@ -4,6 +4,7 @@ import { TYPES } from '../constants.js';
 import { fmtDate, fmtDateDot } from '../format.js';
 import { erOrdinals, photosOf } from '../store.js';
 import { typeBadge, stamp } from '../ui.js';
+import { ownershipOf, lenderOf } from '../stats.js';
 import { cardPhoto } from './photos.js';
 
 export const bgOf = (r) => (r && r.bg && typeof r.bg === 'object' ? r.bg : {});
@@ -64,6 +65,23 @@ function resultBadge(r) {
   return null;
 }
 
+/** 소장 여부 글자: '내 소장' · '빌림 · 영식' · '' (미기록·해당 없음) */
+export function ownershipText(r) {
+  const own = ownershipOf(r);
+  if (own === 'mine') return '내 소장';
+  if (own !== 'borrowed') return '';
+  const who = lenderOf(r);
+  return who ? `빌림 · ${who}` : '빌림';
+}
+
+/** 보드게임·머미: 내 소장 / 빌림을 같은 자리에 작은 배지로 */
+function ownershipBadge(r) {
+  const own = ownershipOf(r);
+  if (own === 'mine') return h('span', { class: 'rbadge rbadge-own', text: '내 소장' });
+  if (own === 'borrowed') return h('span', { class: 'rbadge rbadge-borrow', text: '빌림' });
+  return null;
+}
+
 /**
  * 목록/홈 기록 카드 — 티켓 모양: 위(대표 사진 · 종류 · 제목 · 날짜) | 점선 | 아래(평점 · 한줄평)
  * 우승자·멤버·배역·범인·스포일러 내용은 카드에 싣지 않고 상세 화면에서 보여 줌
@@ -80,7 +98,7 @@ export function recordCard(r) {
       h('div', { class: 'rcard-thumb', 'aria-hidden': 'true' },
         photo || h('span', { class: 'rcard-noimg' }, icon(t ? t.icon : 'book'))),
       h('div', { class: 'rcard-head' },
-        h('div', { class: 'rcard-top' }, typeBadge(r.type), resultBadge(r)),
+        h('div', { class: 'rcard-top' }, typeBadge(r.type), resultBadge(r) || ownershipBadge(r)),
         h('h3', { class: 'rcard-title' },
           h('a', {
             class: 'card-link', href: `#/record/${encodeURIComponent(r.id)}`,

@@ -440,6 +440,8 @@ describe('기록 검증', () => {
     ['bg.results.winner', { bg: { results: [{ memberId: 'm1', winner: 1 }] } }],
     ['bg.coopWin', { bg: { mode: 'coop', coopWin: 'yes' } }],
     ['bg.expansion', { bg: { expansion: 'a'.repeat(61) } }],
+    ['bg.ownership', { bg: { ownership: 'own' } }],
+    ['bg.lender', { bg: { ownership: 'borrowed', lender: 'a'.repeat(21) } }],
   ];
   for (const [field, patch] of bad) {
     test(`거부: ${field} ${JSON.stringify(patch).slice(0, 60)}`, () => {
@@ -462,6 +464,8 @@ describe('기록 검증', () => {
     ['mm.difficulty', { difficulty: 6 }],
     ['mm.publisher', { publisher: 'a'.repeat(41) }],
     ['mm.gm', { gm: 'a'.repeat(21) }],
+    ['mm.ownership', { format: 'box', ownership: 'yes' }],
+    ['mm.lender', { format: 'box', ownership: 'borrowed', lender: 'a'.repeat(21) }],
   ];
   for (const [field, patch] of badMm) {
     test(`거부: ${field}`, () => {
@@ -549,6 +553,8 @@ describe('기록 검증', () => {
       scores: { story: 0, deduction: 0, roleplay: 0, balance: 0, production: 0 },
       difficulty: 0,
       replay: false,
+      ownership: null,
+      lender: '',
     });
   });
 
@@ -568,6 +574,28 @@ describe('기록 검증', () => {
     assert.equal(bg.value.bg.coopWin, null);
     const coop = validateRecord(bgRecord({ bg: { mode: 'coop', coopWin: false } }));
     assert.equal(coop.value.bg.coopWin, false);
+  });
+
+  test('소장 여부: 빌렸을 때만 빌려준 사람, 머미는 보드게임형만', () => {
+    const mine = validateRecord(bgRecord({ bg: { ownership: 'mine', lender: '영식' } }));
+    assert.equal(mine.value.bg.ownership, 'mine');
+    assert.equal(mine.value.bg.lender, '');
+    const lent = validateRecord(bgRecord({ bg: { ownership: 'borrowed', lender: '  영식\u202E ' } }));
+    assert.equal(lent.value.bg.ownership, 'borrowed');
+    assert.equal(lent.value.bg.lender, '영식');
+    const none = validateRecord(bgRecord({ bg: { ownership: '', lender: 'x'.repeat(30) } }));
+    assert.equal(none.value.bg.ownership, null);
+    assert.equal(none.value.bg.lender, '');
+    // 예전 기록(필드 없음)도 그대로 통과
+    assert.equal(validateRecord(bgRecord()).value.bg.ownership, null);
+    const box = validateRecord({ ...mmRecord(), mm: { ...mmRecord().mm, format: 'box', ownership: 'borrowed', lender: '준호' } });
+    assert.deepEqual([box.value.mm.ownership, box.value.mm.lender], ['borrowed', '준호']);
+    // 매장형·온라인은 매장·제작사 것 → 소장 여부를 남기지 않음 (잘못된 값도 무시)
+    for (const format of ['store', 'online']) {
+      const r = validateRecord({ ...mmRecord(), mm: { ...mmRecord().mm, format, ownership: 'oops', lender: '준호' } });
+      assert.equal(r.ok, true, format);
+      assert.deepEqual([r.value.mm.ownership, r.value.mm.lender], [null, ''], format);
+    }
   });
 
   test('중복 memberId 결과/배역은 첫 항목만', () => {

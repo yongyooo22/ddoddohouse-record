@@ -1,20 +1,21 @@
-// 기록 목록 — 종류 세그먼트, 검색, 정렬, 멤버/태그 필터, 월별 그룹
+// 기록 목록 — 종류 세그먼트, 검색, 정렬, 멤버/태그/소장 필터, 월별 그룹
 import { h, icon } from '../dom.js';
-import { TYPES, TYPE_KEYS } from '../constants.js';
+import { TYPES, TYPE_KEYS, OWNERSHIPS } from '../constants.js';
 import { state, recordsSorted, membersSorted, allTags, memberInfo, isFirstLoad, loadFailed } from '../store.js';
 import { norm, monthKey, fmtMonth } from '../format.js';
 import { segmented, chip, avatar, emptyState, loadingState, loadErrorState } from '../ui.js';
+import { ownershipOf, lenderOf, titleKey } from '../stats.js';
 import { recordCard, bgOf, mmOf, erOf } from './bits.js';
 
 const PAGE = 60;
 
-// 화면을 떠났다 돌아와도 필터 유지
-const filters = { type: 'all', q: '', sort: 'new', members: [], tags: [], open: false };
+// 화면을 떠났다 돌아와도 필터 유지. own: 소장 여부('mine'|'borrowed'|''), title: 한 게임만 (소장 탭에서 옴)
+const filters = { type: 'all', q: '', sort: 'new', members: [], tags: [], own: '', title: '', open: false };
 
 function haystack(r) {
   const parts = [r.title, r.oneLiner, r.review, ...(Array.isArray(r.tags) ? r.tags : [])];
   const bg = bgOf(r), mm = mmOf(r), er = erOf(r);
-  parts.push(bg.place, bg.expansion, mm.publisher, mm.store, mm.gm, er.brand, er.branch, er.genre);
+  parts.push(bg.place, bg.expansion, mm.publisher, mm.store, mm.gm, er.brand, er.branch, er.genre, lenderOf(r));
   for (const x of Array.isArray(mm.roles) ? mm.roles : []) parts.push(x && x.character);
   return norm(parts.filter(Boolean).join(' \n '));
 }
@@ -29,10 +30,13 @@ function matches(r, q) {
 
 function applyFilters() {
   const q = norm(filters.q);
+  const tk = titleKey(filters.title);
   let list = recordsSorted().filter((r) =>
     (filters.type === 'all' || r.type === filters.type) &&
     (!filters.members.length || filters.members.every((id) => Array.isArray(r.members) && r.members.includes(id))) &&
     (!filters.tags.length || filters.tags.every((t) => Array.isArray(r.tags) && r.tags.includes(t))) &&
+    (!filters.own || ownershipOf(r) === filters.own) &&
+    (!tk || titleKey(r.title) === tk) &&
     matches(r, q));
   if (filters.sort === 'old') list = [...list].reverse();
   else if (filters.sort === 'rating') {
@@ -47,8 +51,9 @@ export function mount(root, ctx) {
   // 다른 화면의 링크(종류 바로가기·태그·멤버 '모두 보기')로 왔으면 예전 검색·필터를 비우고 그 조건만
   // (탭으로 돌아온 경우에는 쓰던 필터를 그대로 둠)
   const typeQ = q.type && (q.type === 'all' || TYPE_KEYS.includes(q.type)) ? q.type : null;
-  if ((typeQ || q.tag || q.member) && !ctx.restored) {
-    Object.assign(filters, { type: typeQ || 'all', q: '', sort: 'new', members: [], tags: [], open: false });
+  const ownQ = OWNERSHIPS.some((o) => o.key === q.own) ? q.own : '';
+  if ((typeQ || q.tag || q.member || ownQ || q.title) && !ctx.restored) {
+    Object.assign(filters, { type: typeQ || 'all', q: '', sort: 'new', members: [], tags: [], own: ownQ, title: q.title || '', open: false });
     if (q.tag) { filters.tags = [q.tag]; filters.open = true; }
     if (q.member) { filters.members = [q.member]; filters.open = true; }
   }
@@ -116,15 +121,48 @@ export function mount(root, ctx) {
             },
           })))
           : h('p', { class: 'muted small', text: '아직 쓴 태그가 없어요' })),
+      h('div', { class: 'fp-group' },
+        h('p', { class: 'fp-label', text: '소장 여부 (보드게임·머미)' }),
+        h('div', { class: 'chips' }, ownChips())),
       h('div', { class: 'fp-actions' },
         h('button', {
           type: 'button', class: 'btn btn-ghost btn-sm',
-          onClick: () => { filters.members = []; filters.tags = []; limit = PAGE; renderPanel(); renderResults(); },
+          onClick: () => { filters.members = []; filters.tags = []; filters.own = ''; filters.title = ''; limit = PAGE; renderPanel(); renderResults(); },
         }, '필터 초기화')));
+  }
+
+  /** 소장 여부 칩: 하나만 고름 (다시 누르면 해제) */
+  function ownChips() {
+    const els = OWNERSHIPS.map((o) => [o.key, chip({
+      label: o.label, pressed: filters.own === o.key, cls: 'chip-own',
+      onToggle: (on) => {
+        filters.own = on ? o.key : '';
+        for (const [k, el] of els) if (k !== o.key) el.setAttribute('aria-pressed', 'false');
+        limit = PAGE; renderResults();
+      },
+    })]);
+    return els.map(([, el]) => el);
+  }
+
+  /** 한 게임만 보는 중 (소장 탭에서 옴) — 필터 칸에 없는 조건이라 넓은 화면에서도 늘 보임 */
+  function titleChip() {
+    if (!filters.title) return null;
+    return h('div', { class: 'achips achips-title' },
+      h('button', {
+        type: 'button', class: 'achip', 'aria-label': `‘${filters.title}’ 기록만 보기 해제`,
+        onClick: () => { filters.title = ''; renderResults(); },
+      }, icon('box'), h('span', { text: `‘${filters.title}’ 기록만` }), icon('x')));
   }
 
   function activeChips() {
     const items = [];
+    if (filters.own) {
+      const o = OWNERSHIPS.find((x) => x.key === filters.own);
+      items.push(h('button', {
+        type: 'button', class: 'achip', 'aria-label': `${o.label} 필터 해제`,
+        onClick: () => { filters.own = ''; renderPanel(); renderResults(); },
+      }, h('span', { text: o.label }), icon('x')));
+    }
     for (const id of filters.members) {
       items.push(h('button', {
         type: 'button', class: 'achip', 'aria-label': `${memberInfo(id).name} 필터 해제`,
@@ -142,13 +180,15 @@ export function mount(root, ctx) {
 
   function renderResults() {
     const list = applyFilters();
-    const nf = filters.members.length + filters.tags.length;
+    const nf = filters.members.length + filters.tags.length + (filters.own ? 1 : 0) + (filters.title ? 1 : 0);
     filterBadge.hidden = nf === 0;
     filterBadge.textContent = String(nf);
     const scoped = filters.type === 'all' ? '전체' : TYPES[filters.type].short;
     countEl.textContent = filters.q || nf ? `${scoped} 중 ${list.length}개 찾았어요` : `${scoped} ${list.length}개`;
 
     const out = [];
+    const tc = titleChip();
+    if (tc) out.push(tc);
     const ac = activeChips();
     if (ac) out.push(ac);
 

@@ -114,6 +114,31 @@ export function bgDecided(record) {
   return arr(bg.results).some((x) => obj(x).winner === true);
 }
 
+/** 제목 묶기용 키 — 같은 게임인지 비교할 때 (공백 정리 + 대소문자 무시) */
+export function titleKey(title) {
+  return groupKey(title);
+}
+
+/**
+ * 이번 판에 쓴 게임이 내 소장인지: 'mine' | 'borrowed' | null(미기록·해당 없음).
+ * 보드게임, 또는 집에서 하는 보드게임형 머미만 (매장형·온라인 머미와 방탈출은 항상 null)
+ */
+export function ownershipOf(record) {
+  const r = obj(record);
+  let b;
+  if (r.type === 'boardgame') b = obj(r.bg);
+  else if (r.type === 'murdermystery' && obj(r.mm).format === 'box') b = obj(r.mm);
+  else return null;
+  return b.ownership === 'mine' || b.ownership === 'borrowed' ? b.ownership : null;
+}
+
+/** 빌린 게임이면 빌려준 사람 (적지 않았으면 '') */
+export function lenderOf(record) {
+  if (ownershipOf(record) !== 'borrowed') return '';
+  const r = obj(record);
+  return str(obj(r.type === 'boardgame' ? r.bg : r.mm).lender).trim();
+}
+
 /** 머미 기록에서 해당 멤버의 배역 (없으면 null) */
 export function mmRoleOf(record, memberId) {
   return arr(obj(obj(record).mm).roles).find((x) => obj(x).memberId === memberId) || null;
@@ -357,4 +382,55 @@ export function memberProfile(records, memberId) {
     }
   }
   return { byType, bg, mm, er, recent: [...mine].sort(byLatest).slice(0, 5) };
+}
+
+// ── 소장 목록 ────────────────────────────────────────────────
+
+/**
+ * 보드게임·머미 기록을 같은 종류·같은 제목끼리 한 게임으로 묶어서,
+ * '내 소장'으로 표시한 판이 하나라도 있으면 owned, 아니고 '빌림'으로 한 판이 있으면 borrowed 에 담는다.
+ * 횟수·날짜·평균 별점은 그 게임의 모든 판으로 센다. 두 목록 모두 최근에 한 게임부터.
+ * @returns {{ owned: Game[], borrowed: Game[] }}
+ *   Game = { key, type, title(가장 최근 판의 제목), plays, lastDate, firstDate, avgRating(없으면 null),
+ *            latestId, cover(가장 최근 사진 id 또는 null), lenders(빌려준 사람, 최근 순) }
+ */
+export function collectionOf(records) {
+  const list = arr(records)
+    .filter((r) => isRecord(r) && (r.type === 'boardgame' || r.type === 'murdermystery'))
+    .sort(byLatest);
+  const games = new Map();
+  for (const r of list) {
+    const k = groupKey(r.title);
+    if (!k) continue;
+    const key = `${r.type}:${k}`;
+    let g = games.get(key);
+    if (!g) {
+      g = {
+        key, type: r.type, title: str(r.title).trim().replace(/\s+/g, ' '), plays: 0,
+        lastDate: str(r.date), firstDate: str(r.date), latestId: r.id, cover: null, lenders: [],
+        ratings: [], mine: 0, borrowed: 0,
+      };
+      games.set(key, g);
+    }
+    g.plays++;
+    g.firstDate = str(r.date); // 최신순으로 도니까 마지막 값이 가장 오래된 판
+    const rating = num(r.rating);
+    if (rating !== null && rating > 0) g.ratings.push(rating);
+    if (!g.cover) g.cover = arr(r.photos).find((id) => typeof id === 'string' && id) || null;
+    const own = ownershipOf(r);
+    if (own === 'mine') g.mine++;
+    else if (own === 'borrowed') {
+      g.borrowed++;
+      const who = lenderOf(r);
+      if (who && !g.lenders.some((x) => groupKey(x) === groupKey(who))) g.lenders.push(who);
+    }
+  }
+  const owned = [];
+  const borrowed = [];
+  for (const { ratings, mine, borrowed: nb, ...game } of games.values()) {
+    const out = { ...game, avgRating: avg(ratings) };
+    if (mine) owned.push(out);
+    else if (nb) borrowed.push(out);
+  }
+  return { owned, borrowed };
 }
