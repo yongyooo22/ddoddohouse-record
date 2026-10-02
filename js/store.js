@@ -58,6 +58,7 @@ export function clearDraftIf(match) {
 export const state = {
   records: [],
   members: [],
+  games: [],           // 기록 없이 소장 목록에 등록한 게임
   serverTime: null,
   lastSync: null,      // 마지막으로 서버에서 받아온 시각(ISO)
   fromCache: false,    // 지금 보이는 데이터가 기기 캐시인지
@@ -91,6 +92,7 @@ export function loadCache() {
   if (!c) return false;
   state.records = asArray(c.records);
   state.members = asArray(c.members);
+  state.games = asArray(c.games);
   state.lastSync = typeof c.savedAt === 'string' ? c.savedAt : null;
   state.fromCache = true;
   bump();
@@ -104,6 +106,7 @@ function saveCache() {
     raw = JSON.stringify({
       records: state.records,
       members: state.members,
+      games: state.games,
       savedAt: state.lastSync || new Date().toISOString(),
     });
   } catch { raw = null; }
@@ -114,7 +117,7 @@ function saveCache() {
 
 // ── 로컬 변경 기록 (새로고침 응답이 방금 저장/삭제한 내용을 되돌리지 않도록) ──
 let mutationSeq = 0;
-let localOps = []; // { seq, kind: 'record'|'member', id, value(null = 삭제) }
+let localOps = []; // { seq, kind: 'record'|'member'|'game', id, value(null = 삭제) }
 
 function noteOp(kind, id, value) {
   mutationSeq += 1;
@@ -146,16 +149,19 @@ function mergeLocal(list, kind, since) {
  * 서버에서 받은 전체 데이터 반영.
  * since: 요청을 보내기 직전의 mutationMark(). 주면 그 뒤의 로컬 저장·삭제를 덮어쓰지 않는다.
  */
-export function setData({ records, members, serverTime }, { since } = {}) {
+export function setData({ records, members, games, serverTime }, { since } = {}) {
   let recs = asArray(records);
   let mems = asArray(members);
+  let gams = asArray(games);
   if (typeof since === 'number') {
     recs = mergeLocal(recs, 'record', since);
     mems = mergeLocal(mems, 'member', since);
+    gams = mergeLocal(gams, 'game', since);
     localOps = localOps.filter((op) => op.seq > since);
   }
   state.records = recs;
   state.members = mems;
+  state.games = gams;
   state.serverTime = serverTime || null;
   state.lastSync = new Date().toISOString();
   state.fromCache = false;
@@ -209,6 +215,25 @@ export function removeMember(id) {
   emit('data');
 }
 
+export function upsertGame(g) {
+  if (!g || typeof g.id !== 'string') return;
+  noteOp('game', g.id, g);
+  const i = state.games.findIndex((x) => x.id === g.id);
+  if (i >= 0) state.games = state.games.map((x, j) => (j === i ? g : x));
+  else state.games = [...state.games, g];
+  bump();
+  saveCache();
+  emit('data');
+}
+
+export function removeGame(id) {
+  noteOp('game', id, null);
+  state.games = state.games.filter((g) => g.id !== id);
+  bump();
+  saveCache();
+  emit('data');
+}
+
 /** 키 + 캐시 삭제 (401 등, 초안은 남김) */
 export function forgetAccess() {
   localOps = [];
@@ -216,6 +241,7 @@ export function forgetAccess() {
   lsRemove(STORAGE.cache);
   state.records = [];
   state.members = [];
+  state.games = [];
   state.lastSync = null;
   state.fromCache = false;
   state.status = 'idle';
@@ -240,6 +266,7 @@ export function wipeLocal() {
   clearDraft();
   state.records = [];
   state.members = [];
+  state.games = [];
   state.lastSync = null;
   state.fromCache = false;
   state.status = 'idle';

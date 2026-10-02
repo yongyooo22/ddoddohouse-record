@@ -94,6 +94,11 @@ export const saveMember = (member) => request('POST', '/api/members', { member }
 
 export const deleteMember = (id) => request('DELETE', `/api/members?id=${encodeURIComponent(id)}`);
 
+/** 소장 게임 (기록 없이 소장 목록에만) {id?, type, title, memo} → {game} */
+export const saveGame = (game) => request('POST', '/api/games', { game });
+
+export const deleteGame = (id) => request('DELETE', `/api/games?id=${encodeURIComponent(id)}`);
+
 // ── 사진 ──
 const IMAGE_TIMEOUT_MS = 30000;
 /** 올리기: 전체 시간이 아니라 '진행이 멈춘 시간'으로 판단 (느린 연결에서도 조금씩 올라가면 기다림) */

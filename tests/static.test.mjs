@@ -103,7 +103,7 @@ test('vercel.json: 전역 보안 헤더와 no-cache', () => {
     assert.ok(rule && rule.headers.some((x) => x.key === 'Cache-Control' && /no-cache/.test(x.value)), p);
   }
   const api = readdirSync(path.join(ROOT, 'api')).filter((f) => f.endsWith('.js'));
-  assert.deepEqual(api.sort(), ['data.js', 'images.js', 'members.js', 'records.js']);
+  assert.deepEqual(api.sort(), ['data.js', 'games.js', 'images.js', 'members.js', 'records.js']);
   assert.ok(api.length <= 12, 'Vercel Hobby 함수 수 제한');
 });
 

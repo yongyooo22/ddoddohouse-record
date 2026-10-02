@@ -434,6 +434,7 @@ export async function startDevServer(opts = {}) {
     '/api/data': handlers.data,
     '/api/records': handlers.records,
     '/api/members': handlers.members,
+    '/api/games': handlers.games,
     '/api/images': handlers.images,
   };
   // 사진 업로드만 1.5MB, 나머지는 64KB (배포에서는 Vercel 이 본문을 받고 handler 가 같은 한도로 다시 확인)
