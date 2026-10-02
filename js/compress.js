@@ -1,10 +1,11 @@
 // 사진 줄이기 — 기기에서 디코드한 뒤 canvas 로 다시 인코딩해서 올림
 // 다시 그리는 과정에서 EXIF(촬영 위치 GPS·기기 정보 등) 메타데이터가 모두 빠짐
 
-/** 원본 크기 사진: 긴 변 1600px, WebP(안 되면 JPEG) 0.82 부터, 600KB 이하 */
-export const FULL = { side: 1600, quality: 0.82, maxBytes: 600 * 1024 };
-/** 작은 사진(목록·썸네일): 긴 변 480px, 0.75, 80KB 이하 */
-export const THUMB = { side: 480, quality: 0.75, maxBytes: 80 * 1024 };
+// 저장 공간(Upstash 무료 256MB)을 아끼려고 휴대폰 화면에서 충분히 선명한 만큼만 남김
+/** 원본 크기 사진: 긴 변 1280px, WebP(안 되면 JPEG) 0.8 부터, 350KB 이하 */
+export const FULL = { side: 1280, quality: 0.8, maxBytes: 350 * 1024 };
+/** 작은 사진(목록·썸네일, 화면에서 최대 120px 안팎): 긴 변 360px, 0.72, 40KB 이하 */
+export const THUMB = { side: 360, quality: 0.72, maxBytes: 40 * 1024 };
 
 const MAX_INPUT_BYTES = 60 * 1024 * 1024;
 const MIN_QUALITY = 0.5;

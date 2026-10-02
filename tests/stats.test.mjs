@@ -17,6 +17,7 @@ import {
   lenderOf,
   titleKey,
   collectionOf,
+  storageUsage,
 } from '../js/stats.js';
 
 const close = (actual, expected, msg) => assert.ok(Math.abs(actual - expected) < 1e-9, `${msg ?? ''} ${actual} ≠ ${expected}`);
@@ -480,5 +481,33 @@ describe('소장', () => {
   test('collectionOf: 빈 입력·이상한 값에도 죽지 않음', () => {
     assert.deepEqual(collectionOf(null), { owned: [], borrowed: [] });
     assert.deepEqual(collectionOf([null, 3, { type: 'boardgame', title: '', bg: { ownership: 'mine' } }]), { owned: [], borrowed: [] });
+  });
+});
+
+describe('사진 저장 공간', () => {
+  const MB = 1024 * 1024;
+  const lim = { limitCount: 3000, limitBytes: 150 * MB };
+
+  test('storageUsage: 장수·용량 중 더 찬 쪽 · 대략 남은 장수', () => {
+    const u = storageUsage({ count: 100, bytes: 20 * MB, ...lim });
+    close(u.ratio, 20 / 150);
+    assert.deepEqual([u.warn, u.full, u.left], [false, false, 650]); // 평균 0.2MB → 남은 130MB 에 650장
+    close(storageUsage({ count: 2700, bytes: 10 * MB, ...lim }).ratio, 0.9); // 장수가 더 찬 쪽
+  });
+
+  test('80% 부터 알림, 한도에 닿거나 한 장도 더 못 넣으면 가득 참', () => {
+    const warn = storageUsage({ count: 600, bytes: 121 * MB, ...lim });
+    assert.deepEqual([warn.warn, warn.full, warn.left], [true, false, 143]);
+    assert.equal(storageUsage({ count: 600, bytes: 120 * MB - 1, ...lim }).warn, false);
+    assert.equal(storageUsage({ count: 600, bytes: 150 * MB, ...lim }).full, true);
+    assert.equal(storageUsage({ count: 3000, bytes: 1 * MB, ...lim }).full, true);
+    const almost = storageUsage({ count: 600, bytes: 150 * MB - 100 * 1024, ...lim }); // 평균 한 장(0.25MB)도 안 남음
+    assert.deepEqual([almost.full, almost.left], [true, 0]);
+  });
+
+  test('응답이 없거나 이상해도 막지 않음', () => {
+    assert.deepEqual(storageUsage(null), { ratio: 0, warn: false, full: false, left: null });
+    assert.deepEqual(storageUsage({ count: 0, bytes: 0, ...lim }), { ratio: 0, warn: false, full: false, left: 3000 });
+    assert.equal(storageUsage({ count: 'x', bytes: -5, limitBytes: 0, limitCount: 0 }).full, false);
   });
 });
