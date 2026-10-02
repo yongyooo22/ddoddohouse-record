@@ -1251,6 +1251,21 @@ await step('소장 게임 등록 (기록 없이) · 계속 등록 · 메뉴 · �
   }
 });
 
+await step('푸터: 모든 화면 맨 아래 제작자 표시 (탭 막대에 가리지 않음)', async () => {
+  for (const [hash, sel] of [['#/', '.page-home'], ['#/collection', '.page-collection'], ['#/settings', '.page-settings']]) {
+    await go(hash, sel);
+    check(`${hash}: 푸터 문구`, (await text('.app-foot')) === '© 2026 제작: 김연경(earthssaem@gmail.com)', await text('.app-foot'));
+    const pos = await page.evaluate(() => {
+      scrollTo(0, document.scrollingElement.scrollHeight);
+      const f = document.querySelector('.app-foot').getBoundingClientRect();
+      const bar = document.getElementById('tabbar').getBoundingClientRect();
+      return { bottom: Math.round(f.bottom - parseFloat(getComputedStyle(document.querySelector('.app-foot')).paddingBottom)), barTop: Math.round(bar.top) };
+    });
+    check(`${hash}: 맨 아래로 내리면 탭 막대 위에 보임`, pos.bottom <= pos.barTop, JSON.stringify(pos));
+  }
+  await go('#/', '.page-home');
+});
+
 let exportFile = null;
 await step('설정: 내보내기 · 가져오기', async () => {
   await tab('home', '.page-home');

@@ -281,10 +281,17 @@ h1, h2, h3, p { margin: 0; }
 }
 .view {
   container: view / inline-size;
-  padding: 0 var(--pad-r) calc(var(--tabbar-h) + 36px + env(safe-area-inset-bottom)) var(--pad-l);
+  padding: 0 var(--pad-r) 28px var(--pad-l);
+}
+/* 모든 화면 맨 아래 제작자 표시. 아래 탭 막대에 가리지 않게 여백은 여기서 */
+.app-foot {
+  padding: 4px var(--pad-r) calc(var(--tabbar-h) + 36px + env(safe-area-inset-bottom)) var(--pad-l);
+  color: var(--ink-3); font-size: 12px; text-align: center; overflow-wrap: anywhere;
 }
 body:not(.has-tabbar) .view,
-body.is-locked .view { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
+body.is-locked .view { padding-bottom: 20px; }
+body:not(.has-tabbar) .app-foot,
+body.is-locked .app-foot { padding-bottom: calc(20px + env(safe-area-inset-bottom)); }
 
 .boot { min-height: 70vh; display: grid; place-content: center; justify-items: center; gap: 16px; color: var(--ink-3); font-size: 14px; font-weight: 600; letter-spacing: .01em; }
 .boot-logo { width: 72px; height: 72px; border-radius: 20px; animation: breathe 1.8s ease-in-out infinite; }
@@ -1486,7 +1493,8 @@ html.vw-open, html.vw-open body { overflow: hidden; }
   .tab.tab-settings { display: flex; margin-top: auto; }
 
   body.is-app .app { max-width: none; margin-left: calc(var(--side-w) + env(safe-area-inset-left)); }
-  body.is-app .view { padding-bottom: 56px; }
+  body.is-app .view { padding-bottom: 28px; }
+  body.is-app .app-foot { padding-bottom: 28px; }
   body.is-app .toasts { left: calc(var(--side-w) + env(safe-area-inset-left)); bottom: calc(28px + env(safe-area-inset-bottom)); }
   /* 앱 이름은 메뉴 위에 있으므로 홈 머리의 작은 앱 이름은 숨김 */
   .page-home .kicker { display: none; }
