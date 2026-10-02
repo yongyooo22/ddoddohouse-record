@@ -35,7 +35,7 @@ export const TAG_SUGGESTIONS = {
 export const LIMITS = {
   title: 80, oneLiner: 100, review: 5000, tag: 15, tags: 10, members: 20,
   place: 40, expansion: 60, publisher: 40, store: 40, gm: 20, character: 30,
-  brand: 40, branch: 40, genre: 20, memberName: 20, photos: 4,
+  brand: 40, branch: 40, genre: 20, memberName: 20, lender: 20, photos: 4,
 };
 
 export const BG_MODES = [
@@ -71,6 +71,12 @@ export const ER_SCORES = [
   { key: 'device', label: '장치·연출' },
 ];
 
+// 보드게임·머미(보드게임형): 이번 판에 쓴 게임이 내 소장인지, 빌린 것인지 (없으면 미기록)
+export const OWNERSHIPS = [
+  { key: 'mine', label: '내 소장' },
+  { key: 'borrowed', label: '빌림' },
+];
+
 export const CULPRIT_RESULTS = [
   { key: 'caught', label: '검거 성공' },
   { key: 'escaped', label: '범인 도주' },
@@ -103,6 +109,7 @@ export const FIELD_LABELS = {
   roles: '역할', character: '캐릭터', culpritResult: '범인 검거 결과', scores: '세부 점수', difficulty: '난이도',
   brand: '브랜드', branch: '지점', genre: '장르', timeLimitMin: '제한 시간', remainingSec: '남은 시간',
   hints: '힌트', fear: '공포도', activity: '활동성', name: '이름', emoji: '이모지', color: '색', photos: '사진',
+  ownership: '소장 여부', lender: '빌려준 사람',
 };
 
 export const STORAGE = {

@@ -6,7 +6,7 @@ import { fmtDate, fmtMinutes, fmtRemaining, fmtDateTime } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
 import { appBar, typeBadge, starsView, stamp, avatar, scoreBars, spoilerBlock, confirmDialog, toast, emptyState, loadingState, loadErrorState } from '../ui.js';
-import { recordStamp, ordinalLabel, bgOf, mmOf, erOf, spoilerKey } from './bits.js';
+import { recordStamp, ordinalLabel, bgOf, mmOf, erOf, spoilerKey, ownershipText } from './bits.js';
 import { gallery, closeViewer } from './photos.js';
 
 // 상세를 다시 그려도(새로고침·다른 기기의 변경) 보던 사진 그대로: 기록 id → 사진 번호
@@ -50,6 +50,7 @@ function bgSection(r) {
     ['장소', bg.place, 'pin'],
     ['플레이 시간', fmtMinutes(bg.playTimeMin), 'clock'],
     ['확장판', bg.expansion, 'sparkle'],
+    ['소장 여부', ownershipText(r), 'box'],
   ]) || h('p', { class: 'muted small', text: '추가 정보 없음' })));
 
   if (bg.mode === 'coop') {
@@ -85,6 +86,7 @@ function mmSection(r) {
     ['GM', mm.gm, 'mask'],
     ['인원', mm.playerCount ? `${mm.playerCount}인` : '', 'users'],
     ['플레이 시간', fmtMinutes(mm.playTimeMin), 'clock'],
+    ['소장 여부', ownershipText(r), 'box'],
   ]) || h('p', { class: 'muted small', text: '추가 정보 없음' })));
 
   const roles = arr(mm.roles).filter((x) => x && x.memberId);

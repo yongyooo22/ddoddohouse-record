@@ -29,10 +29,11 @@ function blankModel(type) {
     spoiler: false,
     tags: [],
     photos: [],
-    bg: { place: '', playTimeMin: '', mode: 'competitive', results: [], coopWin: null, expansion: '' },
+    bg: { place: '', playTimeMin: '', mode: 'competitive', results: [], coopWin: null, expansion: '', ownership: null, lender: '' },
     mm: {
       publisher: '', format: 'store', store: '', gm: '', playerCount: '', playTimeMin: '', roles: [], culpritResult: null,
       scores: { story: 0, deduction: 0, roleplay: 0, balance: 0, production: 0 }, difficulty: 0, replay: false,
+      ownership: null, lender: '',
     },
     er: {
       brand: '', branch: '', genre: '', playerCount: '', timeLimitMin: '', cleared: null, hints: 0,
@@ -43,6 +44,7 @@ function blankModel(type) {
 }
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+const ownOrNull = (v) => (v === 'mine' || v === 'borrowed' ? v : null);
 
 /** 저장된 기록 또는 초안 → 폼 모델 (구조 보장) */
 function toModel(src, type) {
@@ -59,6 +61,7 @@ function toModel(src, type) {
     Object.assign(m.bg, {
       place: b.place || '', playTimeMin: b.playTimeMin ? String(b.playTimeMin) : '', mode: ['competitive', 'coop', 'team'].includes(b.mode) ? b.mode : 'competitive',
       coopWin: typeof b.coopWin === 'boolean' ? b.coopWin : null, expansion: b.expansion || '',
+      ownership: ownOrNull(b.ownership), lender: typeof b.lender === 'string' ? b.lender : '',
       results: Array.isArray(b.results) ? b.results.filter(isObj).map((r) => ({
         memberId: r.memberId, score: r.score === null || r.score === undefined || r.score === '' ? null : Number(r.score),
         rank: r.rank ? Number(r.rank) : null, winner: !!r.winner,
@@ -72,6 +75,7 @@ function toModel(src, type) {
       playerCount: b.playerCount ? String(b.playerCount) : '', playTimeMin: b.playTimeMin ? String(b.playTimeMin) : '',
       culpritResult: ['caught', 'escaped'].includes(b.culpritResult) ? b.culpritResult : null,
       difficulty: Number(b.difficulty) || 0, replay: !!b.replay,
+      ownership: ownOrNull(b.ownership), lender: typeof b.lender === 'string' ? b.lender : '',
       roles: Array.isArray(b.roles) ? b.roles.filter(isObj).map((r) => ({
         memberId: r.memberId, character: r.character || '', culprit: !!r.culprit,
         outcome: ['win', 'lose', 'draw'].includes(r.outcome) ? r.outcome : null, mvp: !!r.mvp,
@@ -127,6 +131,7 @@ function toPayload(m, id, createdAt) {
     rec.bg = {
       place: b.place.trim(), playTimeMin: intOrNull(b.playTimeMin) ?? 0, mode: b.mode, expansion: b.expansion.trim(),
       coopWin: b.mode === 'coop' ? b.coopWin : null,
+      ownership: ownOrNull(b.ownership), lender: b.ownership === 'borrowed' ? b.lender.trim() : '',
       results: b.mode === 'coop' ? [] : b.results.filter((r) => m.members.includes(r.memberId)).map((r) => ({
         memberId: r.memberId,
         score: r.score === null || r.score === '' || !Number.isFinite(Number(r.score)) ? null : Number(r.score),
@@ -137,6 +142,7 @@ function toPayload(m, id, createdAt) {
   } else if (m.type === 'murdermystery') {
     const b = m.mm;
     const pc = intOrNull(b.playerCount) ?? (n ? Math.min(20, n) : null);
+    const own = b.format === 'box' ? ownOrNull(b.ownership) : null; // 소장 여부는 보드게임형만
     rec.mm = {
       publisher: b.publisher.trim(), format: b.format, store: b.format === 'store' ? b.store.trim() : '', gm: b.gm.trim(),
       playerCount: pc, playTimeMin: intOrNull(b.playTimeMin) ?? 0,
@@ -144,6 +150,7 @@ function toPayload(m, id, createdAt) {
         memberId: r.memberId, character: r.character.trim(), culprit: !!r.culprit, outcome: r.outcome || null, mvp: !!r.mvp,
       })),
       culpritResult: b.culpritResult || null, scores: { ...b.scores }, difficulty: b.difficulty, replay: !!b.replay,
+      ownership: own, lender: own === 'borrowed' ? b.lender.trim() : '',
     };
   } else if (m.type === 'escaperoom') {
     const b = m.er;
@@ -429,12 +436,18 @@ function buildForm(root, { rec, type, query, orphanId = null }) {
       set(m.bg, 'mode', prev.bg.mode, '방식');
       set(m.bg, 'expansion', prev.bg.expansion, '확장판');
       set(m.bg, 'place', prev.bg.place, '장소');
+      set(m.bg, 'ownership', prev.bg.ownership, '소장 여부');
+      if (prev.bg.ownership === 'borrowed') set(m.bg, 'lender', prev.bg.lender, '빌려준 사람');
     } else if (type === 'murdermystery' && prev.mm) {
       set(m.mm, 'publisher', prev.mm.publisher, '제작사');
       set(m.mm, 'format', prev.mm.format, '형태');
       set(m.mm, 'store', prev.mm.store, '매장');
       set(m.mm, 'playerCount', prev.mm.playerCount, '인원');
       set(m.mm, 'playTimeMin', prev.mm.playTimeMin, '시간');
+      if (prev.mm.format === 'box') {
+        set(m.mm, 'ownership', prev.mm.ownership, '소장 여부');
+        if (prev.mm.ownership === 'borrowed') set(m.mm, 'lender', prev.mm.lender, '빌려준 사람');
+      }
       if (!dry && prev.mm.playerCount) m.ui.pcAuto = false;
     } else if (type === 'escaperoom' && prev.er) {
       set(m.er, 'brand', prev.er.brand, '브랜드');

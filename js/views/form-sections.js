@@ -1,8 +1,9 @@
 // 종류별 폼 섹션 (보드게임 / 머더미스터리 / 방탈출)
 import { h, icon, append } from '../dom.js';
-import { BG_MODES, MM_FORMATS, MM_OUTCOMES, MM_SCORES, ER_SCORES, LIMITS, CULPRIT_RESULTS } from '../constants.js';
+import { BG_MODES, MM_FORMATS, MM_OUTCOMES, MM_SCORES, ER_SCORES, LIMITS, CULPRIT_RESULTS, OWNERSHIPS } from '../constants.js';
 import { memberInfo, state } from '../store.js';
 import { norm } from '../format.js';
+import { lenderOf } from '../stats.js';
 import { segmented, chip, switchRow, stepper, ratingInput, avatar, field, nextId, stamp } from '../ui.js';
 
 // ── 공용 입력 ──
@@ -70,6 +71,43 @@ function gaugeRow(label, value, onChange, hint) {
     ratingInput({ value, size: 'sm', kind: 'dot', label, onChange, hint }));
 }
 
+/** 빌려준 사람 후보: 예전에 적은 이름 + 멤버 이름 */
+function lenderSuggestions() {
+  const seen = new Set();
+  const out = [];
+  const add = (v) => {
+    const k = norm(v);
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    out.push(v);
+  };
+  for (const r of state.records) add(lenderOf(r));
+  for (const mb of state.members) add(mb.name);
+  return out;
+}
+
+/** 소장 여부 (내 소장 · 빌림 · 미기록) + 빌렸으면 빌려준 사람 */
+function ownershipFields(b, ctl) {
+  const lenders = datalist(lenderSuggestions());
+  const lenderField = field('빌려준 사람', textInput(b.lender, {
+    max: LIMITS.lender, placeholder: '예) 영식 (선택)', list: lenders.id,
+    onInput: (v) => { b.lender = v; ctl.changed(); },
+  }));
+  lenderField.hidden = b.ownership !== 'borrowed';
+  const seg = segmented({
+    label: '소장 여부', value: b.ownership || 'none', cls: 'seg-own',
+    options: [...OWNERSHIPS, { key: 'none', label: '미기록' }],
+    onChange: (v) => {
+      b.ownership = v === 'none' ? null : v;
+      lenderField.hidden = b.ownership !== 'borrowed';
+      ctl.changed();
+    },
+  });
+  return h('div', { class: 'own-fields' }, lenders.el,
+    field('소장 여부', seg, { hint: '‘내 소장’으로 남긴 게임은 소장 탭에 모여요' }),
+    lenderField);
+}
+
 // ── 보드게임 ──
 /** 점수 → 순위, (직접 고치지 않았다면) 1등 → 승자. 멤버를 더하거나 뺄 때도 같은 규칙으로 */
 export function recalcResults(bg, ui) {
@@ -106,7 +144,8 @@ export function bgSection(m, ctl) {
     h('div', { class: 'grid-2' },
       field('장소', textInput(bg.place, { max: LIMITS.place, placeholder: '예) 또또하우스', onInput: (v) => { bg.place = v; ctl.changed(); } })),
       field('플레이 시간', numInput(bg.playTimeMin, { min: 0, max: 1440, placeholder: '0', unit: '분', label: '플레이 시간(분)', onInput: (v) => { bg.playTimeMin = v; ctl.changed(); } }))),
-    field('확장판', textInput(bg.expansion, { max: LIMITS.expansion, placeholder: '사용한 확장판 (선택)', onInput: (v) => { bg.expansion = v; ctl.changed(); } })));
+    field('확장판', textInput(bg.expansion, { max: LIMITS.expansion, placeholder: '사용한 확장판 (선택)', onInput: (v) => { bg.expansion = v; ctl.changed(); } })),
+    ownershipFields(bg, ctl));
 
   if (bg.mode === 'coop') {
     box.append(subHead('협력 결과'),
@@ -196,6 +235,9 @@ export function mmSection(m, ctl) {
 
   const storeField = field('매장·지점', textInput(mm.store, { max: LIMITS.store, placeholder: '예) 강남점', list: stores.id, onInput: (v) => { mm.store = v; ctl.changed(); } }));
   storeField.hidden = mm.format !== 'store';
+  // 소장 여부는 집에서 하는 보드게임형일 때만
+  const ownField = ownershipFields(mm, ctl);
+  ownField.hidden = mm.format !== 'box';
 
   const pc = numInput(mm.playerCount, { min: 1, max: 20, placeholder: String(m.members.length || ''), unit: '인', label: '인원', onInput: (v) => { mm.playerCount = v; m.ui.pcAuto = false; ctl.changed(); } });
 
@@ -203,9 +245,10 @@ export function mmSection(m, ctl) {
     field('제작사·브랜드', textInput(mm.publisher, { max: LIMITS.publisher, placeholder: '예) 머더랩', list: pubs.id, onInput: (v) => { mm.publisher = v; ctl.changed(); } })),
     field('형태', segmented({
       label: '형태', value: mm.format, options: MM_FORMATS,
-      onChange: (v) => { mm.format = v; storeField.hidden = v !== 'store'; ctl.changed(); },
+      onChange: (v) => { mm.format = v; storeField.hidden = v !== 'store'; ownField.hidden = v !== 'box'; ctl.changed(); },
     })),
     storeField,
+    ownField,
     h('div', { class: 'grid-3' },
       field('GM', textInput(mm.gm, { max: LIMITS.gm, placeholder: '선택', onInput: (v) => { mm.gm = v; ctl.changed(); } })),
       field('인원', pc),

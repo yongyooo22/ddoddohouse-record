@@ -464,6 +464,15 @@ await step('보드게임 기록 (점수·자동 순위·승자)', async () => {
   await page.fill('.page-form input[placeholder="한 문장으로 남긴다면?"]', '화성 개척은 역시 재밌다');
   await page.fill('.page-form textarea', '영식이 막판 도시 타일로 역전했다.\n다음엔 확장 더 넣어서!');
   await page.click('.chip-tag:has(.chip-label:text-is("#전략"))');
+  // 소장 여부: 기본 미기록, ‘빌림’일 때만 빌려준 사람 칸
+  const lenderIn = '.page-form input[placeholder="예) 영식 (선택)"]';
+  check('소장 여부 기본은 미기록', (await page.$eval('.page-form .seg-own .seg-input:checked', (e) => e.value)) === 'none');
+  check('빌려준 사람 칸은 처음엔 숨김', await page.isHidden(lenderIn));
+  await page.click('.page-form .seg-own .seg-item:has-text("빌림")');
+  check('빌림 → 빌려준 사람 칸', await page.isVisible(lenderIn));
+  await page.fill(lenderIn, '영식');
+  await page.click('.page-form .seg-own .seg-item:has-text("내 소장")');
+  check('내 소장 → 빌려준 사람 칸 숨김', await page.isHidden(lenderIn));
   await noOverflow('보드게임 폼');
   await shot('08-form-boardgame');
 
@@ -485,11 +494,13 @@ await step('보드게임 기록 (점수·자동 순위·승자)', async () => {
   check('상세: 우승 도장', (await text('.dhero-stamp')).includes('우승'));
   const info = await text('.page-detail .info-grid');
   check('상세: 장소·시간·확장판', info.includes('또또하우스 거실') && info.includes('2시간 30분') && info.includes('서곡'), info);
+  check('상세: 소장 여부 내 소장', info.includes('소장 여부') && info.includes('내 소장'), info);
   check('상세: 별점 4.5', (await text('.dhero-rating .stars-num')) === '4.5');
   check('상세: 태그', (await texts('.page-detail .dtags .tag')).includes('#전략'));
   const saved = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.bg);
   check('서버 저장: 결과·순위·승자', saved && saved.bg.results.length === 3 && saved.bg.results.find((x) => x.memberId === ids['영식']).winner === true &&
     saved.bg.results.find((x) => x.memberId === ids['연경']).rank === 2 && saved.bg.playTimeMin === 150, JSON.stringify(saved && saved.bg));
+  check('서버 저장: 내 소장 (빌려준 사람은 비움)', saved && saved.bg.ownership === 'mine' && saved.bg.lender === '', JSON.stringify(saved && saved.bg));
   await noOverflow('보드게임 상세');
   await shot('09-detail-boardgame');
 });
@@ -504,6 +515,12 @@ await step('머더미스터리 기록 (역할·범인·세부 점수·스포일�
   await pickMembers(['연경', '영식', '도윤']);
   await page.fill('.page-form input[placeholder="예) 머더랩"]', '머더랩');
   await page.click('.page-form .seg-item:has-text("매장형")');
+  // 소장 여부는 집에서 하는 보드게임형만
+  check('머미 매장형: 소장 여부 칸 없음', await page.isHidden('.page-form .own-fields'));
+  await page.click('.page-form .seg-item:has-text("보드게임형")');
+  check('머미 보드게임형: 소장 여부 칸', await page.isVisible('.page-form .own-fields .seg-own'));
+  await page.click('.page-form .seg-item:has-text("매장형")');
+  check('다시 매장형: 소장 여부 칸 숨김', await page.isHidden('.page-form .own-fields'));
   await page.fill('.page-form input[placeholder="예) 강남점"]', '강남점');
   await page.fill('.page-form input[placeholder="선택"]', '하람');
   await page.fill('.page-form input[aria-label="인원"]', '6');
@@ -716,7 +733,8 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   check('스포일러 머미 카드: 평점은 보임', (await text(`${mmCard} .rcard-rating`)) === '4.0', await text(`${mmCard} .rcard-rating`));
   check('방탈출 카드: 작은 성공 배지', (await text(`${cardOf('잊혀진 연구소')} .rbadge`)) === '탈출 성공');
   check('실패 방탈출: 작은 실패 배지', (await text(`${cardOf('저주받은 인형의 집')} .rbadge`)) === '탈출 실패');
-  check('보드게임·머미 카드엔 결과 배지 없음', !(await page.$(`${bgCard} .rbadge`)) && !(await page.$(`${mmCard} .rbadge`)));
+  check('보드게임·머미 카드엔 결과 배지 없음', !(await page.$(`${bgCard} .rbadge-clear, ${bgCard} .rbadge-fail`)) && !(await page.$(`${mmCard} .rbadge`)));
+  check('보드게임 카드: 작은 내 소장 배지 (매장형 머미는 없음)', (await text(`${bgCard} .rbadge`)) === '내 소장');
   check('카드에 기울인 도장 없음', !(await page.$('.page-list .rcard .stamp')));
   const erText = await text(cardOf('잊혀진 연구소'));
   check('방탈출 카드: 남은 시간·힌트·브랜드·누적 번호는 상세로', !erText.includes('남김') && !erText.includes('힌트') && !erText.includes('키이스케이프') && !erText.includes('번째'), erText);
@@ -982,10 +1000,106 @@ await step('홈 요약 · 멤버 프로필', async () => {
   await shot('24-member-profile');
 });
 
+await step('소장 탭 · 소장 여부 필터 · 이전 기록에서 불러오기', async () => {
+  // 빌려서 한 같은 게임 두 판 + 집에서 한 보드게임형 머미(내 소장) 한 판 — 이 단계 끝에 지움
+  const mk = async (record) => (await api('POST', '/api/records', { record })).data.record.id;
+  const extra = [
+    await mk({ type: 'boardgame', date: PAST, title: '스플렌더', members: [ids['연경']], rating: 3, bg: { ownership: 'borrowed', lender: '영식' } }),
+    await mk({ type: 'boardgame', date: TODAY, title: '스플렌더 ', members: [ids['연경']], bg: { ownership: 'borrowed', lender: '도윤' } }),
+    await mk({ type: 'murdermystery', date: PAST, title: '마지막 야간열차', members: [ids['연경']], rating: 4, mm: { format: 'box', ownership: 'mine' } }),
+  ];
+  await syncFromServer();
+  try {
+    // 휴대폰 탭 막대: 홈 · 기록 · 소장 | ＋ | 통계 · 멤버 · 설정 (새 기록 버튼이 가운데)
+    await tab('home', '.page-home');
+    const bar = await page.$$eval('#tabbar > a', (els) => els.filter((e) => e.getBoundingClientRect().width > 0)
+      .map((e) => { const b = e.getBoundingClientRect(); return { tab: e.dataset.tab, cls: e.className, mid: b.left + b.width / 2 }; }));
+    check('탭 막대 일곱 칸 (소장·설정 포함)', JSON.stringify(bar.map((x) => x.tab)) === JSON.stringify(['home', 'records', 'collection', 'new', 'stats', 'members', 'settings']), JSON.stringify(bar.map((x) => x.tab)));
+    const plus = bar.find((x) => x.cls.includes('tab-add'));
+    check('새 기록 버튼이 가운데', !!plus && Math.abs(plus.mid - VIEWPORT.width / 2) < 2, JSON.stringify(plus));
+    check('홈 머리에 톱니 버튼 없음 (설정은 탭 막대에)', !(await page.$('.page-home .home-head .icon-btn')));
+
+    // 소장 탭: 내 소장으로 남긴 게임만 게임별로 (최근 순), 빌려서 한 게임은 아래에
+    await tab('collection', '.page-collection');
+    check('소장 탭 선택 표시', (await page.getAttribute('#tabbar [data-tab="collection"]', 'aria-current')) === 'page');
+    const owned = await texts('.page-collection .gcard-title');
+    check('소장 게임 2개 (최근 순)', JSON.stringify(owned) === JSON.stringify(['테라포밍 마스', '마지막 야간열차']), JSON.stringify(owned));
+    check('소장 개수', (await text('.page-collection .list-count')) === '보드게임·머미 2개', await text('.page-collection .list-count'));
+    const tera = '.page-collection .gcard:has(.card-link:text-is("테라포밍 마스"))';
+    const teraRec = (await api('GET', '/api/data')).data.records.find((r) => r.title === '테라포밍 마스');
+    check('게임 카드: 횟수·최근 날짜·평균 별점', (await text(`${tera} .gcard-plays`)) === '1번 했어요' &&
+      (await text(`${tera} .gcard-last`)) === `최근 ${teraRec.date.replace(/-/g, '.')}` && (await text(`${tera} .gcard-rating`)) === teraRec.rating.toFixed(1), await text(tera));
+    const lent = await texts('.page-collection .borrowed .brow');
+    check('빌려서 해 본 게임: 스플렌더 (빌려준 사람 최근 순 · 2번)', lent.length === 1 && lent[0].includes('스플렌더') && lent[0].includes('도윤, 영식에게 빌림') && lent[0].includes('2번'), JSON.stringify(lent));
+    await page.click('.page-collection .seg-type .seg-item:has-text("머미")');
+    check('종류 고르기: 머미만', JSON.stringify(await texts('.page-collection .gcard-title')) === JSON.stringify(['마지막 야간열차']) && !(await page.$('.page-collection .borrowed')));
+    await page.click('.page-collection .seg-type .seg-item:has-text("전체")');
+    await page.selectOption('.page-collection select[aria-label="정렬"]', 'name');
+    check('이름순 정렬', JSON.stringify(await texts('.page-collection .gcard-title')) === JSON.stringify(['마지막 야간열차', '테라포밍 마스']));
+    await page.selectOption('.page-collection select[aria-label="정렬"]', 'recent');
+    await noOverflow('소장 탭');
+    await shot('25-collection');
+
+    // 게임 카드 → 그 게임 기록만 (제목 필터)
+    await page.click(`${tera} .card-link`);
+    await page.waitForSelector('.page-list');
+    const only = await until(async () => { const x = await cardTitles(); return x.length === 1 && x; });
+    check('게임 카드 → 그 게임 기록만', !!only && only[0] === '테라포밍 마스' && (await text('.page-list .achips-title')).includes('테라포밍 마스'), String(await cardTitles()));
+    check('종류도 보드게임으로', (await text('.page-list .seg-type .seg-input:checked + .seg-item')) === '보드게임');
+    check('카드에 내 소장 배지', (await text('.page-list .rcard .rbadge')) === '내 소장');
+    await page.click('.page-list .achips-title .achip');
+    const allBg = await until(async () => { const x = await cardTitles(); return x.length === 3 && x; });
+    check('제목 필터 해제 → 보드게임 3개', !!allBg, String(await cardTitles()));
+    check('빌린 판 카드에 빌림 배지', (await texts('.page-list .rcard .rbadge')).filter((x) => x === '빌림').length === 2, JSON.stringify(await texts('.page-list .rcard .rbadge')));
+
+    // 소장 여부 필터 (하나만 고름)
+    await page.click('.page-list .list-tools button:has-text("필터")');
+    await page.click('.page-list .filter-panel .chip-own:has-text("빌림")');
+    check('빌림 필터 → 2개', !!(await until(async () => { const x = await cardTitles(); return x.length === 2 && x.every((tt) => tt.startsWith('스플렌더')) && x; })), String(await cardTitles()));
+    await page.click('.page-list .filter-panel .chip-own:has-text("내 소장")');
+    check('내 소장 필터 → 1개 (빌림은 풀림)', !!(await until(async () => { const x = await cardTitles(); return x.length === 1 && x[0] === '테라포밍 마스' && x; })) &&
+      (await page.getAttribute('.page-list .filter-panel .chip-own:has-text("빌림")', 'aria-pressed')) === 'false', String(await cardTitles()));
+    await page.click('.page-list .filter-panel .chip-own:has-text("내 소장")');
+    check('다시 누르면 해제 → 3개', !!(await until(async () => { const x = await cardTitles(); return x.length === 3 && x; })), String(await cardTitles()));
+    // 빌려준 사람 이름으로도 검색
+    await page.fill('.page-list .search-input', '도윤');
+    check('빌려준 사람으로 검색', !!(await until(async () => { const x = await cardTitles(); return x.length === 1 && x[0].startsWith('스플렌더') && x; }, 3000)), String(await cardTitles()));
+    await page.fill('.page-list .search-input', '');
+    await page.click('.page-list .seg-type .seg-item:has-text("전체")');
+    await page.click('.page-list .list-tools button:has-text("필터")');
+
+    // ‘빌린 기록 보기’ → 빌림 필터만 (다른 조건은 비움)
+    await tab('collection', '.page-collection');
+    await page.click('.page-collection .borrowed a.link-more');
+    await page.waitForSelector('.page-list');
+    check('빌린 기록 보기 → 빌린 판 2개 · 종류 전체', !!(await until(async () => { const x = await cardTitles(); return x.length === 2 && x; })) &&
+      (await page.$eval('.page-list .seg-type input:checked', (e) => e.value)) === 'all', String(await cardTitles()));
+    await page.click('.page-list .achip:has-text("빌림")');
+
+    // 같은 제목 새 기록: 이전 판의 소장 여부·빌려준 사람도 불러오기
+    await go('#/new/boardgame', '.page-form');
+    await page.fill('[data-field="title"]', '스플렌더');
+    const sug = await until(async () => { const tt = await text('.page-form .suggest-text'); return tt.includes('불러올까요') && tt; }, 3000);
+    check('제안에 소장 여부·빌려준 사람', !!sug && sug.includes('소장 여부') && sug.includes('빌려준 사람'), String(sug));
+    await page.click('.page-form .suggest button:has-text("불러오기")');
+    await sleep(150);
+    check('불러오면 빌림 · 도윤', (await page.$eval('.page-form .seg-own .seg-input:checked', (e) => e.value)) === 'borrowed' &&
+      (await page.inputValue('.page-form input[placeholder="예) 영식 (선택)"]')) === '도윤');
+    await page.click('.page-form .savebar button:has-text("취소")');
+    await page.waitForSelector(dlg);
+    await dialogButton('그만 쓰기');
+    await page.waitForSelector('.page-form', { state: 'detached', timeout: 5000 });
+  } finally {
+    // 다음 단계의 개수 검사에 섞이지 않게 (중간에 실패해도) 지움
+    for (const id of extra) await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
+    await syncFromServer();
+  }
+});
+
 let exportFile = null;
 await step('설정: 내보내기 · 가져오기', async () => {
   await tab('home', '.page-home');
-  await page.click('.page-home a[aria-label="설정"]');
+  await page.click('#tabbar .tab-settings');
   await page.waitForSelector('.page-settings');
   check('연결됨 표시', (await text('.conn-label')) === '연결됨');
   await noOverflow('설정');
@@ -1151,7 +1265,7 @@ await step('좁은 화면 (320px) 가로 넘침', async () => {
     ['#/', '.page-home'], ['#/records', '.page-list'], [`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail'],
     [`#/record/${encodeURIComponent(ids.er)}`, '.page-detail'], [`#/edit/${encodeURIComponent(ids.bg)}`, '.page-form'],
     [`#/edit/${encodeURIComponent(ids.mm)}`, '.page-form'], [`#/edit/${encodeURIComponent(ids.er)}`, '.page-form'],
-    ['#/stats', '.page-stats'], ['#/members', '.page-members'], ['#/settings', '.page-settings'],
+    ['#/stats', '.page-stats'], ['#/members', '.page-members'], ['#/settings', '.page-settings'], ['#/collection', '.page-collection'],
   ];
   for (const [hash, sel] of screens) {
     await go(hash, sel);
@@ -1163,6 +1277,12 @@ await step('좁은 화면 (320px) 가로 넘침', async () => {
       await sleep(150);
     }
   }
+  // 320px 에서도 탭 막대 일곱 칸이 넘치지 않고 새 기록 버튼은 가운데
+  await go('#/', '.page-home');
+  const bar320 = await page.$$eval('#tabbar > a', (els) => els.filter((e) => e.getBoundingClientRect().width > 0)
+    .map((e) => { const b = e.getBoundingClientRect(); return { cls: e.className, l: b.left, r: b.right, mid: b.left + b.width / 2 }; }));
+  const plus320 = bar320.find((x) => x.cls.includes('tab-add'));
+  check('320px 탭 막대: 일곱 칸이 화면 안 · 새 기록 버튼 가운데', bar320.length === 7 && bar320.every((x) => x.l >= 0 && x.r <= 320) && !!plus320 && Math.abs(plus320.mid - 160) < 2, JSON.stringify(bar320));
   for (const seg of ['보드게임', '머미', '방탈출']) {
     await go('#/stats', '.page-stats');
     await page.click(`.page-stats .seg-type .seg-item:has-text("${seg}")`);
@@ -1194,7 +1314,7 @@ await step('401 → 키 삭제 후 잠금, 링크 붙여넣기로 다시 열기'
 });
 
 await step('잠금 해제 정보 지우기', async () => {
-  await page.click('.page-home a[aria-label="설정"]');
+  await page.click('#tabbar .tab-settings');
   await page.waitForSelector('.page-settings');
   await page.click('.page-settings button:has-text("이 기기에서 잠금 해제 정보 지우기")');
   await page.waitForSelector(dlg);
@@ -2527,6 +2647,8 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   check('메뉴가 왼쪽 사이드바 (화면 높이 전체)', side.l === 0 && side.w >= 200 && side.w <= 300 && side.h === 900 && side.dir === 'column', JSON.stringify(side));
   check('사이드바: 이름 · 새 기록 버튼 · 설정', await page.isVisible('#tabbar .side-brand') && await page.isVisible('#tabbar .side-cta') && await page.isVisible('#tabbar .tab-settings') && !(await page.isVisible('#tabbar .tab-add')));
   check('본문이 사이드바 오른쪽에서 시작', await page.$eval('#view', (e) => e.getBoundingClientRect().left >= 248));
+  const sideTabs = await page.$$eval('#tabbar a.tab', (els) => els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent.trim()));
+  check('사이드바 메뉴: 홈 · 기록 · 소장 · 통계 · 멤버 · 설정', JSON.stringify(sideTabs) === JSON.stringify(['홈', '기록', '소장', '통계', '멤버', '설정']), JSON.stringify(sideTabs));
   // 홈: 낮은 요약 띠(80~100px) 바로 아래 최근 기록 — 첫 줄 카드가 스크롤 없이 다 보임
   const strip = await page.$eval('.page-home .summary', (e) => {
     const b = e.getBoundingClientRect();
@@ -2541,7 +2663,7 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
     return Math.max(...[...document.querySelectorAll('.page-home .rlist > .rcard')].slice(0, 3).map((e) => e.getBoundingClientRect().bottom));
   });
   check('홈: 최근 기록 첫 줄이 스크롤 없이 다 보임 (1440×900)', firstRow > 0 && firstRow <= 900, String(firstRow));
-  check('홈 머리의 톱니 버튼은 숨김 (설정은 사이드바에)', !(await page.isVisible('.page-home .home-head .icon-btn')));
+  check('홈 머리에 톱니 버튼 없음 (설정은 사이드바에)', !(await page.$('.page-home .home-head .icon-btn')));
   // 긴 제목·긴 한줄평: 제목은 두 줄까지 말줄임, 한줄평은 점선 아래 두 줄까지 — 서로 겹치지 않고 같은 줄 카드는 점선 높이가 같음
   const longRec = (await api('POST', '/api/records', {
     record: {
@@ -2590,6 +2712,12 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   await page.click('.page-list .filter-panel button:has-text("필터 초기화")');
   await noOverflow('1440 목록');
   await shot('desktop-list');
+
+  await page.click('#tabbar [data-tab="collection"]');
+  await page.waitForSelector('.page-collection');
+  check('소장: 사이드바에서 열림 · 표시', (await page.getAttribute('#tabbar [data-tab="collection"]', 'aria-current')) === 'page');
+  await noOverflow('1440 소장');
+  await shot('desktop-collection');
 
   await go(`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail');
   check('상세: (사진·요약) | (기록) 두 단', await sideBySide('.page-detail .detail-col-a', '.page-detail .detail-col-b'));
@@ -2645,7 +2773,7 @@ await step('태블릿 1024px: 왼쪽 레일 · 가로 스크롤 없음', async (
   const rail = await page.$eval('#tabbar', (e) => e.getBoundingClientRect().width);
   check('메뉴가 좁은 레일', rail >= 80 && rail <= 100, String(rail));
   check('레일에도 설정', await page.isVisible('#tabbar .tab-settings'));
-  for (const [hash, sel] of [['#/', '.page-home'], ['#/records', '.page-list'], [`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail'], [`#/edit/${encodeURIComponent(ids.mm)}`, '.page-form'], ['#/stats', '.page-stats'], ['#/settings', '.page-settings']]) {
+  for (const [hash, sel] of [['#/', '.page-home'], ['#/records', '.page-list'], [`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail'], [`#/edit/${encodeURIComponent(ids.mm)}`, '.page-form'], ['#/stats', '.page-stats'], ['#/settings', '.page-settings'], ['#/collection', '.page-collection']]) {
     await go(hash, sel);
     await noOverflow(`1024 ${hash}`);
     if (sel === '.page-form') { await page.click('.page-form .savebar button:has-text("취소")'); await sleep(150); }

@@ -10,6 +10,7 @@ import { closeViewer } from './views/photos.js';
 import * as lockView from './views/lock.js';
 import * as homeView from './views/home.js';
 import * as listView from './views/list.js';
+import * as collectionView from './views/collection.js';
 import * as detailView from './views/detail.js';
 import * as formView from './views/form.js';
 import * as statsView from './views/stats.js';
@@ -180,6 +181,7 @@ const ROUTES = [
   [/^\/?$/, 'home', homeView, 'home', '홈'],
   [/^\/records$/, 'records', listView, 'records', '기록'],
   [/^\/record\/([^/]+)$/, 'record', detailView, 'records', '기록'],
+  [/^\/collection$/, 'collection', collectionView, 'collection', '소장'],
   [/^\/new$/, 'new', formView, 'new', '새 기록'],
   [/^\/new\/([a-z]+)$/, 'new', formView, 'new', '새 기록'],
   [/^\/edit\/([^/]+)$/, 'edit', formView, 'new', '기록 수정'],

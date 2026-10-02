@@ -13,6 +13,10 @@ import {
   ratingText,
   percentText,
   durationText,
+  ownershipOf,
+  lenderOf,
+  titleKey,
+  collectionOf,
 } from '../js/stats.js';
 
 const close = (actual, expected, msg) => assert.ok(Math.abs(actual - expected) < 1e-9, `${msg ?? ''} ${actual} ≠ ${expected}`);
@@ -425,5 +429,56 @@ describe('도우미', () => {
     assert.equal(percentText(null), '-');
     assert.equal(durationText(305), '5:05');
     assert.equal(durationText(null), '-');
+  });
+});
+
+describe('소장', () => {
+  const own = (id, type, date, title, block, extra = {}) => ({ id, type, date, title, members: [], createdAt: `${date}T12:00:00.000Z`, ...extra, [type === 'boardgame' ? 'bg' : 'mm']: block });
+  const c1 = own('c1', 'boardgame', '2026-09-01', '카탄', { ownership: 'mine' }, { rating: 4, photos: ['p-old'] });
+  const c2 = own('c2', 'boardgame', '2026-09-10', '  카탄 ', {}, { rating: 3 }); // 같은 게임, 소장 표시 없는 판
+  const c3 = own('c3', 'boardgame', '2026-09-20', '카탄', { ownership: 'mine' }, { photos: ['p-new'] });
+  const s1 = own('s1', 'boardgame', '2026-08-01', '스플렌더', { ownership: 'borrowed', lender: '영식' });
+  const s2 = own('s2', 'boardgame', '2026-08-05', '스플렌더', { ownership: 'borrowed', lender: ' 영식 ' });
+  const s3 = own('s3', 'boardgame', '2026-08-09', '스플렌더', { ownership: 'borrowed', lender: '준호' });
+  const w1 = own('w1', 'boardgame', '2026-07-01', '윙스팬', { ownership: 'borrowed' });
+  const w2 = own('w2', 'boardgame', '2026-07-09', '윙스팬', { ownership: 'mine' }); // 빌려 하다가 산 게임 → 소장
+  const box = own('k1', 'murdermystery', '2026-06-01', '마지막 야간열차', { format: 'box', ownership: 'mine' });
+  const store = own('k2', 'murdermystery', '2026-06-02', '붉은 저택', { format: 'store', ownership: 'mine' });
+  const sameTitleMm = own('k3', 'murdermystery', '2026-06-03', '카탄', { format: 'box' }); // 제목이 같아도 종류가 다르면 다른 게임
+
+  test('ownershipOf · lenderOf: 보드게임과 보드게임형 머미만', () => {
+    assert.equal(ownershipOf(c1), 'mine');
+    assert.equal(ownershipOf(c2), null);
+    assert.equal(ownershipOf(s1), 'borrowed');
+    assert.equal(lenderOf(s2), '영식');
+    assert.equal(lenderOf(c1), '');
+    assert.equal(ownershipOf(box), 'mine');
+    assert.equal(ownershipOf(store), null);
+    assert.equal(ownershipOf({ type: 'escaperoom', er: { ownership: 'mine' } }), null);
+    assert.equal(ownershipOf({ type: 'boardgame', bg: { ownership: 'stolen' } }), null);
+    assert.equal(ownershipOf(null), null);
+    assert.equal(titleKey('  Catan  Big '), 'catan big');
+  });
+
+  test('collectionOf: 같은 종류·같은 제목을 한 게임으로, 횟수는 모든 판', () => {
+    const { owned, borrowed } = collectionOf([c1, c2, c3, s1, s2, s3, w1, w2, box, store, sameTitleMm]);
+    assert.deepEqual(owned.map((g) => g.key), ['boardgame:카탄', 'boardgame:윙스팬', 'murdermystery:마지막 야간열차']);
+    const catan = owned[0];
+    assert.equal(catan.title, '카탄');
+    assert.equal(catan.plays, 3);
+    assert.equal(catan.lastDate, '2026-09-20');
+    assert.equal(catan.firstDate, '2026-09-01');
+    assert.equal(catan.latestId, 'c3');
+    assert.equal(catan.cover, 'p-new'); // 가장 최근 사진
+    close(catan.avgRating, 3.5);
+    assert.equal(owned[1].plays, 2);
+    assert.equal(owned[2].avgRating, null);
+    // 빌린 게임: 소장한 적 없는 것만, 빌려준 사람은 이름이 같으면 한 번
+    assert.deepEqual(borrowed.map((g) => [g.title, g.plays, g.lenders]), [['스플렌더', 3, ['준호', '영식']]]);
+  });
+
+  test('collectionOf: 빈 입력·이상한 값에도 죽지 않음', () => {
+    assert.deepEqual(collectionOf(null), { owned: [], borrowed: [] });
+    assert.deepEqual(collectionOf([null, 3, { type: 'boardgame', title: '', bg: { ownership: 'mine' } }]), { owned: [], borrowed: [] });
   });
 });
