@@ -1903,13 +1903,13 @@ await step('사진: 올리기 — JPEG·PNG 모두 다시 인코딩, EXIF(위치
   check('서버에 2장 추가', (await imgStats()).count === before.count + 2);
   const full = await imgBytes(photoIds.exif, 'f');
   const thumb = await imgBytes(photoIds.exif, 't');
-  check('원본: WebP/JPEG 로 다시 인코딩 (600KB 이하)', /image\/(webp|jpeg)/.test(full.type) && full.buf.length <= 600 * 1024, `${full.type} ${full.buf.length}`);
-  check('썸네일: 80KB 이하', thumb.buf.length <= 80 * 1024 && /image\/(webp|jpeg)/.test(thumb.type), String(thumb.buf.length));
+  check('원본: WebP/JPEG 로 다시 인코딩 (350KB 이하)', /image\/(webp|jpeg)/.test(full.type) && full.buf.length <= 350 * 1024, `${full.type} ${full.buf.length}`);
+  check('썸네일: 40KB 이하', thumb.buf.length <= 40 * 1024 && /image\/(webp|jpeg)/.test(thumb.type), String(thumb.buf.length));
   check('EXIF·위치 정보 문구가 남지 않음', !full.buf.includes(Buffer.from('GPS-SECRET')) && !full.buf.includes(Buffer.from('Exif')) && !thumb.buf.includes(Buffer.from('GPS-SECRET')));
   const d = await imgDims(photoIds.exif, 'f');
-  check('EXIF 회전(6) 반영 → 세로 사진, 긴 변 1600px 이하', d.h > d.w && Math.max(d.w, d.h) <= 1600, JSON.stringify(d));
+  check('EXIF 회전(6) 반영 → 세로 사진, 긴 변 1280px 이하', d.h > d.w && Math.max(d.w, d.h) <= 1280, JSON.stringify(d));
   const dt = await imgDims(photoIds.exif, 't');
-  check('썸네일 긴 변 480px 이하', Math.max(dt.w, dt.h) <= 480, JSON.stringify(dt));
+  check('썸네일 긴 변 360px 이하', Math.max(dt.w, dt.h) <= 360, JSON.stringify(dt));
   const png = await imgBytes(photoIds.png, 'f');
   check('PNG 도 WebP/JPEG 로 바꿔 올림', /image\/(webp|jpeg)/.test(png.type) && png.buf[0] !== 0x89, png.type);
   check('사진 응답 헤더 (nosniff·private 캐시·CSP)', full.headers.get('x-content-type-options') === 'nosniff' && /private/.test(full.headers.get('cache-control') || '') &&
@@ -1934,8 +1934,8 @@ await step('사진: 큰 사진 줄이기 · 4장 제한 · 열 수 없는 형식
   photoIds.s3 = ids[3];
   const big = await imgBytes(photoIds.noisy, 'f');
   const dims = await imgDims(photoIds.noisy, 'f');
-  check('잡음 가득한 큰 사진도 600KB·1600px 안으로', big.buf.length <= 600 * 1024 && Math.max(dims.w, dims.h) <= 1600, `${big.buf.length} ${JSON.stringify(dims)}`);
-  check('썸네일도 80KB 이하', (await imgBytes(photoIds.noisy, 't')).buf.length <= 80 * 1024);
+  check('잡음 가득한 큰 사진도 350KB·1280px 안으로', big.buf.length <= 350 * 1024 && Math.max(dims.w, dims.h) <= 1280, `${big.buf.length} ${JSON.stringify(dims)}`);
+  check('썸네일도 40KB 이하', (await imgBytes(photoIds.noisy, 't')).buf.length <= 40 * 1024);
   await page.setInputFiles(photoInput, [P.s4]);
   check('5장째는 안내만', !!(await toastSeen(/사진은 4장까지/)) && (await page.$$('.fsec-photos .ph-tile')).length === 4);
   await noOverflow('사진 4장 폼');
@@ -2105,6 +2105,53 @@ await step('사진: 저장 → 상세 갤러리 · 전체화면 뷰어 · 목록
   await tab('home', '.page-home');
   check('홈 최근 기록에도 썸네일', !!(await page.waitForSelector('.page-home .rcard .rcard-photo img', { timeout: 5000 })));
   await shot('36-home-photo');
+});
+
+await step('사진: 저장 공간 80% 넘으면 알림 · 가득 차면 더 넣지 않음', async () => {
+  const real = await imgStats();
+  // 서버 한도(150MB)를 실제로 채우는 대신 사용량 응답만 바꿔서 확인 (사진은 진짜 서버로 올림)
+  let fake = { count: 600, bytes: Math.floor(real.limitBytes * 0.8) - 1000, limitCount: real.limitCount, limitBytes: real.limitBytes };
+  const statsUrl = '**/api/images?stats=1';
+  await page.route(statsUrl, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fake) }));
+  try {
+    await go('#/new/boardgame', '.page-form');
+    await sleep(300);
+    check('80% 전에는 사진 칸 안내 없음', await page.$eval('.fsec-photos .ph-store', (e) => e.hidden));
+    await page.setInputFiles(photoInput, [P.s5]);
+    const st = await photosSettled(1);
+    check('사진 올라감', st && st[0] === 'ok', JSON.stringify(st));
+    check('80%를 막 넘으면 알림', !!(await toastSeen(/사진 저장 공간이 80%를 넘었어요/)), String(await texts('.toast')));
+    const note = await text('.fsec-photos .ph-store');
+    check('사진 칸에 찬 정도 · 대략 남은 장수', /^사진 저장 공간이 80% 찼어요 · 약 [\d,]+장 더 넣을 수 있어요/.test(note) &&
+      !(await page.$eval('.fsec-photos .ph-add', (e) => e.disabled)), note);
+    await page.click('.page-form .savebar button:has-text("취소")');
+    await page.waitForSelector(dlg);
+    await dialogButton('그만 쓰기');
+    await page.waitForSelector('.page-form', { state: 'detached', timeout: 5000 });
+
+    // 가득 참: 사진 추가가 막히고 정리 방법 안내, 골라도 올리지 않음
+    fake = { ...fake, bytes: real.limitBytes };
+    await go('#/new/boardgame', '.page-form');
+    const fullNote = await until(async () => { const tt = await text('.fsec-photos .ph-store'); return tt.includes('가득 찼어요') && tt; }, 3000);
+    check('가득 차면 사진 추가 막힘 · 정리 방법 안내', !!fullNote && fullNote.includes('정리') && (await page.$eval('.fsec-photos .ph-add', (e) => e.disabled)), String(fullNote));
+    const posts = [];
+    const onReq = (r) => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/images') posts.push(r.url()); };
+    page.on('request', onReq);
+    await page.setInputFiles(photoInput, [P.s4]); // 붙여넣기·끌어 놓기와 같은 길
+    const warned = await toastSeen(/사진 저장 공간이 가득 찼어요/);
+    await sleep(200);
+    page.off('request', onReq);
+    check('가득 차면 골라도 올리지 않고 안내만', !!warned && posts.length === 0 && (await page.$$('.fsec-photos .ph-tile')).length === 0, `${posts.length} ${String(await texts('.toast'))}`);
+    await noOverflow('사진 저장 공간 가득 참 폼');
+    await shot('37-photo-storage-full');
+    await page.click('.page-form .savebar button:has-text("취소")');
+    await page.waitForSelector('.page-form', { state: 'detached', timeout: 5000 });
+    await go('#/settings', '.page-settings');
+    const sw = await until(async () => { const tt = await text('.page-settings .store-warn'); return tt && tt; }, 3000);
+    check('설정에도 가득 참 안내 (기록은 계속 저장됨)', !!sw && sw.includes('가득 찼어요') && sw.includes('기록은 계속 저장돼요'), String(sw));
+  } finally {
+    await page.unroute(statsUrl);
+  }
 });
 
 await step('사진: 같은 제목 새 기록에서 ‘이전 대표 사진 쓰기’ (다시 올리지 않고 같은 사진)', async () => {

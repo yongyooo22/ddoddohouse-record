@@ -3,6 +3,7 @@ import { h, icon } from '../dom.js';
 import { APP_NAME, APP_VERSION, TYPE_KEYS } from '../constants.js';
 import { state, getTheme, setTheme, wipeLocal, upsertRecord, upsertMember, recordById, referencedPhotos, photosOf, getDraft } from '../store.js';
 import { relTime, dateStamp, nameKey, fmtBytes } from '../format.js';
+import { storageUsage } from '../stats.js';
 import * as api from '../api.js';
 import { blobToBase64 } from '../compress.js';
 import { existingPhotos, clearHttpImageCache } from '../images.js';
@@ -34,6 +35,18 @@ async function loadPhotoStats() {
 
 function rerender() {
   if (rootRef && rootRef.isConnected) render(rootRef);
+}
+
+/** 80% 넘게 찼거나 가득 찼을 때의 안내 (기록은 사진과 따로라 계속 저장됨) */
+function storeWarning(data) {
+  if (!data) return null;
+  const u = storageUsage(data);
+  if (!u.warn) return null;
+  return h('p', { class: `store-warn${u.full ? ' is-full' : ''}` }, icon('info'), h('span', {
+    text: u.full
+      ? '가득 찼어요. 새 사진을 넣으려면 아래 ‘사용하지 않는 사진 정리’를 누르거나 오래된 기록의 사진을 빼 주세요. 기록은 계속 저장돼요.'
+      : `${Math.round(u.ratio * 100)}% 찼어요${u.left !== null ? ` · 약 ${u.left.toLocaleString('ko-KR')}장 더 넣을 수 있어요` : ''}. 가득 차면 새 사진은 넣을 수 없어요 (기록은 계속 저장돼요).`,
+  }));
 }
 
 function storageSection() {
@@ -71,6 +84,7 @@ function storageSection() {
       'aria-valuetext': data ? `${fmtBytes(bytes)} 사용${limitBytes ? `, 한도 ${fmtBytes(limitBytes)}` : ''}` : '확인하는 중',
     }, fill),
     h('p', { class: 'store-sub', text: limitCount ? `한도: ${limitCount.toLocaleString('ko-KR')}장 또는 ${fmtBytes(limitBytes)}` : '한도 확인 중…' }),
+    storeWarning(data),
   ];
   const gcBtn = h('button', {
     type: 'button', class: 'btn btn-soft btn-block', disabled: status === 'loading' && !data,

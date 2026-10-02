@@ -1359,6 +1359,11 @@ html.vw-open, html.vw-open body { overflow: hidden; }
 .store-sub { margin-top: -6px; color: var(--ink-3); font-size: 12px; }
 .store-wait { color: var(--ink-3); }
 .store-skel { display: inline-block; min-width: 10em; border-radius: 6px; background: var(--skeleton); }
+.store-warn, .ph-store { display: flex; align-items: flex-start; gap: 7px; padding: 9px 12px; border-radius: 11px; background: var(--gold-soft); color: var(--ink-2); font-size: 12.5px; font-weight: 550; line-height: 1.5; }
+.store-warn .ico, .ph-store .ico { flex: none; width: 15px; height: 15px; margin-top: 2px; color: var(--gold-ink); }
+.store-warn.is-full, .ph-store.is-full { background: color-mix(in srgb, var(--danger) 10%, var(--surface)); color: var(--ink); }
+.store-warn.is-full .ico, .ph-store.is-full .ico { color: var(--danger); }
+.ph-add:disabled { opacity: .45; cursor: not-allowed; }
 
 /* ── 불러오는 중 · 날짜 빠른 선택 · 기타 ─────────────── */
 .loading-state { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 60px 16px; color: var(--ink-2); font-size: 14px; font-weight: 600; text-align: center; }

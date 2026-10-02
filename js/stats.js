@@ -434,3 +434,29 @@ export function collectionOf(records) {
   }
   return { owned, borrowed };
 }
+
+// ── 사진 저장 공간 ──────────────────────────────────────────
+
+/** 이만큼 차면 미리 알림 */
+export const STORAGE_WARN_RATIO = 0.8;
+
+/**
+ * 사진 저장 공간 사용량 (서버 /api/images?stats=1 응답: count·bytes·limitCount·limitBytes).
+ * @returns {{ ratio: number, warn: boolean, full: boolean, left: number|null }}
+ *   ratio: 장수·용량 중 더 찬 쪽(0~1), warn: 80% 이상, full: 더 넣을 자리가 없음,
+ *   left: 지금까지 사진의 평균 크기로 셈한 대략 더 넣을 수 있는 장수 (셀 수 없으면 null)
+ */
+export function storageUsage(stats) {
+  const d = obj(stats);
+  const count = Math.max(0, num(d.count) ?? 0);
+  const bytes = Math.max(0, num(d.bytes) ?? 0);
+  const limitCount = Math.max(0, num(d.limitCount) ?? 0);
+  const limitBytes = Math.max(0, num(d.limitBytes) ?? 0);
+  const ratio = Math.min(1, Math.max(limitBytes ? bytes / limitBytes : 0, limitCount ? count / limitCount : 0));
+  const avg = count ? bytes / count : 0;
+  const lefts = [];
+  if (limitBytes && avg) lefts.push(Math.floor(Math.max(0, limitBytes - bytes) / avg));
+  if (limitCount) lefts.push(Math.max(0, limitCount - count));
+  const left = lefts.length ? Math.min(...lefts) : null;
+  return { ratio, warn: ratio >= STORAGE_WARN_RATIO, full: ratio >= 1 || left === 0, left };
+}

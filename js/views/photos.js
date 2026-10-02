@@ -2,6 +2,7 @@
 import { h, icon } from '../dom.js';
 import { LIMITS } from '../constants.js';
 import { photosOf, latestWithPhoto, referencedPhotos } from '../store.js';
+import { storageUsage } from '../stats.js';
 import { fmtDate } from '../format.js';
 import * as api from '../api.js';
 import { compressPhoto, blobToBase64 } from '../compress.js';
@@ -62,6 +63,35 @@ export function discardPhotos(ids) {
   for (const id of new Set(ids)) if (id && !used.has(id)) api.deleteImage(id).catch(() => {});
 }
 
+// ── 사진 저장 공간 ───────────────────────────────────────────
+// 사진 칸을 열 때마다 서버에 한 번 묻고, 이 기기에서 올린 만큼은 직접 더해 둠.
+// 80%를 넘으면 사진 칸에 남은 양을 알리고, 가득 차면 더 넣지 않게 막음 (서버도 한도를 넘는 사진은 받지 않음)
+const FULL_MSG = '사진 저장 공간이 가득 찼어요. 설정 → 사진 저장 공간에서 안 쓰는 사진을 정리하면 다시 넣을 수 있어요';
+let store = null; // { count, bytes, limitCount, limitBytes }
+let storeReq = null;
+let warned80 = false; // ‘80%를 넘었어요’ 알림은 앱을 열어 둔 동안 한 번만
+
+function loadStore() {
+  if (!storeReq) {
+    storeReq = api.imageStats()
+      .then((d) => {
+        store = { count: Number(d.count) || 0, bytes: Number(d.bytes) || 0, limitCount: Number(d.limitCount) || 0, limitBytes: Number(d.limitBytes) || 0 };
+        return store;
+      })
+      .catch(() => store) // 못 물어보면(오프라인 등) 막지 않음 — 서버가 한도를 지킴
+      .finally(() => { storeReq = null; });
+  }
+  return storeReq;
+}
+
+/** 방금 올린 사진만큼 더함. 이번에 80%를 막 넘었으면 true */
+function addToStore(img) {
+  if (!store) return false;
+  const before = storageUsage(store).warn;
+  store = { ...store, count: store.count + 1, bytes: store.bytes + (Number(img.bytesF) || 0) + (Number(img.bytesT) || 0) };
+  return !before && storageUsage(store).warn;
+}
+
 // ── 폼: 사진 칸 ─────────────────────────────────────────────
 const BUSY = new Set(['wait', 'compress', 'upload']);
 const isBusy = (it) => BUSY.has(it.status);
@@ -98,13 +128,14 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
   const grid = h('div', { class: 'ph-grid', role: 'list', 'aria-label': '올린 사진' });
   const count = h('span', { class: 'counter' });
   const hint = h('p', { class: 'fhint ph-hint' });
+  const storeNote = h('p', { class: 'ph-store', hidden: true });
   const live = h('p', { class: 'sr-only', 'aria-live': 'polite' });
   const suggest = h('div', { class: 'ph-suggest', hidden: true });
   const el = h('section', { class: 'card fsec fsec-photos' },
     h('div', { class: 'fsec-head' },
       h('span', { class: 'fsec-ico fsec-ico-soft', 'aria-hidden': 'true' }, icon('camera')),
       h('h2', { class: 'fsec-title', text: '사진' }), count),
-    h('div', { class: 'fsec-body' }, grid, hint, suggest, live, fileIn));
+    h('div', { class: 'fsec-body' }, grid, hint, storeNote, suggest, live, fileIn));
 
   const busyN = () => items.filter(isBusy).length;
   const failedN = () => items.filter((it) => it.status === 'error').length;
@@ -228,12 +259,31 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
   }
   const announce = (msg) => { live.textContent = ''; setTimeout(() => { live.textContent = msg; }, 30); };
 
+  /** 저장 공간이 80% 넘게 찼으면 남은 양을, 가득 찼으면 정리 방법을 보여 주고 사진 추가를 막음 */
+  function paintStore() {
+    if (!alive) return;
+    const u = store ? storageUsage(store) : null;
+    const full = !!(u && u.full);
+    addBtn.disabled = full;
+    if (full) addBtn.setAttribute('aria-describedby', storeNote.id);
+    else addBtn.removeAttribute('aria-describedby');
+    storeNote.hidden = !(u && u.warn);
+    storeNote.classList.toggle('is-full', full);
+    if (!u || !u.warn) return;
+    const pct = Math.round(u.ratio * 100);
+    storeNote.replaceChildren(icon('info'), h('span', {
+      text: full ? FULL_MSG : `사진 저장 공간이 ${pct}% 찼어요${u.left !== null ? ` · 약 ${u.left.toLocaleString('ko-KR')}장 더 넣을 수 있어요` : ''}. 설정에서 안 쓰는 사진을 정리할 수 있어요`,
+    }));
+  }
+  storeNote.id = `ph-store-${Math.random().toString(36).slice(2, 8)}`;
+
   // ── 추가 · 줄이기 · 올리기 (한 장씩 차례로) ──
   function addFiles(list) {
     if (!alive) return;
     // 형식은 줄이면서(디코드) 확인 — 이름만 이상한 사진(예: 종류가 비어 있는 HEIC)도 열 수 있으면 올림
     const files = list.filter(Boolean);
     if (!files.length) return;
+    if (store && storageUsage(store).full) { toast(FULL_MSG, 'error', 5500); return; }
     const room = MAX - items.length;
     if (room <= 0) { toast(`사진은 ${MAX}장까지 넣을 수 있어요`, 'error'); return; }
     if (files.length > room) toast(`사진은 ${MAX}장까지라 앞의 ${room}장만 넣었어요`, 'info', 3500);
@@ -302,6 +352,11 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
       if (!has(it)) { discard([img.id]); return; } // 다 보낸 뒤에 뺀 사진 (서버엔 저장됨)
       it.id = img.id;
       it.status = 'ok';
+      if (!res.existed && addToStore(img) && !warned80) {
+        warned80 = true;
+        toast('사진 저장 공간이 80%를 넘었어요. 설정 → 사진 저장 공간에서 확인해 주세요', 'info', 5500);
+      }
+      paintStore();
       seedImage(it.id, 't', it.blobs.thumb);
       seedImage(it.id, 'f', it.blobs.full);
       it.blobs = null;
@@ -313,6 +368,7 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
       it.req = null;
       if (!has(it) || (e && e.code === 'aborted')) return;
       it.status = 'error';
+      if (e && e.code === 'limit') loadStore().then(paintStore); // 가득 참 → 사진 칸에도 안내
       settle(it, e);
     }
     paint();
@@ -505,6 +561,8 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
   }
 
   reset(model().photos);
+  paintStore(); // 앞서 물어본 값이 있으면 바로, 새 값은 받는 대로
+  loadStore().then(paintStore);
 
   return {
     el,
