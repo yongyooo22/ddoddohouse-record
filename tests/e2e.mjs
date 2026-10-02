@@ -464,12 +464,12 @@ await step('보드게임 기록 (점수·자동 순위·승자)', async () => {
   await page.fill('.page-form input[placeholder="한 문장으로 남긴다면?"]', '화성 개척은 역시 재밌다');
   await page.fill('.page-form textarea', '영식이 막판 도시 타일로 역전했다.\n다음엔 확장 더 넣어서!');
   await page.click('.chip-tag:has(.chip-label:text-is("#전략"))');
-  // 소장 여부: 기본 미기록, ‘빌림’일 때만 빌려준 사람 칸
+  // 소장 여부: 기본 미기록, ‘대여’일 때만 빌려준 사람 칸
   const lenderIn = '.page-form input[placeholder="예) 영식 (선택)"]';
   check('소장 여부 기본은 미기록', (await page.$eval('.page-form .seg-own .seg-input:checked', (e) => e.value)) === 'none');
   check('빌려준 사람 칸은 처음엔 숨김', await page.isHidden(lenderIn));
-  await page.click('.page-form .seg-own .seg-item:has-text("빌림")');
-  check('빌림 → 빌려준 사람 칸', await page.isVisible(lenderIn));
+  await page.click('.page-form .seg-own .seg-item:has-text("대여")');
+  check('대여 → 빌려준 사람 칸', await page.isVisible(lenderIn));
   await page.fill(lenderIn, '영식');
   await page.click('.page-form .seg-own .seg-item:has-text("내 소장")');
   check('내 소장 → 빌려준 사람 칸 숨김', await page.isHidden(lenderIn));
@@ -1001,7 +1001,7 @@ await step('홈 요약 · 멤버 프로필', async () => {
 });
 
 await step('소장 탭 · 소장 여부 필터 · 이전 기록에서 불러오기', async () => {
-  // 빌려서 한 같은 게임 두 판 + 집에서 한 보드게임형 머미(내 소장) 한 판 — 이 단계 끝에 지움
+  // 대여한 같은 게임 두 판 + 집에서 한 보드게임형 머미(내 소장) 한 판 — 이 단계 끝에 지움
   const mk = async (record) => (await api('POST', '/api/records', { record })).data.record.id;
   const extra = [
     await mk({ type: 'boardgame', date: PAST, title: '스플렌더', members: [ids['연경']], rating: 3, bg: { ownership: 'borrowed', lender: '영식' } }),
@@ -1019,7 +1019,7 @@ await step('소장 탭 · 소장 여부 필터 · 이전 기록에서 불러오�
     check('새 기록 버튼이 가운데', !!plus && Math.abs(plus.mid - VIEWPORT.width / 2) < 2, JSON.stringify(plus));
     check('홈 머리에 톱니 버튼 없음 (설정은 탭 막대에)', !(await page.$('.page-home .home-head .icon-btn')));
 
-    // 소장 탭: 내 소장으로 남긴 게임만 게임별로 (최근 순), 빌려서 한 게임은 아래에
+    // 소장 탭: 내 소장으로 남긴 게임만 게임별로 (최근 순), 대여한 게임은 아래에
     await tab('collection', '.page-collection');
     check('소장 탭 선택 표시', (await page.getAttribute('#tabbar [data-tab="collection"]', 'aria-current')) === 'page');
     const owned = await texts('.page-collection .gcard-title');
@@ -1030,7 +1030,8 @@ await step('소장 탭 · 소장 여부 필터 · 이전 기록에서 불러오�
     check('게임 카드: 횟수·최근 날짜·평균 별점', (await text(`${tera} .gcard-plays`)) === '1번 했어요' &&
       (await text(`${tera} .gcard-last`)) === `최근 ${teraRec.date.replace(/-/g, '.')}` && (await text(`${tera} .gcard-rating`)) === teraRec.rating.toFixed(1), await text(tera));
     const lent = await texts('.page-collection .borrowed .brow');
-    check('빌려서 해 본 게임: 스플렌더 (빌려준 사람 최근 순 · 2번)', lent.length === 1 && lent[0].includes('스플렌더') && lent[0].includes('도윤, 영식에게 빌림') && lent[0].includes('2번'), JSON.stringify(lent));
+    check('대여한 게임: 스플렌더 (2번 · 빌려준 사람 최근 순)', lent.length === 1 && lent[0].includes('스플렌더') && lent[0].includes('2번 · 빌려준 사람 도윤, 영식') &&
+      (await text('.page-collection .borrowed .sec-title')) === '대여한 게임', JSON.stringify(lent));
     await page.click('.page-collection .seg-type .seg-item:has-text("머미")');
     check('종류 고르기: 머미만', JSON.stringify(await texts('.page-collection .gcard-title')) === JSON.stringify(['마지막 야간열차']) && !(await page.$('.page-collection .borrowed')));
     await page.click('.page-collection .seg-type .seg-item:has-text("전체")');
@@ -1050,15 +1051,15 @@ await step('소장 탭 · 소장 여부 필터 · 이전 기록에서 불러오�
     await page.click('.page-list .achips-title .achip');
     const allBg = await until(async () => { const x = await cardTitles(); return x.length === 3 && x; });
     check('제목 필터 해제 → 보드게임 3개', !!allBg, String(await cardTitles()));
-    check('빌린 판 카드에 빌림 배지', (await texts('.page-list .rcard .rbadge')).filter((x) => x === '빌림').length === 2, JSON.stringify(await texts('.page-list .rcard .rbadge')));
+    check('대여한 판 카드에 대여 배지', (await texts('.page-list .rcard .rbadge')).filter((x) => x === '대여').length === 2, JSON.stringify(await texts('.page-list .rcard .rbadge')));
 
     // 소장 여부 필터 (하나만 고름)
     await page.click('.page-list .list-tools button:has-text("필터")');
-    await page.click('.page-list .filter-panel .chip-own:has-text("빌림")');
-    check('빌림 필터 → 2개', !!(await until(async () => { const x = await cardTitles(); return x.length === 2 && x.every((tt) => tt.startsWith('스플렌더')) && x; })), String(await cardTitles()));
+    await page.click('.page-list .filter-panel .chip-own:has-text("대여")');
+    check('대여 필터 → 2개', !!(await until(async () => { const x = await cardTitles(); return x.length === 2 && x.every((tt) => tt.startsWith('스플렌더')) && x; })), String(await cardTitles()));
     await page.click('.page-list .filter-panel .chip-own:has-text("내 소장")');
-    check('내 소장 필터 → 1개 (빌림은 풀림)', !!(await until(async () => { const x = await cardTitles(); return x.length === 1 && x[0] === '테라포밍 마스' && x; })) &&
-      (await page.getAttribute('.page-list .filter-panel .chip-own:has-text("빌림")', 'aria-pressed')) === 'false', String(await cardTitles()));
+    check('내 소장 필터 → 1개 (대여는 풀림)', !!(await until(async () => { const x = await cardTitles(); return x.length === 1 && x[0] === '테라포밍 마스' && x; })) &&
+      (await page.getAttribute('.page-list .filter-panel .chip-own:has-text("대여")', 'aria-pressed')) === 'false', String(await cardTitles()));
     await page.click('.page-list .filter-panel .chip-own:has-text("내 소장")');
     check('다시 누르면 해제 → 3개', !!(await until(async () => { const x = await cardTitles(); return x.length === 3 && x; })), String(await cardTitles()));
     // 빌려준 사람 이름으로도 검색
@@ -1068,13 +1069,13 @@ await step('소장 탭 · 소장 여부 필터 · 이전 기록에서 불러오�
     await page.click('.page-list .seg-type .seg-item:has-text("전체")');
     await page.click('.page-list .list-tools button:has-text("필터")');
 
-    // ‘빌린 기록 보기’ → 빌림 필터만 (다른 조건은 비움)
+    // ‘대여 기록 보기’ → 대여 필터만 (다른 조건은 비움)
     await tab('collection', '.page-collection');
     await page.click('.page-collection .borrowed a.link-more');
     await page.waitForSelector('.page-list');
-    check('빌린 기록 보기 → 빌린 판 2개 · 종류 전체', !!(await until(async () => { const x = await cardTitles(); return x.length === 2 && x; })) &&
+    check('대여 기록 보기 → 대여한 판 2개 · 종류 전체', !!(await until(async () => { const x = await cardTitles(); return x.length === 2 && x; })) &&
       (await page.$eval('.page-list .seg-type input:checked', (e) => e.value)) === 'all', String(await cardTitles()));
-    await page.click('.page-list .achip:has-text("빌림")');
+    await page.click('.page-list .achip:has-text("대여")');
 
     // 같은 제목 새 기록: 이전 판의 소장 여부·빌려준 사람도 불러오기
     await go('#/new/boardgame', '.page-form');
@@ -1083,7 +1084,7 @@ await step('소장 탭 · 소장 여부 필터 · 이전 기록에서 불러오�
     check('제안에 소장 여부·빌려준 사람', !!sug && sug.includes('소장 여부') && sug.includes('빌려준 사람'), String(sug));
     await page.click('.page-form .suggest button:has-text("불러오기")');
     await sleep(150);
-    check('불러오면 빌림 · 도윤', (await page.$eval('.page-form .seg-own .seg-input:checked', (e) => e.value)) === 'borrowed' &&
+    check('불러오면 대여 · 도윤', (await page.$eval('.page-form .seg-own .seg-input:checked', (e) => e.value)) === 'borrowed' &&
       (await page.inputValue('.page-form input[placeholder="예) 영식 (선택)"]')) === '도윤');
     await page.click('.page-form .savebar button:has-text("취소")');
     await page.waitForSelector(dlg);

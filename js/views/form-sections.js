@@ -86,7 +86,7 @@ function lenderSuggestions() {
   return out;
 }
 
-/** 소장 여부 (내 소장 · 빌림 · 미기록) + 빌렸으면 빌려준 사람 */
+/** 소장 여부 (내 소장 · 대여 · 미기록) + 대여했으면 빌려준 사람 */
 function ownershipFields(b, ctl) {
   const lenders = datalist(lenderSuggestions());
   const lenderField = field('빌려준 사람', textInput(b.lender, {

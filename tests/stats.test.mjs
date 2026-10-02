@@ -473,7 +473,7 @@ describe('소장', () => {
     close(catan.avgRating, 3.5);
     assert.equal(owned[1].plays, 2);
     assert.equal(owned[2].avgRating, null);
-    // 빌린 게임: 소장한 적 없는 것만, 빌려준 사람은 이름이 같으면 한 번
+    // 대여한 게임: 소장한 적 없는 것만, 빌려준 사람은 이름이 같으면 한 번
     assert.deepEqual(borrowed.map((g) => [g.title, g.plays, g.lenders]), [['스플렌더', 3, ['준호', '영식']]]);
   });
 

@@ -71,10 +71,10 @@ export const ER_SCORES = [
   { key: 'device', label: '장치·연출' },
 ];
 
-// 보드게임·머미(보드게임형): 이번 판에 쓴 게임이 내 소장인지, 빌린 것인지 (없으면 미기록)
+// 보드게임·머미(보드게임형): 이번 판에 쓴 게임이 내 소장인지, 대여한 것인지 (없으면 미기록)
 export const OWNERSHIPS = [
   { key: 'mine', label: '내 소장' },
-  { key: 'borrowed', label: '빌림' },
+  { key: 'borrowed', label: '대여' },
 ];
 
 export const CULPRIT_RESULTS = [

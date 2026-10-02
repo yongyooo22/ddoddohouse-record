@@ -132,7 +132,7 @@ export function ownershipOf(record) {
   return b.ownership === 'mine' || b.ownership === 'borrowed' ? b.ownership : null;
 }
 
-/** 빌린 게임이면 빌려준 사람 (적지 않았으면 '') */
+/** 대여한 게임이면 빌려준 사람 (적지 않았으면 '') */
 export function lenderOf(record) {
   if (ownershipOf(record) !== 'borrowed') return '';
   const r = obj(record);
@@ -388,7 +388,7 @@ export function memberProfile(records, memberId) {
 
 /**
  * 보드게임·머미 기록을 같은 종류·같은 제목끼리 한 게임으로 묶어서,
- * '내 소장'으로 표시한 판이 하나라도 있으면 owned, 아니고 '빌림'으로 한 판이 있으면 borrowed 에 담는다.
+ * '내 소장'으로 표시한 판이 하나라도 있으면 owned, 아니고 '대여'로 한 판이 있으면 borrowed 에 담는다.
  * 횟수·날짜·평균 별점은 그 게임의 모든 판으로 센다. 두 목록 모두 최근에 한 게임부터.
  * @returns {{ owned: Game[], borrowed: Game[] }}
  *   Game = { key, type, title(가장 최근 판의 제목), plays, lastDate, firstDate, avgRating(없으면 null),

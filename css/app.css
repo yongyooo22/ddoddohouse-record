@@ -764,7 +764,7 @@ a.sum-link:focus-visible { outline-offset: -3px; }
 .rbadge { flex: none; margin-left: auto; padding: 2px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 700; line-height: 1.45; white-space: nowrap; }
 .rbadge-clear { background: color-mix(in srgb, var(--st-clear) 12%, var(--surface)); color: var(--st-clear); }
 .rbadge-fail { background: color-mix(in srgb, var(--st-fail) 12%, var(--surface)); color: var(--st-fail); }
-/* 보드게임·머미: 내 소장(진초록) / 빌림(회색) */
+/* 보드게임·머미: 내 소장(진초록) / 대여(회색) */
 .rbadge-own { background: var(--accent-soft); color: var(--accent-ink); }
 .rbadge-borrow { background: var(--surface-3); color: var(--ink-2); }
 /* 아래 칸: 점선 + 양 끝 반원 홈(바탕색 원으로 테두리를 덮고, 안쪽 반만 선을 그림) */
@@ -801,7 +801,7 @@ a.sum-link:focus-visible { outline-offset: -3px; }
 .gcard-meta { display: flex; flex-wrap: wrap; gap: 0 8px; color: var(--ink-3); font-size: 12.5px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .gcard-plays { color: var(--ink-2); font-weight: 650; }
 .gcard-rating { display: inline-flex; flex: none; align-items: center; gap: 4px; align-self: flex-start; margin-top: 3px; font-size: 13.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
-/* 빌려서 해 본 게임 */
+/* 대여한 게임 */
 .blist { margin: 0; padding: 4px 0; list-style: none; }
 .blist li + li { border-top: 1px solid var(--line); }
 .brow { display: flex; align-items: center; gap: 12px; min-height: 60px; padding: 10px 16px; color: inherit; text-decoration: none; transition: background-color .18s; }
