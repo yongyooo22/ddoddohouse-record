@@ -142,3 +142,35 @@ export function fmtBytes(n) {
   const mb = b / (1024 * 1024);
   return `${mb < 100 ? mb.toFixed(1) : Math.round(mb)}MB`;
 }
+
+/** 인원 범위: 2~4 → '2~4명', 2~2 → '2명', 없음 → '' */
+export function fmtPlayers(min, max) {
+  const a = Number.isInteger(min) ? min : null;
+  const b = Number.isInteger(max) ? max : a;
+  const lo = a ?? b;
+  if (lo === null) return '';
+  return b !== null && b !== lo ? `${lo}~${b}명` : `${lo}명`;
+}
+
+/** 예상 시간 범위(분): 60~90 → '60~90분', 60 → '60분', 없음 → '' */
+export function fmtTimeRange(min, max) {
+  const a = Number.isInteger(min) ? min : null;
+  const b = Number.isInteger(max) ? max : a;
+  const lo = a ?? b;
+  if (lo === null) return '';
+  return b !== null && b !== lo ? `${lo}~${b}분` : `${lo}분`;
+}
+
+/** 게임 정보 요약 한 줄: '2~4명 · 60~90분 · 전략, 협력' (보드게임) · '키이스케이프 홍대점' (방탈출) */
+export function gameInfoText(g, { genres = 2 } = {}) {
+  if (!g || typeof g !== 'object') return '';
+  const parts = [];
+  if (g.type === 'boardgame') {
+    parts.push(fmtPlayers(g.playersMin, g.playersMax), fmtTimeRange(g.timeMin, g.timeMax));
+    const gs = Array.isArray(g.genres) ? g.genres.filter((x) => typeof x === 'string' && x) : [];
+    if (gs.length) parts.push(gs.length > genres ? `${gs.slice(0, genres).join(', ')} 외 ${gs.length - genres}` : gs.join(', '));
+  } else if (g.type === 'escaperoom') {
+    parts.push([g.brand, g.branch].filter((x) => typeof x === 'string' && x.trim()).join(' '));
+  }
+  return parts.filter(Boolean).join(' · ');
+}

@@ -313,25 +313,28 @@ export function switchRow({ checked = false, onChange, label, desc, icon: ic }) 
 }
 
 // ── 스테퍼 ──
-export function stepper({ value = 0, min = 0, max = 99, onChange, label, unit = '' }) {
-  let v = Number(value) || 0;
+/** 숫자 늘리기·줄이기. value 가 null 이면 아직 안 적음('–') — 0 으로 치지 않음 */
+export function stepper({ value = null, min = 0, max = 99, onChange, label, unit = '' }) {
+  const blank = (x) => x === null || x === undefined || x === '';
+  let v = blank(value) ? null : Math.max(min, Math.min(max, Math.round(Number(value) || 0)));
   const input = h('input', {
     type: 'number', inputmode: 'numeric', class: 'stepper-input', min: String(min), max: String(max),
-    value: String(v), 'aria-label': label,
+    value: v === null ? '' : String(v), placeholder: '–', 'aria-label': label,
   });
-  const set = (nv) => {
-    const x = Math.max(min, Math.min(max, Math.round(Number(nv) || 0)));
-    v = x;
-    input.value = String(x);
-    minus.disabled = x <= min;
-    plus.disabled = x >= max;
-    if (onChange) onChange(x);
+  const paint = () => {
+    input.value = v === null ? '' : String(v);
+    minus.disabled = v === null || v <= min;
+    plus.disabled = v !== null && v >= max;
   };
-  const minus = h('button', { type: 'button', class: 'stepper-btn', 'aria-label': `${label} 줄이기`, onClick: () => set(v - 1) }, '−');
-  const plus = h('button', { type: 'button', class: 'stepper-btn', 'aria-label': `${label} 늘리기`, onClick: () => set(v + 1) }, '+');
+  const set = (nv) => {
+    v = blank(nv) || !Number.isFinite(Number(nv)) ? null : Math.max(min, Math.min(max, Math.round(Number(nv))));
+    paint();
+    if (onChange) onChange(v);
+  };
+  const minus = h('button', { type: 'button', class: 'stepper-btn', 'aria-label': `${label} 줄이기`, onClick: () => set(v === null ? min : v - 1) }, '−');
+  const plus = h('button', { type: 'button', class: 'stepper-btn', 'aria-label': `${label} 늘리기`, onClick: () => set(v === null ? min + 1 : v + 1) }, '+');
   input.addEventListener('change', () => set(input.value));
-  minus.disabled = v <= min;
-  plus.disabled = v >= max;
+  paint();
   return h('div', { class: 'stepper' }, minus, input, unit ? h('span', { class: 'stepper-unit', text: unit }) : null, plus);
 }
 
@@ -375,12 +378,13 @@ export function field(label, control, { hint, id, cls = '', counter } = {}) {
     hint ? h('p', { class: 'field-hint', text: hint }) : null);
 }
 
-/** 글자 수 카운터 연결 */
+/** 글자 수 카운터 연결 — 한도에 가까워졌을 때(80%)만 보여 줌 */
 export function counterFor(input, max) {
   const c = h('span', { class: 'counter', 'aria-hidden': 'true' });
   const upd = () => {
     const n = Array.from(input.value).length;
     c.textContent = `${n}/${max}`;
+    c.hidden = n < max * 0.8;
     c.classList.toggle('is-near', n > max * 0.9);
   };
   input.addEventListener('input', upd);

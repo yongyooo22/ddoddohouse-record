@@ -7,17 +7,17 @@ export const TYPE_KEYS = ['boardgame', 'murdermystery', 'escaperoom'];
 
 export const TYPES = {
   boardgame: {
-    key: 'boardgame', label: '보드게임', short: '보드게임', icon: 'dice', cls: 't-boardgame',
+    key: 'boardgame', label: '보드게임', short: '보드게임', icon: 'dice', cls: 't-boardgame', noun: '게임',
     titleLabel: '게임 이름', titlePlaceholder: '예) 테라포밍 마스',
     desc: '승패, 점수, 순위를 남겨요',
   },
   murdermystery: {
-    key: 'murdermystery', label: '머더미스터리', short: '머미', icon: 'magnifier', cls: 't-murdermystery',
-    titleLabel: '시나리오 이름', titlePlaceholder: '예) 붉은 저택의 초대',
+    key: 'murdermystery', label: '머더미스터리', short: '머미', icon: 'magnifier', cls: 't-murdermystery', noun: '작품',
+    titleLabel: '작품 이름', titlePlaceholder: '예) 붉은 저택의 초대',
     desc: '역할, 범인, 평점을 남겨요',
   },
   escaperoom: {
-    key: 'escaperoom', label: '방탈출', short: '방탈출', icon: 'door', cls: 't-escaperoom',
+    key: 'escaperoom', label: '방탈출', short: '방탈출', icon: 'door', cls: 't-escaperoom', noun: '테마',
     titleLabel: '테마 이름', titlePlaceholder: '예) 잊혀진 연구소',
     desc: '성공 여부, 남은 시간, 힌트를 남겨요',
   },
@@ -32,10 +32,14 @@ export const TAG_SUGGESTIONS = {
   escaperoom: ['스토리맛집', '인테리어맛집', '장치많음', '자물쇠많음', '공포', '감성', '코믹', '활동성높음', '문제퀄리티', '입문추천', '헬난이도'],
 };
 
+// 보드게임 장르 추천 (게임 정보 — 여러 개 고르거나 직접 추가)
+export const GENRE_SUGGESTIONS = ['전략', '파티', '추리', '협력', '가족', '경매', '덱빌딩', '일꾼놓기', '타일', '카드', '추상', '블러핑', '2인'];
+
 export const LIMITS = {
   title: 80, oneLiner: 100, review: 5000, tag: 15, tags: 10, members: 20,
   place: 40, expansion: 60, publisher: 40, store: 40, gm: 20, character: 30,
   brand: 40, branch: 40, genre: 20, memberName: 20, lender: 20, photos: 4,
+  gameMemo: 100, gameGenre: 15, gameGenres: 10, gamePlayers: 99, gameTime: 1440,
 };
 
 export const BG_MODES = [
@@ -109,7 +113,8 @@ export const FIELD_LABELS = {
   roles: '역할', character: '캐릭터', culpritResult: '범인 검거 결과', scores: '세부 점수', difficulty: '난이도',
   brand: '브랜드', branch: '지점', genre: '장르', timeLimitMin: '제한 시간', remainingSec: '남은 시간',
   hints: '힌트', fear: '공포도', activity: '활동성', name: '이름', emoji: '이모지', color: '색', photos: '사진',
-  ownership: '소장 여부', lender: '빌려준 사람',
+  ownership: '소장 여부', lender: '빌려준 사람', gameId: '게임', memo: '메모', owned: '소장 여부', cover: '대표 이미지',
+  playersMin: '최소 인원', playersMax: '최대 인원', timeMin: '예상 시간', timeMax: '예상 시간', genres: '장르', roleSpoiler: '역할 가리기',
 };
 
 export const STORAGE = {
@@ -117,4 +122,5 @@ export const STORAGE = {
   cache: 'ddh:cache',
   draft: 'ddh:draft',
   theme: 'ddh:theme',
+  lastType: 'ddh:lastType',
 };

@@ -1,7 +1,6 @@
 // 앱 상태 · 기기 로컬 캐시 · 파생 계산
 import { STORAGE } from './constants.js';
-import { escapeRoomOrdinals, participants } from './stats.js';
-import { norm } from './format.js';
+import { escapeRoomOrdinals, participants, resolveGameIds, gameEntries, isOwnedGame } from './stats.js';
 
 // ── localStorage 안전 래퍼 (사생활 보호 모드 등에서 throw 가능) ──
 export function lsGet(k) {
@@ -34,6 +33,13 @@ export const setTheme = (t) => {
   else lsRemove(STORAGE.theme);
 };
 
+// ── 마지막으로 기록한 종류 (새 기록 폼의 기본 종류) ──
+export const getLastType = () => {
+  const t = lsGet(STORAGE.lastType);
+  return t === 'boardgame' || t === 'murdermystery' || t === 'escaperoom' ? t : null;
+};
+export const setLastType = (t) => lsSet(STORAGE.lastType, t);
+
 // ── 초안 ──
 export const getDraft = () => {
   const d = lsGetJSON(STORAGE.draft);
@@ -58,7 +64,7 @@ export function clearDraftIf(match) {
 export const state = {
   records: [],
   members: [],
-  games: [],           // 기록 없이 소장 목록에 등록한 게임
+  games: [],           // 게임 정보 (게임·작품·테마). 기록은 gameId 로 연결
   serverTime: null,
   lastSync: null,      // 마지막으로 서버에서 받아온 시각(ISO)
   fromCache: false,    // 지금 보이는 데이터가 기기 캐시인지
@@ -314,27 +320,67 @@ export function erOrdinals() {
   });
 }
 
-/** 종류별 이전 제목 목록 (최근 사용순, 중복 제거) */
-export function titlesFor(type) {
-  return cached(`titles:${type}`, () => {
-    const seen = new Set();
-    const out = [];
-    for (const r of recordsSorted()) {
-      if (r.type !== type || !r.title) continue;
-      const k = norm(r.title);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(r.title);
-    }
-    return out;
-  });
+// ── 게임 정보 ──
+
+export function gameMap() {
+  return cached('gameMap', () => new Map(state.games.map((g) => [g.id, g])));
 }
 
-/** 같은 종류·같은 제목의 가장 최근 기록 (자동 채우기 제안용) */
-export function latestWithTitle(type, title, excludeId) {
-  const k = norm(title);
-  if (!k) return null;
-  return recordsSorted().find((r) => r.type === type && r.id !== excludeId && norm(r.title) === k) || null;
+export function gameById(id) {
+  return (typeof id === 'string' && gameMap().get(id)) || null;
+}
+
+/** 기록 id → 게임 id (gameId, 또는 예전 기록이면 같은 이름의 게임이 하나뿐일 때 그 게임 — 보여 줄 때만) */
+function recordGameIds() {
+  return cached('recordGameIds', () => resolveGameIds(state.records, state.games));
+}
+
+/** 기록이 속한 게임 정보 (없으면 null) */
+export function gameOfRecord(r) {
+  return r ? gameById(recordGameIds().get(r.id)) : null;
+}
+
+/** 기록의 제목: 연결한 게임 정보가 있으면 지금 게임 이름 (이름을 고치면 지난 기록에도 바로), 없으면 기록에 남은 제목 */
+export function titleOf(r) {
+  if (!r) return '';
+  const g = typeof r.gameId === 'string' ? gameById(r.gameId) : null;
+  return (g && g.type === r.type && g.title) || r.title || '';
+}
+
+/** 게임 정보에 속한 기록 (최신순) */
+export function recordsOfGame(gameId) {
+  if (!gameId) return [];
+  const ids = recordGameIds();
+  return recordsSorted().filter((r) => ids.get(r.id) === gameId);
+}
+
+/** 게임별 요약 (등록한 게임 + 기록에만 있는 이름) — stats.gameEntries */
+export function gameSummaries() {
+  return cached('gameSummaries', () => gameEntries(state.records, state.games));
+}
+
+export function gameSummary(gameId) {
+  return gameSummaries().find((e) => e.gameId === gameId) || null;
+}
+
+/** 종류의 게임 정보 (최근에 한 것·최근에 등록한 것 먼저) */
+export function gamesOfType(type) {
+  return cached(`games:${type}`, () => gameSummaries().filter((e) => e.gameId && e.type === type));
+}
+
+/** 아직 게임 정보로 등록하지 않고 예전 기록에만 있는 이름 (종류별, 최근 순) */
+export function legacyTitles(type) {
+  return cached(`legacy:${type}`, () => gameSummaries().filter((e) => !e.gameId && e.type === type));
+}
+
+export { isOwnedGame };
+
+/** 통계용 기록: 제목을 연결한 게임 이름으로 (이름을 고친 게임도 한 게임으로 셈) */
+export function recordsForStats() {
+  return cached('recordsForStats', () => state.records.map((r) => {
+    const t = titleOf(r);
+    return t === r.title ? r : { ...r, title: t };
+  }));
 }
 
 const PHOTO_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -344,27 +390,24 @@ export function photosOf(r) {
   return r && Array.isArray(r.photos) ? r.photos.filter((id) => typeof id === 'string' && PHOTO_ID_RE.test(id)) : [];
 }
 
-/** 같은 종류·같은 제목이면서 사진이 있는 가장 최근 기록 ('이전 대표 사진 쓰기' 제안용) */
-export function latestWithPhoto(type, title, excludeId) {
-  const k = norm(title);
-  if (!k) return null;
-  return recordsSorted().find((r) => r.type === type && r.id !== excludeId && norm(r.title) === k && photosOf(r).length > 0) || null;
+/** 게임 정보의 대표 이미지 id (없으면 null) */
+export function coverOf(g) {
+  return g && typeof g.cover === 'string' && PHOTO_ID_RE.test(g.cover) ? g.cover : null;
 }
 
-/** 기록들이 쓰는 사진 id (중복 없이, 최신 기록 순) */
+/** 기록 사진 + 게임 대표 이미지 (중복 없이, 최신 기록 순 → 게임) — 저장된 데이터가 쓰는 사진 */
 export function referencedPhotos() {
   const seen = new Set();
   for (const r of recordsSorted()) for (const id of photosOf(r)) seen.add(id);
+  for (const g of state.games) { const c = coverOf(g); if (c) seen.add(c); }
   return [...seen];
 }
 
-/** 같은 종류·같은 제목을 이미 해 본 멤버 id (머미·방탈출은 다시 하기 어려워서 알려 줌) */
-export function playedBy(type, title, excludeId) {
-  const k = norm(title);
-  if (!k) return [];
+/** 같은 게임을 이미 해 본 멤버 id (머미·방탈출은 다시 하기 어려워서 알려 줌) */
+export function playedBy(gameId, excludeId) {
   const ids = new Set();
-  for (const r of state.records) {
-    if (r.type !== type || r.id === excludeId || norm(r.title) !== k) continue;
+  for (const r of recordsOfGame(gameId)) {
+    if (r.id === excludeId) continue;
     for (const id of participants(r)) ids.add(id);
   }
   return [...ids];

@@ -384,85 +384,114 @@ export function memberProfile(records, memberId) {
   return { byType, bg, mm, er, recent: [...mine].sort(byLatest).slice(0, 5) };
 }
 
-// ── 소장 목록 ────────────────────────────────────────────────
+// ── 게임 정보 ↔ 기록 · 소장 목록 ─────────────────────────
 
 const OWNABLE = ['boardgame', 'murdermystery'];
 
+/** 게임 정보가 '내 소장'인지 (보드게임·머미만. 소장 여부를 정한 적 없는 예전 등록 게임은 내 소장) */
+export function isOwnedGame(game) {
+  const g = obj(game);
+  return OWNABLE.includes(g.type) && g.owned !== false;
+}
+
+const isGame = (g) => !!g && typeof g === 'object' && TYPES.includes(g.type) && typeof g.id === 'string' && !!g.id && !!groupKey(g.title);
+
 /**
- * 보드게임·머미 기록을 같은 종류·같은 제목끼리 한 게임으로 묶어서,
- * 소장 목록에 등록한 게임(registered)이거나 '내 소장'으로 표시한 판이 하나라도 있으면 owned,
- * 아니고 '대여'로 한 판이 있으면 borrowed 에 담는다. 등록한 게임은 기록이 없어도 owned 에 들어간다.
- * 횟수·날짜·평균 별점은 그 게임의 모든 판으로 센다. 두 목록 모두 최근에 한 게임부터
- * (owned 의 아직 안 해 본 게임은 맨 뒤에, 최근에 등록한 것부터).
- * @param {object[]} records
- * @param {object[]} [registered]  소장 목록에 바로 등록한 게임 [{id, type, title, memo, createdAt}]
- * @returns {{ owned: Game[], borrowed: Game[] }}
- *   Game = { key, type, title(등록한 이름, 없으면 가장 최근 판의 제목), plays, lastDate, firstDate (안 해 봤으면 ''),
- *            avgRating(없으면 null), latestId(없으면 null), cover(가장 최근 사진 id 또는 null), lenders(빌려준 사람, 최근 순),
- *            gameId(등록한 게임 id, 기록으로만 모인 게임은 null), memo, addedAt(등록한 시각 또는 null) }
+ * 기록마다 어느 게임 정보에 속하는지: Map(기록 id → 게임 id | null)
+ * - gameId 가 있고 그 게임이 있으면 그 게임
+ * - 그 밖(게임 정보 전의 예전 기록, 지워진 게임): 같은 종류·같은 이름의 게임이 딱 하나 등록돼 있을 때만 그 게임으로 봄.
+ *   보여 줄 때만 묶을 뿐 기록은 바꾸지 않으며, 같은 이름이 둘 이상이면(다른 판본) 어느 쪽에도 붙이지 않음
  */
-export function collectionOf(records, registered = []) {
-  const list = arr(records)
-    .filter((r) => isRecord(r) && OWNABLE.includes(r.type))
-    .sort(byLatest);
-  const games = new Map();
-  for (const r of list) {
-    const k = groupKey(r.title);
-    if (!k) continue;
-    const key = `${r.type}:${k}`;
-    let g = games.get(key);
-    if (!g) {
-      g = {
-        key, type: r.type, title: cleanTitle(r.title), plays: 0,
-        lastDate: str(r.date), firstDate: str(r.date), latestId: r.id, cover: null, lenders: [],
-        ratings: [], mine: 0, borrowed: 0,
-      };
-      games.set(key, g);
-    }
-    g.plays++;
-    g.firstDate = str(r.date); // 최신순으로 도니까 마지막 값이 가장 오래된 판
-    const rating = num(r.rating);
-    if (rating !== null && rating > 0) g.ratings.push(rating);
-    if (!g.cover) g.cover = arr(r.photos).find((id) => typeof id === 'string' && id) || null;
-    const own = ownershipOf(r);
-    if (own === 'mine') g.mine++;
-    else if (own === 'borrowed') {
-      g.borrowed++;
-      const who = lenderOf(r);
-      if (who && !g.lenders.some((x) => groupKey(x) === groupKey(who))) g.lenders.push(who);
-    }
+export function resolveGameIds(records, games) {
+  const byId = new Map();
+  const byTitle = new Map();
+  for (const g of arr(games)) {
+    if (!isGame(g)) continue;
+    byId.set(g.id, g);
+    const k = `${g.type}:${groupKey(g.title)}`;
+    byTitle.set(k, [...(byTitle.get(k) || []), g.id]);
   }
-  // 등록한 게임 (같은 게임이 둘 등록돼 있으면 먼저 등록한 것)
-  const regs = new Map();
-  const regList = arr(registered)
-    .filter((x) => x && typeof x === 'object' && OWNABLE.includes(x.type) && groupKey(x.title))
-    .sort((a, b) => cmpStr(a.createdAt, b.createdAt));
-  for (const x of regList) {
-    const key = `${x.type}:${groupKey(x.title)}`;
-    if (!regs.has(key)) regs.set(key, x);
+  const out = new Map();
+  for (const r of arr(records)) {
+    if (!isRecord(r) || typeof r.id !== 'string') continue;
+    const linked = typeof r.gameId === 'string' ? byId.get(r.gameId) : null;
+    if (linked && linked.type === r.type) { out.set(r.id, linked.id); continue; }
+    const same = byTitle.get(`${r.type}:${groupKey(r.title)}`) || [];
+    out.set(r.id, same.length === 1 ? same[0] : null);
   }
-  const withReg = (g, reg) => ({
-    ...g, title: cleanTitle(reg.title), gameId: typeof reg.id === 'string' && reg.id ? reg.id : null,
-    memo: str(reg.memo).trim(), addedAt: str(reg.createdAt) || null,
+  return out;
+}
+
+/**
+ * 게임별 요약 (등록한 게임 정보 + 아직 등록하지 않고 기록에만 있는 이름).
+ * @returns {Entry[]}  최근에 한 게임부터, 그 뒤에 아직 안 해 본 등록 게임이 최근에 등록한 것부터
+ *   Entry = { key ('g:<게임 id>' | '<종류>:<제목 키>'), type, title, gameId(없으면 null), game(게임 정보 또는 null),
+ *             owned(내 소장), plays, lastDate, firstDate(안 해 봤으면 ''), avgRating(없으면 null), latestId,
+ *             cover(대표 이미지, 없으면 가장 최근 기록 사진, 없으면 null), memo, addedAt(등록 시각 또는 null),
+ *             mine·borrowed(예전 기록의 소장 여부 판 수), lenders(예전 기록의 빌려준 사람, 최근 순) }
+ */
+export function gameEntries(records, games = []) {
+  const link = resolveGameIds(records, games);
+  const regs = new Map(arr(games).filter(isGame).map((g) => [g.id, g]));
+  const list = arr(records).filter(isRecord).sort(byLatest);
+  const map = new Map();
+  const blank = (key, type, title) => ({
+    key, type, title, gameId: null, game: null, owned: false, plays: 0, lastDate: '', firstDate: '', latestId: null,
+    cover: null, photo: null, memo: '', addedAt: null, ratings: [], mine: 0, borrowed: 0, lenders: [],
   });
-  const owned = [];
-  const borrowed = [];
-  for (const { ratings, mine, borrowed: nb, ...game } of games.values()) {
-    const out = { ...game, avgRating: avg(ratings), gameId: null, memo: '', addedAt: null };
-    const reg = regs.get(game.key);
-    if (reg) {
-      regs.delete(game.key);
-      owned.push(withReg(out, reg));
-    } else if (mine) owned.push(out);
-    else if (nb) borrowed.push(out);
+  for (const r of list) {
+    const gid = link.get(r.id) || null;
+    const tk = groupKey(r.title);
+    if (!gid && !tk) continue;
+    const key = gid ? `g:${gid}` : `${r.type}:${tk}`;
+    let e = map.get(key);
+    if (!e) {
+      e = blank(key, r.type, cleanTitle(r.title));
+      map.set(key, e);
+    }
+    e.plays++;
+    if (!e.lastDate) { e.lastDate = str(r.date); e.latestId = r.id; }
+    e.firstDate = str(r.date); // 최신순으로 도니까 마지막 값이 가장 오래된 판
+    const rating = num(r.rating);
+    if (rating !== null && rating > 0) e.ratings.push(rating);
+    if (!e.photo) e.photo = arr(r.photos).find((id) => typeof id === 'string' && id) || null;
+    const own = ownershipOf(r);
+    if (own === 'mine') e.mine++;
+    else if (own === 'borrowed') {
+      e.borrowed++;
+      const who = lenderOf(r);
+      if (who && !e.lenders.some((x) => groupKey(x) === groupKey(who))) e.lenders.push(who);
+    }
   }
   // 아직 기록이 없는 등록 게임 — 최근에 등록한 것부터
-  for (const [key, reg] of [...regs].reverse()) {
-    owned.push(withReg({
-      key, type: reg.type, title: '', plays: 0, lastDate: '', firstDate: '', latestId: null, cover: null, lenders: [], avgRating: null,
-    }, reg));
+  const unplayed = [...regs.values()].filter((g) => !map.has(`g:${g.id}`))
+    .sort((a, b) => cmpStr(b.createdAt, a.createdAt) || cmpStr(a.id, b.id));
+  for (const g of unplayed) map.set(`g:${g.id}`, blank(`g:${g.id}`, g.type, ''));
+  const out = [];
+  for (const { ratings, photo, ...e } of map.values()) {
+    const g = e.key.startsWith('g:') ? regs.get(e.key.slice(2)) : null;
+    const entry = { ...e, avgRating: avg(ratings), cover: photo };
+    if (g) {
+      Object.assign(entry, {
+        type: g.type, title: cleanTitle(g.title), gameId: g.id, game: g, owned: isOwnedGame(g),
+        cover: (typeof g.cover === 'string' && g.cover) || photo, memo: str(g.memo).trim(), addedAt: str(g.createdAt) || null,
+      });
+    } else {
+      // 등록 전의 예전 기록: '내 소장'으로 남긴 판이 있으면 소장 (보드게임·보드게임형 머미)
+      entry.owned = OWNABLE.includes(entry.type) && entry.mine > 0;
+    }
+    out.push(entry);
   }
-  return { owned, borrowed };
+  return out;
+}
+
+/**
+ * 소장 목록: '내 소장'인 게임 정보 + 등록 전 예전 기록 중 '내 소장'으로 남긴 게임 (보드게임·머미만, 방탈출 없음).
+ * 횟수·날짜·평균 별점은 그 게임의 모든 판으로 센다.
+ * @returns {{ owned: Entry[] }}
+ */
+export function collectionOf(records, games = []) {
+  return { owned: gameEntries(records, games).filter((e) => e.owned && OWNABLE.includes(e.type)) };
 }
 
 function cleanTitle(s) {

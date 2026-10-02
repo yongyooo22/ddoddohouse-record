@@ -1,13 +1,14 @@
 // 기록 상세
 import { h, icon } from '../dom.js';
 import { TYPES, BG_MODES, MM_FORMATS, MM_OUTCOMES, MM_SCORES, ER_SCORES } from '../constants.js';
-import { state, recordById, removeRecord, memberInfo, isFirstLoad, loadFailed } from '../store.js';
-import { fmtDate, fmtMinutes, fmtRemaining, fmtDateTime } from '../format.js';
+import { state, recordById, removeRecord, memberInfo, isFirstLoad, loadFailed, titleOf, gameOfRecord, recordsOfGame, isOwnedGame } from '../store.js';
+import { fmtDate, fmtMinutes, fmtRemaining, fmtDateTime, gameInfoText } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
 import { appBar, typeBadge, starsView, stamp, avatar, scoreBars, spoilerBlock, confirmDialog, toast, emptyState, loadingState, loadErrorState } from '../ui.js';
 import { recordStamp, ordinalLabel, bgOf, mmOf, erOf, spoilerKey, ownershipText } from './bits.js';
 import { gallery, closeViewer } from './photos.js';
+import { gameThumb, openGameEditor } from './game-form.js';
 
 // 상세를 다시 그려도(새로고침·다른 기기의 변경) 보던 사진 그대로: 기록 id → 사진 번호
 const galleryAt = new Map();
@@ -45,12 +46,12 @@ function bgSection(r) {
   const bg = bgOf(r);
   const mode = BG_MODES.find((m) => m.key === bg.mode);
   const out = [];
-  out.push(sec('게임 정보', infoGrid([
+  out.push(sec('그날의 정보', infoGrid([
     ['방식', mode ? mode.label : '', 'users'],
     ['장소', bg.place, 'pin'],
     ['플레이 시간', fmtMinutes(bg.playTimeMin), 'clock'],
     ['확장판', bg.expansion, 'sparkle'],
-    ['소장 여부', ownershipText(r), 'box'],
+    ['소장 여부', gameOfRecord(r) ? '' : ownershipText(r), 'box'],
   ]) || h('p', { class: 'muted small', text: '추가 정보 없음' })));
 
   if (bg.mode === 'coop') {
@@ -79,14 +80,14 @@ function mmSection(r) {
   const mm = mmOf(r);
   const fmt = MM_FORMATS.find((f) => f.key === mm.format);
   const out = [];
-  out.push(sec('시나리오 정보', infoGrid([
+  out.push(sec('그날의 정보', infoGrid([
     ['제작사', mm.publisher, 'book'],
     ['형태', fmt ? fmt.label : '', 'dice'],
     ['매장·지점', mm.format === 'store' ? mm.store : '', 'pin'],
     ['GM', mm.gm, 'mask'],
     ['인원', mm.playerCount ? `${mm.playerCount}인` : '', 'users'],
     ['플레이 시간', fmtMinutes(mm.playTimeMin), 'clock'],
-    ['소장 여부', ownershipText(r), 'box'],
+    ['소장 여부', gameOfRecord(r) ? '' : ownershipText(r), 'box'],
   ]) || h('p', { class: 'muted small', text: '추가 정보 없음' })));
 
   const roles = arr(mm.roles).filter((x) => x && x.memberId);
@@ -102,11 +103,11 @@ function mmSection(r) {
             oc ? h('span', { class: `outcome outcome-${oc.key}`, text: oc.label }) : null,
             x.mvp ? h('span', { class: 'mvp' }, icon('crown'), h('span', { text: 'MVP' })) : null));
       })) : null;
-    // 누가 어떤 배역·범인이었는지는 시나리오 스포일러 → 스포일러 기록이면 가림 (목록 카드와 펼침 상태 공유)
+    // 누가 어떤 역할·범인이었는지는 작품 스포일러 → 스포일러 기록이거나 '역할·범인 가리기'면 가림
     const hasSecret = roles.some((x) => x.culprit || x.character);
     out.push(sec('역할과 결과',
       resultStamp ? h('div', { class: 'result-big' }, resultStamp) : null,
-      list && r.spoiler && hasSecret ? spoilerBlock(list, { label: '범인·배역 보기', key: spoilerKey(r, 'roles') }) : list));
+      list && (r.spoiler || mm.roleSpoiler) && hasSecret ? spoilerBlock(list, { label: '범인·역할 보기', key: spoilerKey(r, 'roles') }) : list));
   }
 
   const hasScores = MM_SCORES.some((s) => Number(mm.scores && mm.scores[s.key]) > 0);
@@ -120,7 +121,7 @@ function mmSection(r) {
 function erSection(r) {
   const er = erOf(r);
   const out = [];
-  out.push(sec('테마 정보', infoGrid([
+  out.push(sec('그날의 정보', infoGrid([
     ['브랜드', er.brand, 'door'],
     ['지점', er.branch, 'pin'],
     ['장르', er.genre, 'tag'],
@@ -134,7 +135,7 @@ function erSection(r) {
       er.cleared === true ? stamp('탈출 성공', 'clear') : er.cleared === false ? stamp('탈출 실패', 'fail') : h('span', { class: 'muted', text: '결과 미기록' }),
       h('div', { class: 'er-nums' },
         h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: remain || '–' }), h('span', { class: 'er-num-l', text: '남은 시간' })),
-        h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: Number.isFinite(Number(er.hints)) ? String(Number(er.hints)) : '–' }), h('span', { class: 'er-num-l', text: '힌트' }))))));
+        h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: er.hints !== null && er.hints !== undefined && Number.isFinite(Number(er.hints)) ? String(Number(er.hints)) : '–' }), h('span', { class: 'er-num-l', text: '힌트' }))))));
 
   const hasScores = ER_SCORES.some((s) => Number(er.scores && er.scores[s.key]) > 0);
   out.push(sec('세부 평가',
@@ -162,7 +163,7 @@ function render(root, id, ctx) {
   let deleting = false;
   async function onDelete() {
     if (deleting) return;
-    const ok = await confirmDialog('이 기록을 삭제할까요?', `“${r.title}” 기록이 모두에게서 사라져요. 되돌릴 수 없어요.`, { ok: '삭제', danger: true });
+    const ok = await confirmDialog('이 기록을 삭제할까요?', `“${titleOf(r)}” 기록이 모두에게서 사라져요. 되돌릴 수 없어요.`, { ok: '삭제', danger: true });
     if (!ok) return;
     deleting = true;
     try {
@@ -182,27 +183,38 @@ function render(root, id, ctx) {
     }
   }
 
-  const one = r.oneLiner
-    ? (r.spoiler
-      ? spoilerBlock(h('p', { class: 'hero-one', text: `“${r.oneLiner}”` }), { key: spoilerKey(r, 'one') })
-      : h('p', { class: 'hero-one', text: `“${r.oneLiner}”` }))
-    : null;
-
+  const title = titleOf(r) || '(제목 없음)';
   const hero = h('section', { class: `dhero ${t ? t.cls : ''}` },
     h('div', { class: 'dhero-top' }, typeBadge(r.type, { short: false }), ordinalLabel(r)),
-    h('h1', { class: 'dhero-title', text: r.title || '(제목 없음)' }),
+    h('h1', { class: 'dhero-title', text: title }),
     h('p', { class: 'dhero-date' }, icon('calendar'), h('span', { text: fmtDate(r.date) })),
     h('div', { class: 'dhero-rating' }, starsView(r.rating, { size: 'md' })),
-    one,
     st ? h('div', { class: 'dhero-stamp' }, st) : null);
 
   const members = arr(r.members);
   const typeSecs = r.type === 'boardgame' ? bgSection(r) : r.type === 'murdermystery' ? mmSection(r) : r.type === 'escaperoom' ? erSection(r) : [];
 
-  const review = r.review
-    ? sec('후기', r.spoiler
-      ? spoilerBlock(h('p', { class: 'review-text', text: r.review }), { key: spoilerKey(r, 'review') })
-      : h('p', { class: 'review-text', text: r.review }))
+  // 감상: 예전 기록의 한줄평과 후기를 모두 보여 줌. 스포일러 기록은 열기 전까지 가림
+  const reviewBody = (r.oneLiner || r.review)
+    ? h('div', { class: 'review-body' },
+      r.oneLiner ? h('p', { class: 'review-one', text: r.oneLiner }) : null,
+      r.review ? h('p', { class: 'review-text', text: r.review }) : null)
+    : null;
+  const review = reviewBody
+    ? sec('감상', r.spoiler ? spoilerBlock(reviewBody, { label: '감상 보기', key: spoilerKey(r, 'review') }) : reviewBody)
+    : null;
+
+  // 게임 정보 (대표 이미지 · 인원·시간·장르 · 내 소장) — 플레이 사진과 따로
+  const game = gameOfRecord(r);
+  const gameCard = game
+    ? h('section', { class: `card dgame ${t ? t.cls : ''}` },
+      gameThumb(game),
+      h('div', { class: 'dgame-text' },
+        h('p', { class: 'dgame-name' }, h('span', { text: game.title }), isOwnedGame(game) ? h('span', { class: 'rbadge rbadge-own', text: '내 소장' }) : null),
+        gameInfoText(game, { genres: 3 }) ? h('p', { class: 'dgame-meta', text: gameInfoText(game, { genres: 3 }) }) : null,
+        h('div', { class: 'dgame-acts' },
+          h('a', { class: 'link-more', href: `#/records?game=${encodeURIComponent(game.id)}` }, `이 ${t ? t.noun : '게임'} 기록 ${recordsOfGame(game.id).length}개`, icon('chevron')))),
+      h('button', { type: 'button', class: 'icon-btn icon-btn-sm', 'aria-label': `${game.title} 정보 수정`, onClick: () => openGameEditor(game) }, icon('edit')))
     : null;
 
   const tags = arr(r.tags);
@@ -220,10 +232,11 @@ function render(root, id, ctx) {
       h('div', { class: 'detail-col detail-col-a' },
         photos,
         hero,
+        review,
+        gameCard,
         members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null),
       h('div', { class: 'detail-col detail-col-b' },
         typeSecs,
-        review,
         tags.length ? h('div', { class: 'dtags' }, tags.map((tg) => h('a', { class: 'tag', href: `#/records?tag=${encodeURIComponent(tg)}`, text: `#${tg}` }))) : null,
         h('p', { class: 'dmeta' },
           r.createdAt ? h('span', { text: `작성 ${fmtDateTime(r.createdAt)}` }) : null,
@@ -239,7 +252,7 @@ function signature(id) {
   const r = recordById(id);
   if (!r) return JSON.stringify([null, state.status, isFirstLoad(), loadFailed(), state.records.length]);
   const ord = ordinalLabel(r);
-  return JSON.stringify([r, state.members, ord ? ord.textContent : null]);
+  return JSON.stringify([r, state.members, ord ? ord.textContent : null, gameOfRecord(r), recordsOfGame(r.gameId).length]);
 }
 
 export function mount(root, ctx) {
