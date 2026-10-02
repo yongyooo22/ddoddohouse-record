@@ -2,8 +2,8 @@
 import { h, icon, starShape } from '../dom.js';
 import { TYPES } from '../constants.js';
 import { fmtDate, fmtDateDot } from '../format.js';
-import { erOrdinals, photosOf } from '../store.js';
-import { typeBadge, stamp } from '../ui.js';
+import { erOrdinals, photosOf, titleOf, gameOfRecord, coverOf, isOwnedGame } from '../store.js';
+import { typeBadge, stamp, spoilerBlock } from '../ui.js';
 import { ownershipOf, lenderOf } from '../stats.js';
 import { cardPhoto } from './photos.js';
 
@@ -65,7 +65,7 @@ function resultBadge(r) {
   return null;
 }
 
-/** 소장 여부 글자: '내 소장' · '대여 · 영식' · '' (미기록·해당 없음) */
+/** 예전 기록의 소장 여부 글자: '내 소장' · '대여 · 영식' · '' (미기록·해당 없음) */
 export function ownershipText(r) {
   const own = ownershipOf(r);
   if (own === 'mine') return '내 소장';
@@ -74,25 +74,41 @@ export function ownershipText(r) {
   return who ? `대여 · ${who}` : '대여';
 }
 
-/** 보드게임·머미: 내 소장 / 대여를 같은 자리에 작은 배지로 */
+/** 보드게임·머미: 게임 정보가 '내 소장'이면(없으면 예전 기록의 소장 여부) 작은 배지로 */
 function ownershipBadge(r) {
+  const g = gameOfRecord(r);
+  if (g) return isOwnedGame(g) ? h('span', { class: 'rbadge rbadge-own', text: '내 소장' }) : null;
   const own = ownershipOf(r);
   if (own === 'mine') return h('span', { class: 'rbadge rbadge-own', text: '내 소장' });
   if (own === 'borrowed') return h('span', { class: 'rbadge rbadge-borrow', text: '대여' });
   return null;
 }
 
+/** 감상의 첫 부분 (한줄평이 있던 예전 기록은 한줄평) — 카드에서 1~2줄로 잘라 보여 줌 */
+export function reviewExcerpt(r) {
+  const one = typeof r.oneLiner === 'string' ? r.oneLiner.trim() : '';
+  if (one) return one;
+  const rev = typeof r.review === 'string' ? r.review.trim() : '';
+  return rev.length > 160 ? `${rev.slice(0, 160)}…` : rev;
+}
+
 /**
- * 목록/홈 기록 카드 — 티켓 모양: 위(대표 사진 · 종류 · 제목 · 날짜) | 점선 | 아래(평점 · 한줄평)
- * 우승자·멤버·배역·범인·스포일러 내용은 카드에 싣지 않고 상세 화면에서 보여 줌
+ * 목록/홈 기록 카드 — 티켓 모양: 위(대표 이미지 · 종류 · 제목 · 날짜) | 점선 | 아래(별점 · 짧은 감상)
+ * 대표 이미지는 그날 찍은 첫 사진, 없으면 게임의 대표 이미지. 스포일러 기록의 감상은 열기 전까지 가림
  */
 export function recordCard(r) {
   const t = TYPES[r.type];
-  const photo = cardPhoto(r);
   const nPhotos = photosOf(r).length;
+  const cover = nPhotos ? null : coverOf(gameOfRecord(r));
+  const photo = nPhotos ? cardPhoto(r) : cover ? cardPhoto({ photos: [cover] }) : null;
   const rating = Number(r.rating) || 0;
-  // 스포일러가 있는 기록의 한줄평은 카드에 싣지 않음 (대신 다른 내용을 보여 주지도 않음)
-  const one = r.oneLiner && !r.spoiler ? r.oneLiner : '';
+  const title = titleOf(r) || '(제목 없음)';
+  const excerpt = reviewExcerpt(r);
+  let one = null;
+  if (excerpt) {
+    const text = h('p', { class: 'rcard-one', text: excerpt });
+    one = r.spoiler ? spoilerBlock(text, { inline: true, label: '스포일러 보기', key: spoilerKey(r, 'one') }) : text;
+  }
   return h('article', { class: ['rcard', t ? t.cls : '', photo ? 'has-photo' : ''] },
     h('div', { class: 'rcard-main' },
       h('div', { class: 'rcard-thumb', 'aria-hidden': 'true' },
@@ -102,14 +118,14 @@ export function recordCard(r) {
         h('h3', { class: 'rcard-title' },
           h('a', {
             class: 'card-link', href: `#/record/${encodeURIComponent(r.id)}`,
-            'aria-label': `${r.title || '(제목 없음)'}, ${fmtDate(r.date)}${nPhotos ? `, 사진 ${nPhotos}장` : ''}`,
-          }, r.title || '(제목 없음)')),
+            'aria-label': `${title}, ${fmtDate(r.date)}${nPhotos ? `, 사진 ${nPhotos}장` : ''}`,
+          }, title)),
         h('p', { class: 'rcard-date', text: fmtDateDot(r.date) }))),
     h('div', { class: 'rcard-stub' },
       rating > 0
         ? h('span', { class: 'rcard-rating', role: 'img', 'aria-label': `별점 ${rating}점` }, starShape('rcard-star'), h('span', { text: rating.toFixed(1) }))
-        : h('span', { class: 'rcard-rating is-empty', text: '평점 없음' }),
-      one ? h('p', { class: 'rcard-one', text: one }) : null));
+        : h('span', { class: 'rcard-rating is-empty', text: '별점 없음' }),
+      one));
 }
 
 /** 섹션 제목 */

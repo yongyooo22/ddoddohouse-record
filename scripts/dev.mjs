@@ -161,12 +161,16 @@ export function createMemoryRedis({ now = Date.now } = {}) {
         expiresAt.set(key, now() + Number(args[0]) * 1000);
         return n + 1;
       }
-      // 모든 기록이 가리키는 사진 id (Lua 의 REFS 조각과 같은 패턴)
-      const refsOf = (recordsKey) => {
+      // 모든 기록이 가리키는 사진 id + 게임 정보의 대표 이미지 (Lua 의 refs 조각과 같은 패턴)
+      const refsOf = (recordsKey, gamesKey) => {
         const refs = new Set();
         for (const rec of hash(recordsKey, false)?.values() ?? []) {
           const list = /"photos":\[([^\]]*)\]/.exec(rec);
           if (list) for (const m of list[1].matchAll(/"([^"]*)"/g)) refs.add(m[1]);
+        }
+        for (const g of (gamesKey ? hash(gamesKey, false)?.values() : null) ?? []) {
+          const cover = /"cover":"([^"]*)"/.exec(g);
+          if (cover) refs.add(cover[1]);
         }
         return refs;
       };
@@ -200,14 +204,14 @@ export function createMemoryRedis({ now = Date.now } = {}) {
         const id = String(args[0]);
         const cur = hash(keys[1], false)?.get(id);
         if (cur !== undefined && !cur.includes(PENDING_MARK)) return 'kept';
-        if (cur !== undefined && refsOf(keys[0]).has(id)) return 'in_use';
+        if (cur !== undefined && refsOf(keys[0], keys[4]).has(id)) return 'in_use';
         if (cur !== undefined) hdelField(keys[1], id);
         strings.delete(keys[2]);
         strings.delete(keys[3]);
         return 'deleted';
       }
       if (script === IMAGE_DELETE_SCRIPT) {
-        const refs = refsOf(keys[0]);
+        const refs = refsOf(keys[0], keys[3]);
         const [cutoff, ...ids] = args.map(String);
         return ids.map((id, i) => {
           const touched = hash(keys[2], false)?.get(id);
@@ -220,8 +224,8 @@ export function createMemoryRedis({ now = Date.now } = {}) {
             return 'in_use';
           }
           if (cutoff !== '' && touched !== undefined && touched > cutoff) return 'young';
-          strings.delete(keys[3 + 2 * i]);
           strings.delete(keys[4 + 2 * i]);
+          strings.delete(keys[5 + 2 * i]);
           hdelField(keys[1], id);
           if (touched !== undefined) hdelField(keys[2], id);
           return 'deleted';

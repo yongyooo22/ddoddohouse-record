@@ -94,8 +94,12 @@ export const saveMember = (member) => request('POST', '/api/members', { member }
 
 export const deleteMember = (id) => request('DELETE', `/api/members?id=${encodeURIComponent(id)}`);
 
-/** 소장 게임 (기록 없이 소장 목록에만) {id?, type, title, memo} → {game} */
-export const saveGame = (game) => request('POST', '/api/games', { game });
+/**
+ * 게임 정보 {id?, type, title, memo, owned?, cover?, playersMin?…} → {game}.
+ * 같은 종류에 같은 이름이 있으면 400 duplicate — 사용자가 확인했으면 allowDuplicate 로 따로 등록
+ */
+export const saveGame = (game, { allowDuplicate = false } = {}) =>
+  request('POST', '/api/games', allowDuplicate ? { game, allowDuplicate: true } : { game });
 
 export const deleteGame = (id) => request('DELETE', `/api/games?id=${encodeURIComponent(id)}`);
 

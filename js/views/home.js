@@ -1,6 +1,6 @@
-// 홈 — 인사말, 낮은 요약 띠(전체·이번 달·종류별), 최근 기록
+// 홈 — 한 줄 인사말, 낮은 요약 띠(전체·이번 달·종류별), 최근 기록
 import { h, icon } from '../dom.js';
-import { TYPES, TYPE_KEYS, APP_NAME, WEEKDAYS } from '../constants.js';
+import { TYPES, TYPE_KEYS, WEEKDAYS } from '../constants.js';
 import { state, recordsSorted, isFirstLoad, loadFailed } from '../store.js';
 import { overview } from '../stats.js';
 import { emptyState, loadingState, loadErrorState } from '../ui.js';
@@ -33,12 +33,10 @@ function render(root, ctx) {
   const thisMonth = ov ? ov.thisMonth : 0;
   const byType = (ov && ov.byType) || {};
 
-  // 설정은 메뉴(휴대폰 아래 탭 막대 · 넓은 화면 사이드바)에 있음
+  // 인사말은 한 줄로 낮게 — 최근 기록이 빨리 보이게 (설정은 메뉴에 있음)
   const head = h('header', { class: 'home-head' },
-    h('div', { class: 'home-hello' },
-      h('p', { class: 'kicker', text: APP_NAME }),
-      h('h1', { class: 'home-title', text: greeting(now) }),
-      h('p', { class: 'home-date', text: `${now.getFullYear()}년 ${now.getMonth() + 1}월 ${now.getDate()}일 ${WEEKDAYS[now.getDay()]}요일` })));
+    h('h1', { class: 'home-title', text: greeting(now) }),
+    h('p', { class: 'home-date', text: `${now.getMonth() + 1}월 ${now.getDate()}일 ${WEEKDAYS[now.getDay()]}요일` }));
 
   // 첫 로딩 중이거나 불러오기에 실패했으면 0회 요약·빈 안내 대신 그 상태를 보여 줌 (기록이 사라진 것처럼 보이지 않게)
   if (!records.length && (isFirstLoad() || loadFailed())) {

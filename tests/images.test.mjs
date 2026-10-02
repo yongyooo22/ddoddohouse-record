@@ -5,7 +5,7 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { createHandlers, UPSERT_SCRIPT, RECORD_DELETE_SCRIPT, RECORDS_KEY, MAX_BODY_BYTES } from '../lib/handler.js';
+import { createHandlers, UPSERT_SCRIPT, RECORD_DELETE_SCRIPT, RECORDS_KEY, GAMES_KEY, MAX_BODY_BYTES } from '../lib/handler.js';
 import {
   IMAGE_ADD_SCRIPT,
   IMAGE_COMMIT_SCRIPT,
@@ -874,6 +874,43 @@ function imageSuite(label, makeRedis) {
       assert.equal((await stats()).count, 1);
     });
 
+    test('게임 대표 이미지: 쓰는 동안은 정리하지 않고, 바꾸거나 게임을 지우면 하루 유예 뒤 정리', async () => {
+      await redis.flushall();
+      const t0 = Date.parse('2026-09-01T00:00:00.000Z');
+      let clock = t0;
+      const { call, upload, gc, delImage } = fresh({ now: () => new Date(clock) });
+      const saveGame = (game) => call('games', { method: 'POST', body: { game } });
+      const [a, b] = [(await upload()).body.image.id, (await upload()).body.image.id];
+      let g = (await saveGame({ type: 'boardgame', title: '카탄', cover: a })).body.game;
+      assert.equal(g.cover, a);
+      assert.equal((await delImage(a)).statusCode, 409, '대표 이미지로 쓰는 사진은 바로 못 지움');
+      clock = t0 + 30 * HOUR;
+      assert.deepEqual((await gc()).body, { deleted: 1 }, '안 쓰는 b 만');
+      assert.equal(await imageState(redis, a), 'present');
+      // 대표 이미지를 바꾸면 이전 것은 빠진 시각부터 하루 유예
+      const c = (await upload()).body.image.id;
+      g = (await saveGame({ ...g, cover: c })).body.game;
+      assert.ok(await redis.hget(IMAGE_TOUCH_KEY, a));
+      assert.deepEqual((await gc()).body, { deleted: 0 });
+      clock = t0 + 54 * HOUR;
+      assert.deepEqual((await gc()).body, { deleted: 1 });
+      assert.equal(await imageState(redis, a), 'gone');
+      assert.equal(await imageState(redis, b), 'gone');
+      // 이름·메모만 고치는 예전 앱의 저장은 대표 이미지를 지우지 않음
+      g = (await saveGame({ id: g.id, type: 'boardgame', title: '카탄 (고침)', memo: '' })).body.game;
+      assert.equal(g.cover, c);
+      // cover: null 을 보내야 뺌
+      g = (await saveGame({ ...g, cover: null })).body.game;
+      assert.equal(g.cover, undefined);
+      assert.ok(await redis.hget(IMAGE_TOUCH_KEY, c));
+      // 게임을 지워도 대표 이미지는 빠진 것으로 표시
+      const d = (await upload()).body.image.id;
+      const g2 = (await saveGame({ type: 'escaperoom', title: '연구소', cover: d })).body.game;
+      assert.equal((await call('games', { method: 'DELETE', query: { id: g2.id } })).statusCode, 200);
+      assert.ok(await redis.hget(IMAGE_TOUCH_KEY, d));
+      assert.equal(await imageState(redis, d), 'present', '하루 동안은 남음');
+    });
+
     test('gc: 만든 시각이 깨진 메타도 정리, 후보가 많아도(여러 번에 나눠) 모두 처리', async () => {
       await redis.flushall();
       const { gc, stats, saveRecord } = fresh({ now: () => new Date('2026-09-29T00:00:00.000Z') });
@@ -1147,7 +1184,7 @@ describe('실제 redis-server (사진)', { skip: hasRedisServer ? false : 'redis
     const add = (id, bytes, maxCount = '3', maxBytes = '100', at = 'T1') => (r) =>
       r.eval(IMAGE_ADD_SCRIPT, [IMAGE_META_KEY, ...dataKeys(id), IMAGE_TOUCH_KEY], [id, pend(id, bytes), String(bytes + 1), maxCount, maxBytes, at]);
     const commit = (id, bytes) => (r) => r.eval(IMAGE_COMMIT_SCRIPT, [IMAGE_META_KEY, ...dataKeys(id)], [id, metaJson(id, { bytesF: bytes, bytesT: 1 })]);
-    const rollback = (id) => (r) => r.eval(IMAGE_ROLLBACK_SCRIPT, [RECORDS_KEY, IMAGE_META_KEY, ...dataKeys(id)], [id]);
+    const rollback = (id) => (r) => r.eval(IMAGE_ROLLBACK_SCRIPT, [RECORDS_KEY, IMAGE_META_KEY, ...dataKeys(id), GAMES_KEY], [id]);
     const setData = (id, sizes = 'ft') => async (r) => {
       for (const size of sizes) await r.set(imageKey(id, size), `${id}-${size}`);
       return 'OK';
@@ -1190,6 +1227,10 @@ describe('실제 redis-server (사진)', { skip: hasRedisServer ? false : 'redis
     await both((r) => r.hset(RECORDS_KEY, { r3: JSON.stringify({ id: 'r3', photos: ['p'] }) }));
     assert.equal(await both(rollback('p')), 'in_use');
     await both((r) => r.hdel(RECORDS_KEY, 'r3'));
+    // 게임 정보의 대표 이미지로 쓰는 사진도 쓰는 중으로 봄
+    await both((r) => r.hset(GAMES_KEY, { g1: JSON.stringify({ id: 'g1', title: '"cover":"q"', cover: 'p' }) }));
+    assert.equal(await both(rollback('p')), 'in_use');
+    await both((r) => r.hdel(GAMES_KEY, 'g1'));
     await both((r) => r.hdel(IMAGE_META_KEY, 'p'));
 
     // 지우기: 유예 기준 시각(cutoff) 뒤에 적힌 imgtouch 는 남김, 쓰거나 없는 사진의 imgtouch 는 지움
@@ -1201,6 +1242,10 @@ describe('실제 redis-server (사진)', { skip: hasRedisServer ? false : 'redis
       return r.eval(IMAGE_DELETE_SCRIPT, keys, args);
     };
     assert.deepEqual(await both(del(['a', 'd', 'e', 'zz'], 'T3')), ['in_use', 'young', 'deleted', 'missing']);
+    // 대표 이미지로 쓰는 사진은 남김 (제목 속 글자는 대표 이미지로 보지 않음)
+    await both((r) => r.hset(GAMES_KEY, { g2: JSON.stringify({ id: 'g2', title: '"cover":"e"', memo: 'x', cover: 'd' }) }));
+    assert.deepEqual(await both(del(['d'])), ['in_use'], '게임 대표 이미지');
+    await both((r) => r.hdel(GAMES_KEY, 'g2'));
     assert.deepEqual(await both(del(['d'])), ['deleted'], '유예 없이(직접 지우기)');
     assert.deepEqual(await both(del(['e'])), ['missing']);
     for (const key of [...dataKeys('a'), ...dataKeys('b'), ...dataKeys('d'), ...dataKeys('e'), ...dataKeys('z')]) {

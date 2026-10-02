@@ -1,9 +1,8 @@
-// 사진 — 폼의 사진 칸 · 목록 카드 썸네일 · 상세 갤러리 · 전체화면 뷰어
+// 사진 — 폼의 사진 칸(그날 찍은 플레이 사진) · 게임 정보의 대표 이미지 칸 · 목록 카드 썸네일 · 상세 갤러리 · 전체화면 뷰어
 import { h, icon } from '../dom.js';
 import { LIMITS } from '../constants.js';
-import { photosOf, latestWithPhoto, referencedPhotos } from '../store.js';
+import { photosOf, referencedPhotos } from '../store.js';
 import { storageUsage } from '../stats.js';
-import { fmtDate } from '../format.js';
 import * as api from '../api.js';
 import { compressPhoto, blobToBase64 } from '../compress.js';
 import { photoImg, seedImage, loadImage } from '../images.js';
@@ -99,16 +98,15 @@ const isBusy = (it) => BUSY.has(it.status);
 /**
  * model(): 지금 폼 모델 (초안을 불러오면 바뀌므로 함수로 받음). 올리기가 끝난 사진만 model().photos 에 들어감
  * onChange(): 사진 목록이 바뀜 (초안 저장용). onBusy(n): 올리는 중인 사진 수가 바뀜
+ * onAdd(): 사진을 넣기 시작함 (붙여넣기 등 — 접혀 있던 사진 칸을 펼치게)
  * 여러 장을 고르면 줄이기·올리기를 한 장씩 차례로 (줄이는 동안 다음 사진은 '대기')
  */
-export function photoField({ model, onChange, onBusy, type, excludeId }) {
+export function photoField({ model, onChange, onBusy, onAdd }) {
   // 칸: { key, id?, status: 'wait'|'compress'|'upload'|'ok'|'error', session(이 폼에서 올림), file?, blobs?, preview?,
   //       uploadId(다시 올려도 같은 id → 응답만 못 받은 경우 두 장이 되지 않음), req?, sent?, started?, batch? }
   let items = [];
   let seq = 0;
   let idleWaiters = [];
-  let dismissed = null;
-  let suggestFor = null;
   let alive = true;
   let closeSheet = null;
   const removed = new Map(); // 뺀 사진 → 서버에서 지우기 타이머 (그동안 '되돌리기' 가능)
@@ -122,20 +120,13 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
     addFiles(files);
   });
   const addBtn = h('button', { type: 'button', class: 'ph-add', onClick: () => fileIn.click() },
-    h('span', { class: 'ph-add-ico', 'aria-hidden': 'true' }, icon('camera')),
-    h('span', { class: 'ph-add-text' }, h('span', { class: 'ph-add-label', text: '사진 추가' }), h('span', { class: 'ph-add-sub', text: `최대 ${MAX}장` })));
+    icon('plus'), h('span', { class: 'ph-add-label', text: '사진 추가' }));
   const addCell = h('div', { class: 'ph-cell ph-cell-add', role: 'listitem' }, addBtn);
   const grid = h('div', { class: 'ph-grid', role: 'list', 'aria-label': '올린 사진' });
-  const count = h('span', { class: 'counter' });
   const hint = h('p', { class: 'fhint ph-hint' });
   const storeNote = h('p', { class: 'ph-store', hidden: true });
   const live = h('p', { class: 'sr-only', 'aria-live': 'polite' });
-  const suggest = h('div', { class: 'ph-suggest', hidden: true });
-  const el = h('section', { class: 'card fsec fsec-photos' },
-    h('div', { class: 'fsec-head' },
-      h('span', { class: 'fsec-ico fsec-ico-soft', 'aria-hidden': 'true' }, icon('camera')),
-      h('h2', { class: 'fsec-title', text: '사진' }), count),
-    h('div', { class: 'fsec-body' }, grid, hint, storeNote, suggest, live, fileIn));
+  const el = h('div', { class: 'ph-field' }, grid, hint, storeNote, live, fileIn);
 
   const busyN = () => items.filter(isBusy).length;
   const failedN = () => items.filter((it) => it.status === 'error').length;
@@ -232,18 +223,11 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
     it.openBtn.setAttribute('aria-label', it.status === 'error'
       ? `사진 ${n} 올리지 못함 — 다시 올리기`
       : busy ? `사진 ${n} ${waiting(it) ? '올릴 차례를 기다리는 중' : it.status === 'compress' ? '줄이는 중' : '올리는 중'}`
-        : `사진 ${n}${cover ? ' (대표)' : ''} — 크게 보기·순서 바꾸기`);
+        : `사진 ${n}${cover ? ' (첫 장)' : ''} — 크게 보기·순서 바꾸기`);
     it.xBtn.setAttribute('aria-label', `사진 ${n} 빼기`);
-    if (cover) {
-      it.foot.replaceChildren(h('span', { class: 'ph-badge' }, icon('check'), h('span', { text: '대표' })));
-    } else if (it.status === 'error') {
-      it.foot.replaceChildren(h('span', { class: 'ph-foot-note', text: '실패' }));
-    } else {
-      it.foot.replaceChildren(h('button', {
-        type: 'button', class: 'ph-cover-btn', 'aria-label': `${n}번 사진을 대표 사진으로`,
-        onClick: () => { move(it, 0); announce(`${n}번 사진을 대표 사진으로 정했어요`); },
-      }, '대표로'));
-    }
+    // 첫 장은 목록 카드에 보이는 사진 (게임 정보의 대표 이미지와는 따로)
+    it.foot.replaceChildren(cover && items.length > 1 ? h('span', { class: 'ph-badge', text: '첫 장' })
+      : it.status === 'error' ? h('span', { class: 'ph-foot-note', text: '실패' }) : null);
   }
   function paint() {
     if (!alive) return;
@@ -251,11 +235,7 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
     grid.classList.toggle('is-empty', items.length === 0);
     grid.replaceChildren(...items.map((it) => it.el), ...(items.length < MAX ? [addCell] : []));
     items.forEach(paintItem);
-    count.textContent = `${items.length}/${MAX}`;
-    hint.textContent = items.length
-      ? '첫 장이 대표 사진이에요. 사진을 누르면 크게 보거나 순서를 바꿀 수 있어요.'
-      : '앨범이나 카메라에서 골라요. 복사한 사진을 붙여넣어도 돼요. 위치 정보는 올리기 전에 지워요.';
-    paintSuggest();
+    hint.textContent = items.length > 1 ? `${items.length}/${MAX}장 · 사진을 누르면 크게 보거나 순서를 바꿔요` : `최대 ${MAX}장 · 위치 정보는 지우고 올려요`;
   }
   const announce = (msg) => { live.textContent = ''; setTimeout(() => { live.textContent = msg; }, 30); };
 
@@ -287,6 +267,7 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
     const room = MAX - items.length;
     if (room <= 0) { toast(`사진은 ${MAX}장까지 넣을 수 있어요`, 'error'); return; }
     if (files.length > room) toast(`사진은 ${MAX}장까지라 앞의 ${room}장만 넣었어요`, 'info', 3500);
+    if (onAdd) onAdd();
     const batch = newBatch(Math.min(files.length, room));
     for (const f of files.slice(0, room)) {
       const it = { key: ++seq, status: 'wait', file: f, session: true, progress: 0, batch };
@@ -457,14 +438,14 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
     }, ic ? icon(ic) : null, h('span', { text: label }));
     const ready = items.filter((x) => x.status === 'ok' && x.id);
     openDialog({
-      title: `사진 ${n}${i === 0 ? ' · 대표 사진' : ''}`,
+      title: `사진 ${n}${i === 0 ? ' · 첫 장' : ''}`,
       cls: 'dlg-photo',
       body: h('div', { class: 'ph-sheet' },
         h('div', { class: 'ph-sheet-prev' }, photoImg(it.id, { size: 'f', progressive: true, lazy: false, alt: `사진 ${n}` })),
         h('div', { class: 'ph-sheet-actions' },
           act('크게 보기', () => openViewer(ready.map((x) => x.id), ready.indexOf(it), { opener: it.openBtn }), 'btn-soft', 'eye'),
           last > 0 ? h('div', { class: 'ph-sheet-row', role: 'group', 'aria-label': '순서 바꾸기' },
-            i > 0 ? act('대표로', () => move(it, 0), 'btn-soft', 'check', `${n}번 사진을 대표 사진으로`) : null,
+            i > 0 ? act('첫 장으로', () => move(it, 0), 'btn-soft', 'check', `${n}번 사진을 첫 장으로`) : null,
             // 앱의 '뒤로'(이전 화면)와 헷갈리지 않게 '순서'를 붙임
             i > 0 ? act('앞 순서로', () => move(it, i - 1), 'btn-soft', 'back', `${n}번 사진을 앞 순서로`) : null,
             i < last ? act('뒤 순서로', () => move(it, i + 1), 'btn-soft', 'chevron', `${n}번 사진을 뒤 순서로`) : null) : null,
@@ -472,40 +453,6 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
       actions: [{ label: '닫기', value: null, kind: 'ghost' }],
       bind: (c) => { close = c; closeSheet = c; },
     }).then(() => { closeSheet = null; });
-  }
-
-  // ── 이전 대표 사진 쓰기 ──
-  function paintSuggest() {
-    const m = model();
-    const prev = latestWithPhoto(type, m.title || '', excludeId);
-    const cover = prev ? photosOf(prev)[0] : null;
-    if (!cover || cover === dismissed || items.length >= MAX || items.some((it) => it.id === cover)) {
-      suggest.hidden = true;
-      suggest.replaceChildren();
-      suggestFor = null;
-      return;
-    }
-    if (!suggest.hidden && suggestFor === cover) return;
-    suggestFor = cover;
-    suggest.hidden = false;
-    suggest.replaceChildren(
-      h('div', { class: 'ph-suggest-main' },
-        h('span', { class: 'ph-suggest-thumb' }, photoImg(cover, { size: 't', lazy: false })),
-        h('p', { class: 'ph-suggest-text' },
-          h('strong', { text: '이전 대표 사진이 있어요' }),
-          h('span', { text: `${fmtDate(prev.date, { weekday: false, year: false })}에 남긴 같은 ${{ boardgame: '게임', murdermystery: '시나리오', escaperoom: '테마' }[type] || '제목'} 기록의 사진` }))),
-      h('div', { class: 'ph-suggest-actions' },
-        h('button', { type: 'button', class: 'btn btn-ghost btn-sm', onClick: () => { dismissed = cover; paintSuggest(); } }, '괜찮아요'),
-        h('button', { type: 'button', class: 'btn btn-primary btn-sm', onClick: () => useCover(cover) }, icon('image'), h('span', { text: '이전 대표 사진 쓰기' }))));
-  }
-  function useCover(id) {
-    if (items.length >= MAX || items.some((it) => it.id === id)) return;
-    // 같은 사진을 그대로 가리킴 (다시 올리지 않음)
-    items.push({ key: ++seq, id, status: 'ok', session: false });
-    sync();
-    paint();
-    notify();
-    toast('이전 대표 사진을 넣었어요', 'ok');
   }
 
   // ── 붙여넣기 · 끌어다 놓기 ──
@@ -554,8 +501,6 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
     // 불러온 초안에 없는, 방금 이 폼에서 올린 사진은 지움
     discard(old.filter((it) => it.session && it.id && !next.includes(it.id)).map((it) => it.id));
     items = next.map((id) => ({ key: ++seq, id, status: 'ok', session: false }));
-    dismissed = null;
-    suggestFor = null;
     paint();
     notify();
   }
@@ -571,7 +516,7 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
     /** 올리는 중인 사진이 모두 끝날 때까지 */
     whenIdle: () => (busyN() ? new Promise((resolve) => idleWaiters.push(resolve)) : Promise.resolve()),
     reset,
-    refreshSuggest: paintSuggest,
+    count: () => items.length,
     /** 서버에 없는 사진 빼기 (오래된 초안의 사진이 정리된 경우) */
     drop(ids) {
       const gone = new Set(ids);
@@ -586,6 +531,7 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
       discard(items.filter((it) => it.id).map((it) => it.id));
     },
     focus() {
+      if (onAdd) onAdd();
       el.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
       const bad = items.find((it) => it.status === 'error');
       const target = bad ? bad.openBtn : addBtn;
@@ -601,6 +547,102 @@ export function photoField({ model, onChange, onBusy, type, excludeId }) {
       const w = idleWaiters;
       idleWaiters = [];
       w.forEach((f) => f());
+    },
+  };
+}
+
+// ── 게임 정보: 대표 이미지 한 장 ─────────────────────────────
+/**
+ * 게임·작품·테마의 대표 이미지 칸 (그날 찍은 플레이 사진과 따로). 한 장만, 고르자마자 줄여서 올림.
+ * value: 지금 대표 이미지 id(없으면 null). onChange(id|null)
+ * 반환: { el, value(), busy(), whenIdle(), finish(savedId) — 저장(또는 취소)한 뒤 이 칸에서 올렸지만 안 쓰는 사진을 지움 }
+ */
+export function coverField({ value = null, onChange, label = '대표 이미지' } = {}) {
+  let cur = value;
+  let pending = null; // 올리는 중: { preview, promise }
+  const uploaded = new Set(); // 이 칸에서 올린 사진 (저장하지 않으면 지움)
+  const fileIn = h('input', { type: 'file', accept: 'image/*', class: 'sr-only', tabindex: '-1', 'aria-hidden': 'true' });
+  const tile = h('button', { type: 'button', class: 'cv-tile' });
+  const removeBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm cv-remove' }, icon('x'), h('span', { text: '빼기' }));
+  const note = h('p', { class: 'fhint cv-note' });
+  const el = h('div', { class: 'cv-field' }, tile, h('div', { class: 'cv-side' }, note, removeBtn), fileIn);
+
+  function paint() {
+    tile.classList.toggle('is-empty', !cur && !pending);
+    tile.classList.toggle('is-busy', !!pending);
+    if (pending) {
+      tile.replaceChildren(h('img', { src: pending.preview, alt: '', class: 'ph-preview' }), h('span', { class: 'ph-state cv-state' }, h('span', { class: 'ph-spin' })));
+      tile.setAttribute('aria-label', `${label} 올리는 중`);
+    } else if (cur) {
+      tile.replaceChildren(photoImg(cur, { size: 't', lazy: false }));
+      tile.setAttribute('aria-label', `${label} 바꾸기`);
+    } else {
+      tile.replaceChildren(icon('image'), h('span', { class: 'cv-add', text: '이미지 추가' }));
+      tile.setAttribute('aria-label', `${label} 추가`);
+    }
+    tile.disabled = !!pending;
+    removeBtn.hidden = !cur || !!pending;
+    removeBtn.setAttribute('aria-label', `${label} 빼기`);
+    note.textContent = pending ? '올리는 중…' : cur ? '눌러서 바꿔요' : '선택 · 상자 사진이나 포스터';
+  }
+
+  async function pick(file) {
+    if (!file || pending) return;
+    let preview = null;
+    const job = (async () => {
+      const blobs = await compressPhoto(file);
+      preview = URL.createObjectURL(blobs.thumb);
+      pending.preview = preview;
+      paint();
+      const [full, thumb] = await Promise.all([blobToBase64(blobs.full), blobToBase64(blobs.thumb)]);
+      const res = await api.uploadImage({ id: api.newId(), full, thumb }).promise;
+      const img = res && res.image;
+      if (!img || typeof img.id !== 'string') throw new api.ApiError('server_error', 0);
+      seedImage(img.id, 't', blobs.thumb);
+      seedImage(img.id, 'f', blobs.full);
+      return img.id;
+    })();
+    pending = { preview: '', promise: job };
+    paint();
+    try {
+      const id = await job;
+      uploaded.add(id);
+      cur = id;
+      if (onChange) onChange(cur);
+    } catch (e) {
+      toast(photoErrorMessage(e), 'error', 4500);
+    } finally {
+      if (preview) URL.revokeObjectURL(preview);
+      pending = null;
+      paint();
+    }
+  }
+
+  tile.addEventListener('click', () => fileIn.click());
+  fileIn.addEventListener('change', () => {
+    const f = fileIn.files && fileIn.files[0];
+    fileIn.value = '';
+    pick(f);
+  });
+  removeBtn.addEventListener('click', () => {
+    cur = null;
+    if (onChange) onChange(null);
+    paint();
+    tile.focus({ preventScroll: true });
+  });
+  paint();
+  return {
+    el,
+    value: () => cur,
+    busy: () => !!pending,
+    whenIdle: () => (pending ? pending.promise.then(() => {}, () => {}) : Promise.resolve()),
+    finish(savedId) {
+      discardPhotos([...uploaded].filter((id) => id !== savedId));
+      uploaded.clear();
+    },
+    reset() {
+      cur = null;
+      paint();
     },
   };
 }

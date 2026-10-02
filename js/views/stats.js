@@ -1,7 +1,7 @@
 // 통계 화면 — 순수 CSS/SVG 차트
 import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, MM_SCORES, WEEKDAYS } from '../constants.js';
-import { state, memberInfo, isFirstLoad, loadFailed } from '../store.js';
+import { state, memberInfo, isFirstLoad, loadFailed, recordsForStats } from '../store.js';
 import { overview, boardgameStats, mmStats, erStats } from '../stats.js';
 import { fmtAvg, fmtPct, fmtRemaining } from '../format.js';
 import { segmented, avatar, emptyState, scoreBars, loadingState, loadErrorState } from '../ui.js';
@@ -267,7 +267,8 @@ export function mount(root, ctx) {
     onChange: (v) => { ui.seg = v; ui.minPlays = 1; draw(); },
   });
   function draw() {
-    const recs = state.records;
+    // 연결한 게임 이름으로 셈 (게임 이름을 고쳐도 한 게임으로)
+    const recs = recordsForStats();
     let content;
     try {
       // 아직 못 받았거나 받지 못한 상태를 "기록 없음"으로 보이지 않게

@@ -1,16 +1,16 @@
-// 종류별 폼 섹션 (보드게임 / 머더미스터리 / 방탈출)
+// 기록 폼의 종류별 입력 — '결과'와 '자세한 정보' 영역 (보드게임 / 머더미스터리 / 방탈출)
+// 공통 입력(종류·게임·날짜·별점·감상)은 form.js. 여기 값은 모두 폼 모델(m)에 바로 씀 (영역을 접어도 그대로)
 import { h, icon, append } from '../dom.js';
-import { BG_MODES, MM_FORMATS, MM_OUTCOMES, MM_SCORES, ER_SCORES, LIMITS, CULPRIT_RESULTS, OWNERSHIPS } from '../constants.js';
-import { memberInfo, state } from '../store.js';
-import { norm } from '../format.js';
-import { lenderOf } from '../stats.js';
+import { BG_MODES, MM_FORMATS, MM_OUTCOMES, MM_SCORES, ER_SCORES, LIMITS, CULPRIT_RESULTS } from '../constants.js';
+import { memberInfo, membersSorted, state } from '../store.js';
+import { norm, fmtRemaining } from '../format.js';
 import { segmented, chip, switchRow, stepper, ratingInput, avatar, field, nextId, stamp } from '../ui.js';
 
 // ── 공용 입력 ──
-export function textInput(value, { max, placeholder, onInput, list, id, inputmode, cls = '' } = {}) {
+export function textInput(value, { max, placeholder, onInput, list, id, inputmode, cls = '', label } = {}) {
   const el = h('input', {
     type: 'text', class: `input ${cls}`, value: value || '', maxlength: max ? String(max) : null,
-    placeholder, list, id, inputmode, autocomplete: 'off',
+    placeholder, list, id, inputmode, autocomplete: 'off', 'aria-label': label,
   });
   el.addEventListener('input', () => onInput && onInput(el.value));
   return el;
@@ -54,10 +54,6 @@ function subHead(text, extra) {
   return h('div', { class: 'fsub-head' }, h('h3', { class: 'fsub-title', text }), extra || null);
 }
 
-function needMembers() {
-  return h('p', { class: 'fnote' }, icon('users'), h('span', { text: '함께한 멤버를 먼저 골라 주세요' }));
-}
-
 function scoreRows(obj, defs, onChange) {
   return h('div', { class: 'score-rows' }, defs.map((d) =>
     h('div', { class: 'score-row' },
@@ -71,41 +67,27 @@ function gaugeRow(label, value, onChange, hint) {
     ratingInput({ value, size: 'sm', kind: 'dot', label, onChange, hint }));
 }
 
-/** 빌려준 사람 후보: 예전에 적은 이름 + 멤버 이름 */
-function lenderSuggestions() {
-  const seen = new Set();
-  const out = [];
-  const add = (v) => {
-    const k = norm(v);
-    if (!k || seen.has(k)) return;
-    seen.add(k);
-    out.push(v);
+/**
+ * 사람 고르기 칩 (함께한 사람 영역 · 결과 영역에서 같은 목록을 씀) + 새 멤버 바로 등록.
+ * ctl.toggleMember(id, on, origin) · ctl.addMember(origin)
+ */
+export function memberChips(m, ctl, origin, { label = '함께한 사람' } = {}) {
+  const mems = membersSorted();
+  const known = new Set(mems.map((x) => x.id));
+  const gone = m.members.filter((id) => !known.has(id));
+  const one = (id, name, gone2) => {
+    const c = chip({
+      label: name, pressed: m.members.includes(id), cls: `chip-member${gone2 ? ' is-gone' : ''}`, lead: avatar(id, 'xs'),
+      onToggle: (on) => ctl.toggleMember(id, on, origin),
+    });
+    c.dataset.memberId = id;
+    return c;
   };
-  for (const r of state.records) add(lenderOf(r));
-  for (const mb of state.members) add(mb.name);
-  return out;
-}
-
-/** 소장 여부 (내 소장 · 대여 · 미기록) + 대여했으면 빌려준 사람 */
-function ownershipFields(b, ctl) {
-  const lenders = datalist(lenderSuggestions());
-  const lenderField = field('빌려준 사람', textInput(b.lender, {
-    max: LIMITS.lender, placeholder: '예) 영식 (선택)', list: lenders.id,
-    onInput: (v) => { b.lender = v; ctl.changed(); },
-  }));
-  lenderField.hidden = b.ownership !== 'borrowed';
-  const seg = segmented({
-    label: '소장 여부', value: b.ownership || 'none', cls: 'seg-own',
-    options: [...OWNERSHIPS, { key: 'none', label: '미기록' }],
-    onChange: (v) => {
-      b.ownership = v === 'none' ? null : v;
-      lenderField.hidden = b.ownership !== 'borrowed';
-      ctl.changed();
-    },
-  });
-  return h('div', { class: 'own-fields' }, lenders.el,
-    field('소장 여부', seg, { hint: '‘내 소장’으로 남긴 게임은 소장 탭에 모여요' }),
-    lenderField);
+  return h('div', { class: 'chips chips-members', role: 'group', 'aria-label': label },
+    mems.map((mb) => one(mb.id, mb.name, false)),
+    gone.map((id) => one(id, memberInfo(id).name, true)),
+    h('button', { type: 'button', class: 'chip chip-add', onClick: () => ctl.addMember(origin) },
+      icon('plus'), h('span', { class: 'chip-label', text: '새 멤버' })));
 }
 
 // ── 보드게임 ──
@@ -130,32 +112,25 @@ export function computeRanks(bg, rankMode) {
   }
 }
 
-export function bgSection(m, ctl) {
+/** 결과: 게임 방식(결과를 읽는 데 필요) · 참여자 · 점수·순위·승자 또는 협력 성공 여부 */
+function bgResult(m, ctl) {
   const bg = m.bg;
-  const box = h('div', { class: 'fsec-body' });
-
-  const modeSeg = segmented({
+  const box = h('div', { class: 'rp-fields' });
+  box.append(field('게임 방식', segmented({
     label: '게임 방식', value: bg.mode, options: BG_MODES,
-    onChange: (v) => { bg.mode = v; ctl.changed(); ctl.rerender('type'); },
-  });
-
-  box.append(
-    field('게임 방식', modeSeg),
-    h('div', { class: 'grid-2' },
-      field('장소', textInput(bg.place, { max: LIMITS.place, placeholder: '예) 또또하우스', onInput: (v) => { bg.place = v; ctl.changed(); } })),
-      field('플레이 시간', numInput(bg.playTimeMin, { min: 0, max: 1440, placeholder: '0', unit: '분', label: '플레이 시간(분)', onInput: (v) => { bg.playTimeMin = v; ctl.changed(); } }))),
-    field('확장판', textInput(bg.expansion, { max: LIMITS.expansion, placeholder: '사용한 확장판 (선택)', onInput: (v) => { bg.expansion = v; ctl.changed(); } })),
-    ownershipFields(bg, ctl));
+    onChange: (v) => { bg.mode = v; ctl.changed(); ctl.rerender('result'); },
+  })));
 
   if (bg.mode === 'coop') {
-    box.append(subHead('협력 결과'),
-      segmented({
-        label: '협력 결과', value: bg.coopWin === true ? 'win' : bg.coopWin === false ? 'lose' : 'none',
-        options: [{ key: 'win', label: '승리 🎉' }, { key: 'lose', label: '패배' }, { key: 'none', label: '미기록' }],
-        onChange: (v) => { bg.coopWin = v === 'win' ? true : v === 'lose' ? false : null; ctl.changed(); },
-      }));
+    box.append(field('협력 결과', segmented({
+      label: '협력 결과', value: bg.coopWin === true ? 'win' : bg.coopWin === false ? 'lose' : 'none',
+      options: [{ key: 'win', label: '성공' }, { key: 'lose', label: '실패' }, { key: 'none', label: '미기록' }],
+      onChange: (v) => { bg.coopWin = v === 'win' ? true : v === 'lose' ? false : null; ctl.changed(); },
+    })));
     return box;
   }
+
+  box.append(field('참여자', memberChips(m, ctl, 'result', { label: '참여자' })));
 
   const rankSel = h('select', { class: 'select select-sm', 'aria-label': '순위 계산 방식' },
     [['high', '높은 점수가 1등'], ['low', '낮은 점수가 1등'], ['manual', '순위 직접 입력']].map(([v, l]) =>
@@ -163,15 +138,17 @@ export function bgSection(m, ctl) {
   rankSel.addEventListener('change', () => {
     m.ui.rankMode = rankSel.value;
     m.ui.winnerManual = false;
-    recalc();
+    recalcResults(bg, m.ui);
     ctl.changed();
-    ctl.rerender('type');
+    ctl.rerender('result');
   });
 
-  box.append(subHead(bg.mode === 'team' ? '팀전 결과' : '점수와 순위', rankSel));
-  if (bg.mode === 'team') box.append(h('p', { class: 'fnote' }, icon('info'), h('span', { text: '이긴 팀 멤버에게 승리(왕관)를 표시해 주세요' })));
-
-  if (!m.members.length) { box.append(needMembers()); return box; }
+  box.append(subHead(bg.mode === 'team' ? '팀전 결과' : '점수와 순위', m.members.length ? rankSel : null));
+  if (!m.members.length) {
+    box.append(h('p', { class: 'fhint', text: '참여자를 고르면 점수와 순위를 적을 수 있어요' }));
+    return box;
+  }
+  if (bg.mode === 'team') box.append(h('p', { class: 'fhint', text: '이긴 팀 멤버에게 왕관을 표시해 주세요' }));
 
   const refs = [];
   function paintRows() {
@@ -183,9 +160,6 @@ export function bgSection(m, ctl) {
       winBtn.setAttribute('aria-pressed', r.winner ? 'true' : 'false');
     });
   }
-  function recalc() {
-    recalcResults(bg, m.ui);
-  }
 
   const rows = h('ul', { class: 'result-rows' });
   for (const r of bg.results) {
@@ -196,7 +170,7 @@ export function bgSection(m, ctl) {
     });
     score.addEventListener('input', () => {
       r.score = score.value === '' ? null : Number(score.value);
-      recalc();
+      recalcResults(bg, m.ui);
       paintRows();
       ctl.changed();
     });
@@ -226,37 +200,24 @@ export function bgSection(m, ctl) {
   return box;
 }
 
+/** 자세한 정보: 그날의 장소 · 실제 플레이 시간 · 사용한 확장판 (게임의 예상 시간과 별개) */
+function bgDetails(m, ctl) {
+  const bg = m.bg;
+  return h('div', { class: 'rp-fields' },
+    h('div', { class: 'grid-2' },
+      field('장소', textInput(bg.place, { max: LIMITS.place, placeholder: '예) 또또하우스', onInput: (v) => { bg.place = v; ctl.changed(); } })),
+      field('플레이 시간', numInput(bg.playTimeMin, { min: 0, max: 1440, placeholder: '실제', unit: '분', label: '플레이 시간(분)', onInput: (v) => { bg.playTimeMin = v; ctl.changed(); } }))),
+    field('사용한 확장판', textInput(bg.expansion, { max: LIMITS.expansion, placeholder: '예) 서곡', onInput: (v) => { bg.expansion = v; ctl.changed(); } })));
+}
+
 // ── 머더미스터리 ──
-export function mmSection(m, ctl) {
+/** 결과: 참여자 · 맡은 역할(캐릭터·범인·MVP·승패) · 범인 검거 · 역할 가리기 */
+function mmResult(m, ctl) {
   const mm = m.mm;
-  const box = h('div', { class: 'fsec-body' });
-  const pubs = datalist(distinct('murdermystery', (r) => r.mm.publisher));
-  const stores = datalist(distinct('murdermystery', (r) => r.mm.store));
-
-  const storeField = field('매장·지점', textInput(mm.store, { max: LIMITS.store, placeholder: '예) 강남점', list: stores.id, onInput: (v) => { mm.store = v; ctl.changed(); } }));
-  storeField.hidden = mm.format !== 'store';
-  // 소장 여부는 집에서 하는 보드게임형일 때만
-  const ownField = ownershipFields(mm, ctl);
-  ownField.hidden = mm.format !== 'box';
-
-  const pc = numInput(mm.playerCount, { min: 1, max: 20, placeholder: String(m.members.length || ''), unit: '인', label: '인원', onInput: (v) => { mm.playerCount = v; m.ui.pcAuto = false; ctl.changed(); } });
-
-  box.append(pubs.el, stores.el,
-    field('제작사·브랜드', textInput(mm.publisher, { max: LIMITS.publisher, placeholder: '예) 머더랩', list: pubs.id, onInput: (v) => { mm.publisher = v; ctl.changed(); } })),
-    field('형태', segmented({
-      label: '형태', value: mm.format, options: MM_FORMATS,
-      onChange: (v) => { mm.format = v; storeField.hidden = v !== 'store'; ownField.hidden = v !== 'box'; ctl.changed(); },
-    })),
-    storeField,
-    ownField,
-    h('div', { class: 'grid-3' },
-      field('GM', textInput(mm.gm, { max: LIMITS.gm, placeholder: '선택', onInput: (v) => { mm.gm = v; ctl.changed(); } })),
-      field('인원', pc),
-      field('시간', numInput(mm.playTimeMin, { min: 0, max: 1440, placeholder: '0', unit: '분', label: '플레이 시간(분)', onInput: (v) => { mm.playTimeMin = v; ctl.changed(); } }))));
-
-  // 역할
+  const box = h('div', { class: 'rp-fields' });
+  box.append(field('참여자', memberChips(m, ctl, 'result', { label: '참여자' })));
   box.append(subHead('맡은 역할'));
-  if (!m.members.length) box.append(needMembers());
+  if (!m.members.length) box.append(h('p', { class: 'fhint', text: '참여자를 고르면 역할을 적을 수 있어요' }));
   else {
     box.append(h('ul', { class: 'role-rows' }, mm.roles.map((r) => {
       const info = memberInfo(r.memberId);
@@ -265,15 +226,15 @@ export function mmSection(m, ctl) {
         h('div', { class: 'role-head' },
           avatar(info, 'sm'), h('span', { class: 'rr-name', text: info.name }),
           textInput(r.character, {
-            max: LIMITS.character, placeholder: '맡은 캐릭터', cls: 'input-sm role-char-input',
+            max: LIMITS.character, placeholder: '맡은 역할', cls: 'input-sm role-char-input', label: `${info.name} 역할`,
             onInput: (v) => { r.character = v; ctl.changed(); },
           })),
         h('div', { class: 'role-opts' },
           chip({
-            label: '범인', pressed: r.culprit, cls: 'chip-culprit', lead: icon('mask'),
+            label: '범인', pressed: r.culprit, cls: 'chip-culprit chip-sm', lead: icon('mask'),
             onToggle: (on) => { r.culprit = on; card.classList.toggle('is-culprit', on); ctl.changed(); },
           }),
-          chip({ label: 'MVP', pressed: r.mvp, cls: 'chip-mvp', lead: icon('crown'), onToggle: (on) => { r.mvp = on; ctl.changed(); } }),
+          chip({ label: 'MVP', pressed: r.mvp, cls: 'chip-mvp chip-sm', lead: icon('crown'), onToggle: (on) => { r.mvp = on; ctl.changed(); } }),
           segmented({
             label: `${info.name} 승패`, cls: 'seg-sm', value: r.outcome || 'none',
             options: [...MM_OUTCOMES, { key: 'none', label: '–' }],
@@ -281,28 +242,40 @@ export function mmSection(m, ctl) {
           }))]);
     })));
   }
+  box.append(field('범인 검거', segmented({
+    label: '범인 검거 결과', value: mm.culpritResult || 'none',
+    options: [...CULPRIT_RESULTS, { key: 'none', label: '미기록' }],
+    onChange: (v) => { mm.culpritResult = v === 'none' ? null : v; ctl.changed(); },
+  })));
+  box.append(miniCheck('역할·범인 가리기', !!mm.roleSpoiler, (v) => { mm.roleSpoiler = v; ctl.changed(); },
+    '목록과 상세에서 누가 어떤 역할·범인이었는지 열기 전까지 가려요'));
+  return box;
+}
 
-  append(box, [subHead('범인 검거'),
-    segmented({
-      label: '범인 검거 결과', value: mm.culpritResult || 'none',
-      options: [...CULPRIT_RESULTS, { key: 'none', label: '미기록' }],
-      onChange: (v) => { mm.culpritResult = v === 'none' ? null : v; ctl.changed(); },
-    }),
-    m.members.length ? h('p', { class: 'fhint', text: '멤버 중 범인이 있었다면 위 역할에서 ‘범인’을 눌러 표시해 주세요' }) : null]);
-
-  // 난이도 게이지도 같은 목록 안에 둬서 구분선·간격을 맞춤
-  const mmRows = scoreRows(mm.scores, MM_SCORES, ctl.changed);
-  mmRows.append(gaugeRow('추리 난이도', mm.difficulty, (v) => { mm.difficulty = v; ctl.changed(); }));
-  box.append(subHead('세부 평가'),
-    mmRows,
+/** 자세한 정보: 형태 · 매장 · 제작사 · GM · 인원 · 시간 · 세부 평가 */
+function mmDetails(m, ctl) {
+  const mm = m.mm;
+  const box = h('div', { class: 'rp-fields' });
+  const pubs = datalist(distinct('murdermystery', (r) => r.mm.publisher));
+  const stores = datalist(distinct('murdermystery', (r) => r.mm.store));
+  const storeField = field('매장·지점', textInput(mm.store, { max: LIMITS.store, placeholder: '예) 강남점', list: stores.id, onInput: (v) => { mm.store = v; ctl.changed(); } }));
+  storeField.hidden = mm.format !== 'store';
+  const pc = numInput(mm.playerCount, { min: 1, max: 20, placeholder: String(m.members.length || ''), unit: '인', label: '인원', onInput: (v) => { mm.playerCount = v; m.ui.pcAuto = false; ctl.changed(); } });
+  box.append(pubs.el, stores.el,
+    field('형태', segmented({
+      label: '형태', value: mm.format, options: MM_FORMATS,
+      onChange: (v) => { mm.format = v; storeField.hidden = v !== 'store'; ctl.changed(); },
+    })),
+    storeField,
+    field('제작사·브랜드', textInput(mm.publisher, { max: LIMITS.publisher, placeholder: '예) 머더랩', list: pubs.id, onInput: (v) => { mm.publisher = v; ctl.changed(); } })),
+    h('div', { class: 'grid-3' },
+      field('GM', textInput(mm.gm, { max: LIMITS.gm, placeholder: '선택', onInput: (v) => { mm.gm = v; ctl.changed(); } })),
+      field('인원', pc),
+      field('시간', numInput(mm.playTimeMin, { min: 0, max: 1440, placeholder: '실제', unit: '분', label: '플레이 시간(분)', onInput: (v) => { mm.playTimeMin = v; ctl.changed(); } }))));
+  const rows = scoreRows(mm.scores, MM_SCORES, ctl.changed);
+  rows.append(gaugeRow('추리 난이도', mm.difficulty, (v) => { mm.difficulty = v; ctl.changed(); }));
+  box.append(subHead('세부 평가'), rows,
     switchRow({ checked: !!mm.replay, label: '다시 하고 싶어요 · 추천해요', icon: 'heart', onChange: (v) => { mm.replay = v; ctl.changed(); } }));
-
-  box.syncMembers = () => {
-    if (m.ui.pcAuto) {
-      const input = pc.querySelector('input');
-      if (input) input.placeholder = String(m.members.length || '');
-    }
-  };
   return box;
 }
 
@@ -320,23 +293,17 @@ export function erOrdinalFor(m, editingId, createdAt) {
   return n;
 }
 
-export function erSection(m, ctl) {
+/** 결과: 매장·지점 · 탈출 성공 여부 · 남은 시간 · 힌트 수 */
+function erResult(m, ctl) {
   const er = m.er;
-  const box = h('div', { class: 'fsec-body' });
+  const box = h('div', { class: 'rp-fields' });
   const brands = datalist(distinct('escaperoom', (r) => r.er.brand));
   const branches = datalist(distinct('escaperoom', (r) => r.er.branch));
-  const genres = datalist(distinct('escaperoom', (r) => r.er.genre));
-
-  box.append(brands.el, branches.el, genres.el,
+  box.append(brands.el, branches.el,
     h('div', { class: 'grid-2' },
-      field('브랜드', textInput(er.brand, { max: LIMITS.brand, placeholder: '예) 키이스케이프', list: brands.id, onInput: (v) => { er.brand = v; ctl.changed(); } })),
-      field('지점', textInput(er.branch, { max: LIMITS.branch, placeholder: '예) 홍대점', list: branches.id, onInput: (v) => { er.branch = v; ctl.changed(); } }))),
-    h('div', { class: 'grid-3' },
-      field('장르', textInput(er.genre, { max: LIMITS.genre, placeholder: '예) 추리', list: genres.id, onInput: (v) => { er.genre = v; ctl.changed(); } })),
-      field('인원', numInput(er.playerCount, { min: 1, max: 10, placeholder: String(Math.min(10, m.members.length) || ''), unit: '인', label: '인원', onInput: (v) => { er.playerCount = v; m.ui.pcAuto = false; ctl.changed(); } })),
-      field('제한', numInput(er.timeLimitMin, { min: 1, max: 300, placeholder: '60', unit: '분', label: '제한 시간(분)', onInput: (v) => { er.timeLimitMin = v; ctl.changed(); } }))));
+      field('매장', textInput(er.brand, { max: LIMITS.brand, placeholder: '예) 키이스케이프', list: brands.id, label: '매장(브랜드)', onInput: (v) => { er.brand = v; ctl.changed(); } })),
+      field('지점', textInput(er.branch, { max: LIMITS.branch, placeholder: '예) 홍대점', list: branches.id, label: '지점', onInput: (v) => { er.branch = v; ctl.changed(); } }))));
 
-  // 결과 도장
   const name = nextId('clear');
   const ord = h('p', { class: 'ordinal-note' });
   const paintOrd = () => { ord.textContent = `우리의 ${erOrdinalFor(m, ctl.editingId, ctl.createdAt)}번째 방탈출`; };
@@ -344,21 +311,31 @@ export function erSection(m, ctl) {
   box.paintOrdinal = paintOrd;
 
   const remain = h('div', { class: 'remain', hidden: er.cleared !== true });
+  const clearBtn = h('button', { type: 'button', class: 'btn btn-ghost btn-sm stamp-reset', hidden: er.cleared === null }, '선택 지우기');
+  const inputs = [];
   const choice = (key, label, kind) => {
     const id = `${name}-${key}`;
     const input = h('input', { type: 'radio', class: 'seg-input', name, id, value: key, checked: er.cleared === (key === 'yes') });
+    inputs.push(input);
     input.addEventListener('change', () => {
       if (!input.checked) return;
       er.cleared = key === 'yes';
       remain.hidden = !er.cleared;
-      choices.removeAttribute('aria-invalid');
+      clearBtn.hidden = false;
       ctl.changed();
     });
     return [input, h('label', { class: `stamp-choice stamp-choice-${kind}`, htmlFor: id }, stamp(label, kind, { tilt: false }))];
   };
   const choices = h('div', { class: 'stamp-choices', role: 'radiogroup', 'aria-label': '탈출 결과', 'data-field': 'er.cleared' });
   choices.append(...choice('yes', '탈출 성공', 'clear'), ...choice('no', '탈출 실패', 'fail'));
-  box.append(subHead('탈출 결과'), ord, choices);
+  clearBtn.addEventListener('click', () => {
+    er.cleared = null;
+    for (const i of inputs) i.checked = false;
+    remain.hidden = true;
+    clearBtn.hidden = true;
+    ctl.changed();
+  });
+  box.append(h('div', { class: 'fsub-head' }, h('h3', { class: 'fsub-title', text: '탈출 결과' }), clearBtn), ord, choices);
 
   // 남은 시간 mm:ss
   const mmIn = h('input', { type: 'number', inputmode: 'numeric', class: 'input input-time', min: '0', max: '300', placeholder: '00', 'aria-label': '남은 시간 분', value: m.ui.remainMM || '', 'data-field': 'er.remainingSec' });
@@ -373,18 +350,101 @@ export function erSection(m, ctl) {
   ssIn.addEventListener('input', updRemain);
   ssIn.addEventListener('blur', () => { if (ssIn.value !== '' && ssIn.value.length === 1) ssIn.value = ssIn.value.padStart(2, '0'); });
   remain.append(h('span', { class: 'field-label', text: '남은 시간' }),
-    h('div', { class: 'time-input' }, icon('clock'), mmIn, h('span', { class: 'time-colon', text: ':' }), ssIn,
+    h('div', { class: 'time-input' }, mmIn, h('span', { class: 'time-colon', text: ':' }), ssIn,
       h('span', { class: 'fhint', text: '분 : 초' })));
   box.append(remain,
-    field('사용한 힌트', stepper({ value: Number(er.hints) || 0, min: 0, max: 99, label: '힌트 수', unit: '개', onChange: (v) => { er.hints = v; ctl.changed(); } })));
+    field('사용한 힌트', stepper({ value: er.hints, min: 0, max: 99, label: '힌트 수', unit: '개', onChange: (v) => { er.hints = v; ctl.changed(); } })));
+  return box;
+}
 
-  const erRows = scoreRows(er.scores, ER_SCORES, ctl.changed);
-  erRows.append(
+/** 자세한 정보: 장르 · 인원 · 제한 시간 · 세부 평가 */
+function erDetails(m, ctl) {
+  const er = m.er;
+  const genres = datalist(distinct('escaperoom', (r) => r.er.genre));
+  const rows = scoreRows(er.scores, ER_SCORES, ctl.changed);
+  rows.append(
     gaugeRow('난이도', er.difficulty, (v) => { er.difficulty = v; ctl.changed(); }),
     gaugeRow('공포도', er.fear, (v) => { er.fear = v; ctl.changed(); }, '없음/미평가'),
     gaugeRow('활동성', er.activity, (v) => { er.activity = v; ctl.changed(); }));
-  box.append(subHead('세부 평가'),
-    erRows,
+  return h('div', { class: 'rp-fields' }, genres.el,
+    h('div', { class: 'grid-3' },
+      field('장르', textInput(er.genre, { max: LIMITS.genre, placeholder: '예) 추리', list: genres.id, onInput: (v) => { er.genre = v; ctl.changed(); } })),
+      field('인원', numInput(er.playerCount, { min: 1, max: 10, placeholder: String(Math.min(10, m.members.length) || ''), unit: '인', label: '인원', onInput: (v) => { er.playerCount = v; m.ui.pcAuto = false; ctl.changed(); } })),
+      field('제한', numInput(er.timeLimitMin, { min: 1, max: 300, placeholder: '60', unit: '분', label: '제한 시간(분)', onInput: (v) => { er.timeLimitMin = v; ctl.changed(); } }))),
+    subHead('세부 평가'), rows,
     switchRow({ checked: !!er.replay, label: '추천해요', icon: 'heart', onChange: (v) => { er.replay = v; ctl.changed(); } }));
-  return box;
+}
+
+/** 작은 체크 (스포일러 가리기 등) */
+export function miniCheck(label, checked, onChange, title) {
+  const input = h('input', { type: 'checkbox', class: 'mini-check-input', checked });
+  input.addEventListener('change', () => onChange(input.checked));
+  return h('label', { class: 'mini-check', title }, input, h('span', { class: 'mini-check-box', 'aria-hidden': 'true' }, icon('check')), h('span', { text: label }));
+}
+
+export function resultSection(m, ctl) {
+  return m.type === 'boardgame' ? bgResult(m, ctl) : m.type === 'murdermystery' ? mmResult(m, ctl) : erResult(m, ctl);
+}
+
+export function detailSection(m, ctl) {
+  return m.type === 'boardgame' ? bgDetails(m, ctl) : m.type === 'murdermystery' ? mmDetails(m, ctl) : erDetails(m, ctl);
+}
+
+// ── 접힌 영역의 요약 (버튼에 보여 줌. 빈 문자열 = 입력한 것 없음) ──
+const filled = (v) => v !== null && v !== undefined && String(v).trim() !== '';
+const names = (ids) => ids.map((id) => memberInfo(id).name);
+
+export function resultSummary(m) {
+  if (m.type === 'boardgame') {
+    const bg = m.bg;
+    if (bg.mode === 'coop') return bg.coopWin === true ? '협력 성공' : bg.coopWin === false ? '협력 실패' : '';
+    const winners = names(bg.results.filter((r) => r.winner && m.members.includes(r.memberId)).map((r) => r.memberId));
+    if (winners.length) return `${winners.slice(0, 2).join('·')}${winners.length > 2 ? ` 외 ${winners.length - 2}` : ''} ${bg.mode === 'team' ? '승리' : '우승'}`;
+    const scored = bg.results.filter((r) => filled(r.score) || r.rank).length;
+    return scored ? `점수 ${scored}명` : '';
+  }
+  if (m.type === 'murdermystery') {
+    const mm = m.mm;
+    const parts = [];
+    const cr = CULPRIT_RESULTS.find((c) => c.key === mm.culpritResult);
+    if (cr) parts.push(cr.label);
+    const roles = mm.roles.filter((r) => m.members.includes(r.memberId) && (r.character.trim() || r.culprit || r.mvp || r.outcome)).length;
+    if (roles) parts.push(`역할 ${roles}명`);
+    return parts.join(' · ');
+  }
+  const er = m.er;
+  const parts = [];
+  if (er.cleared === true) {
+    parts.push('탈출 성공');
+    const sec = m.ui.remainMM !== '' || m.ui.remainSS !== '' ? (Number(m.ui.remainMM) || 0) * 60 + (Number(m.ui.remainSS) || 0) : null;
+    if (sec !== null) parts.push(`${fmtRemaining(sec)} 남음`);
+  } else if (er.cleared === false) parts.push('탈출 실패');
+  if (filled(er.hints)) parts.push(`힌트 ${er.hints}`);
+  if (!parts.length && (filled(er.brand) || filled(er.branch))) parts.push([er.brand, er.branch].filter(filled).join(' '));
+  return parts.join(' · ');
+}
+
+export function detailSummary(m) {
+  const parts = [];
+  if (m.type === 'boardgame') {
+    const bg = m.bg;
+    if (filled(bg.place)) parts.push(bg.place.trim());
+    if (filled(bg.playTimeMin) && Number(bg.playTimeMin) > 0) parts.push(`${Number(bg.playTimeMin)}분`);
+    if (filled(bg.expansion)) parts.push(bg.expansion.trim());
+  } else if (m.type === 'murdermystery') {
+    const mm = m.mm;
+    if (filled(mm.publisher)) parts.push(mm.publisher.trim());
+    if (mm.format === 'store' && filled(mm.store)) parts.push(mm.store.trim());
+    if (filled(mm.gm)) parts.push(`GM ${mm.gm.trim()}`);
+    if (filled(mm.playTimeMin) && Number(mm.playTimeMin) > 0) parts.push(`${Number(mm.playTimeMin)}분`);
+    if (MM_SCORES.some((s) => Number(mm.scores[s.key]) > 0) || mm.difficulty > 0) parts.push('세부 평가');
+    if (mm.replay) parts.push('추천');
+  } else {
+    const er = m.er;
+    if (filled(er.genre)) parts.push(er.genre.trim());
+    if (filled(er.timeLimitMin)) parts.push(`제한 ${er.timeLimitMin}분`);
+    if (ER_SCORES.some((s) => Number(er.scores[s.key]) > 0) || er.difficulty > 0 || er.fear > 0 || er.activity > 0) parts.push('세부 평가');
+    if (er.replay) parts.push('추천');
+  }
+  return parts.length > 3 ? `${parts.slice(0, 3).join(' · ')} 외 ${parts.length - 3}` : parts.join(' · ');
 }
