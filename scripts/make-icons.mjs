@@ -1,5 +1,5 @@
 // 앱 아이콘 PNG 생성 (외부 의존성 없음: zlib 로 직접 PNG 인코딩)
-// 디자인: 크림색 둥근 사각형 위에 진초록 선으로 그린 집 모양 기록장 (안에 기록 줄 두 개, 아랫줄은 금빛)
+// 디자인: 크림색 둥근 사각형 위에 진초록 선으로 그린 노트와 연필 (연필심이 닿은 마지막 줄은 금빛)
 //        — 앱 안의 로고(js/dom.js 의 logo 아이콘)와 같은 모양
 // 실행: node scripts/make-icons.mjs
 import { writeFileSync } from 'node:fs';
@@ -37,22 +37,42 @@ function distSeg(x, y, [ax, ay], [bx, by]) {
   return Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
 }
 
-// 로고 아이콘(24 좌표계)을 512 좌표계로 (90% 크기): 가로 가운데 12, 세로 가운데 12.6
-const K = (512 / 24) * 0.9;
-const P = (x, y) => [256 + (x - 12) * K, 256 + (y - 12.6) * K];
-const HOUSE = [P(5, 10.4), P(12, 4.6), P(19, 10.4), P(19, 20.5), P(5, 20.5)]; // 지붕 꼭대기 → 벽 → 바닥 (닫힌 선)
-const LINE1 = [P(8.6, 12.6), P(15.4, 12.6)];
-const LINE2 = [P(8.6, 16.1), P(12.8, 16.1)];
+// 로고 아이콘(24 좌표계)을 512 좌표계로 (84% 크기): 가로 가운데 11.75, 세로 가운데 12
+const K = (512 / 24) * 0.84;
+const P = (x, y) => [256 + (x - 11.75) * K, 256 + (y - 12) * K];
+/** 둥근 모서리용: 중심 (cx, cy), 반지름 r, 각도 a0 → a1 (라디안) 사이를 점 n+1개로 */
+function arc(cx, cy, r, a0, a1, n = 10) {
+  const out = [];
+  for (let i = 0; i <= n; i++) {
+    const a = a0 + ((a1 - a0) * i) / n;
+    out.push(P(cx + r * Math.cos(a), cy + r * Math.sin(a)));
+  }
+  return out;
+}
+const H = Math.PI / 2;
+// 노트: 오른쪽 위 모서리부터 시계 반대 방향, 연필이 지나가는 오른쪽 변 가운데는 비움 (아이콘 path 와 같음)
+const PAGE = [
+  ...arc(12, 5.5, 2, 0, -H), ...arc(5, 5.5, 2, -H, -2 * H), ...arc(5, 18.5, 2, 2 * H, H), ...arc(12, 18.5, 2, H, 0), P(14, 14.4),
+];
+const LINES = [[P(6, 7.6), P(10.5, 7.6)], [P(6, 11), P(8.7, 11)]];
+const GOLD = [P(6, 14.6), P(9.3, 14.6)];
+// 연필: 지우개 쪽 끝 → 몸통 → 깎은 끝(심) → 다시 몸통 (닫힌 선) + 금속 띠 · 깎은 부분 경계
+const PENCIL = [P(17.9, 3.6), P(20.5, 6.2), P(14.1, 12.6), P(10.3, 13.8), P(11.5, 10), P(17.9, 3.6)];
+const PENCIL_LINES = [[P(16.6, 4.9), P(19.2, 7.5)], [P(11.5, 10), P(14.1, 12.6)]];
 const W = 28; // 선 굵기 (끝·꺾이는 곳은 둥글게)
 
-/** 집 모양 마크 레이어. 좌표는 512 기준, 반환 [r,g,b,a] 또는 null */
+/** 점들을 이은 선 위(굵기 안)인지 */
+function onPolyline(x, y, pts, hw) {
+  for (let i = 0; i < pts.length - 1; i++) if (distSeg(x, y, pts[i], pts[i + 1]) <= hw) return true;
+  return false;
+}
+
+/** 노트와 연필 마크 레이어. 좌표는 512 기준, 반환 [r,g,b,a] 또는 null */
 function mark(x, y) {
   const hw = W / 2;
-  if (distSeg(x, y, ...LINE2) <= hw) return C.star;
-  if (distSeg(x, y, ...LINE1) <= hw) return C.ink;
-  for (let i = 0; i < HOUSE.length; i++) {
-    if (distSeg(x, y, HOUSE[i], HOUSE[(i + 1) % HOUSE.length]) <= hw) return C.ink;
-  }
+  if (onPolyline(x, y, GOLD, hw)) return C.star;
+  if (onPolyline(x, y, PENCIL, hw) || PENCIL_LINES.some((l) => onPolyline(x, y, l, hw))) return C.ink;
+  if (onPolyline(x, y, PAGE, hw) || LINES.some((l) => onPolyline(x, y, l, hw))) return C.ink;
   return null;
 }
 

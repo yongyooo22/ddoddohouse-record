@@ -559,7 +559,7 @@ body.is-loading .loadbar { opacity: 1; }
   border-top: 1px solid var(--line);
 }
 .side-brand, .side-cta { display: none; }
-/* 로고: 선으로 그린 티켓 + 가운데 작은 금빛 별 */
+/* 로고: 노트와 연필 (마지막 줄만 금빛) */
 .logo-mark { display: inline-grid; place-items: center; flex: none; width: 40px; height: 40px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); color: var(--accent); }
 .logo-mark .ico { width: 74%; height: 74%; stroke-width: 1.6; }
 .logo-mark .ico-accent { stroke: var(--gold); }
