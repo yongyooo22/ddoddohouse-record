@@ -6,7 +6,7 @@ import { fmtDate, fmtMinutes, fmtRemaining, fmtDateTime, gameInfoText } from '..
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
 import { appBar, typeBadge, starsView, stamp, avatar, scoreBars, spoilerBlock, confirmDialog, toast, emptyState, loadingState, loadErrorState } from '../ui.js';
-import { recordStamp, ordinalLabel, bgOf, mmOf, erOf, spoilerKey, ownershipText } from './bits.js';
+import { recordStamp, ordinalLabel, bgOf, mmOf, erOf, spoilerKey, ownershipText, gamePageHref } from './bits.js';
 import { gallery, closeViewer } from './photos.js';
 import { gameThumb, openGameEditor } from './game-form.js';
 
@@ -213,7 +213,7 @@ function render(root, id, ctx) {
         h('p', { class: 'dgame-name' }, h('span', { text: game.title }), isOwnedGame(game) ? h('span', { class: 'rbadge rbadge-own', text: '내 소장' }) : null),
         gameInfoText(game, { genres: 3 }) ? h('p', { class: 'dgame-meta', text: gameInfoText(game, { genres: 3 }) }) : null,
         h('div', { class: 'dgame-acts' },
-          h('a', { class: 'link-more', href: `#/records?game=${encodeURIComponent(game.id)}` }, `이 ${t ? t.noun : '게임'} 기록 ${recordsOfGame(game.id).length}개`, icon('chevron')))),
+          h('a', { class: 'link-more', href: gamePageHref({ gameId: game.id }) }, `이 ${t ? t.noun : '게임'} 기록 ${recordsOfGame(game.id).length}개`, icon('chevron')))),
       h('button', { type: 'button', class: 'icon-btn icon-btn-sm', 'aria-label': `${game.title} 정보 수정`, onClick: () => openGameEditor(game) }, icon('edit')))
     : null;
 

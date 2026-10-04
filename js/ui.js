@@ -339,8 +339,8 @@ export function stepper({ value = null, min = 0, max = 99, onChange, label, unit
 }
 
 // ── 빈 화면 ──
-export function emptyState({ icon: ic = 'book', title, text, action }) {
-  return h('div', { class: 'empty' },
+export function emptyState({ icon: ic = 'book', title, text, action, cls = '' }) {
+  return h('div', { class: ['empty', cls] },
     h('div', { class: 'empty-ico', 'aria-hidden': 'true' }, icon(ic)),
     h('p', { class: 'empty-title', text: title }),
     text ? h('p', { class: 'empty-text', text }) : null,

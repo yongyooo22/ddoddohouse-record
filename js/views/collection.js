@@ -2,14 +2,13 @@
 // 게임 등록은 여기서 '내 소장'이 기본으로 선택된 채 열림. 소장 해제는 소장 여부만 바꾸고 게임 정보·기록은 그대로
 import { h, icon, starShape } from '../dom.js';
 import { TYPES } from '../constants.js';
-import { state, isFirstLoad, loadFailed, upsertGame, removeGame, gameById } from '../store.js';
-import { collectionOf } from '../stats.js';
+import { state, isFirstLoad, loadFailed, gameById, gameSummaries } from '../store.js';
 import { fmtDateDot, todayStr, gameInfoText } from '../format.js';
-import * as api from '../api.js';
 import { navigate } from '../nav.js';
-import { segmented, typeBadge, emptyState, loadingState, loadErrorState, openDialog, confirmDialog, toast } from '../ui.js';
+import { segmented, typeBadge, emptyState, loadingState, loadErrorState, openDialog } from '../ui.js';
 import { cardPhoto } from './photos.js';
-import { openGameEditor, canDeleteGame } from './game-form.js';
+import { openGameEditor, canDeleteGame, setOwned, deleteGameInfo } from './game-form.js';
+import { gamePageHref, gameWriteHref } from './bits.js';
 
 const KINDS = ['boardgame', 'murdermystery'];
 
@@ -35,66 +34,40 @@ function activity(g) {
   return g.lastDate > added ? g.lastDate : added;
 }
 
-function sorted(games) {
+function sorted(games, sort = view.sort) {
   const list = [...games];
-  // 같은 값이면 collectionOf 순서(최근에 한 순 → 안 해 본 게임은 최근 등록 순)를 그대로 둠 (안정 정렬)
-  if (view.sort === 'recent') list.sort((a, b) => activity(b).localeCompare(activity(a)));
-  else if (view.sort === 'plays') list.sort((a, b) => b.plays - a.plays || activity(b).localeCompare(activity(a)));
-  else if (view.sort === 'rating') list.sort((a, b) => (b.avgRating ?? -1) - (a.avgRating ?? -1) || b.plays - a.plays);
-  else if (view.sort === 'name') list.sort((a, b) => a.title.localeCompare(b.title, 'ko'));
+  // 같은 값이면 gameEntries 순서(최근에 한 순 → 안 해 본 게임은 최근 등록 순)를 그대로 둠 (안정 정렬)
+  if (sort === 'recent') list.sort((a, b) => activity(b).localeCompare(activity(a)));
+  else if (sort === 'plays') list.sort((a, b) => b.plays - a.plays || activity(b).localeCompare(activity(a)));
+  else if (sort === 'rating') list.sort((a, b) => (b.avgRating ?? -1) - (a.avgRating ?? -1) || b.plays - a.plays);
+  else if (sort === 'name') list.sort((a, b) => a.title.localeCompare(b.title, 'ko'));
   return list;
 }
 
 /** 그 게임의 기록만 모아 보는 목록 주소 */
-const gameHref = (g) => (g.gameId
+const recordsHref = (g) => (g.gameId
   ? `#/records?game=${encodeURIComponent(g.gameId)}`
   : `#/records?type=${g.type}&title=${encodeURIComponent(g.title)}`);
-const writeHref = (g) => (g.gameId
-  ? `#/new/${g.type}?game=${encodeURIComponent(g.gameId)}`
-  : `#/new/${g.type}?title=${encodeURIComponent(g.title)}`);
+
+/** 내 소장 게임 (보드게임·머미, 최근에 하거나 등록한 순) — 홈에서도 씀 */
+export const ownedGames = () => sorted(gameSummaries().filter((e) => e.owned && KINDS.includes(e.type)), 'recent');
+
+/** '3번 했어요 · 최근 2026.09.30 · 평균 ★ 4.5' 또는 '아직 안 해 봤어요 · 2026.10.01 등록' */
+export function statText(g) {
+  return g.plays
+    ? `${g.plays}번 했어요 · 최근 ${fmtDateDot(g.lastDate)}${g.avgRating ? ` · 평균 ★ ${g.avgRating.toFixed(1)}` : ''}`
+    : `아직 안 해 봤어요${addedOn(g) ? ` · ${fmtDateDot(addedOn(g))} 등록` : ''}`;
+}
 
 /** 소장 게임 등록 (내 소장 기본 선택, 계속 등록) */
 export const registerOwned = (type) => openGameEditor(null, { type, context: 'collection' });
-
-/** 소장에서 빼기 — 소장 여부만 바꿈 (게임 정보·지난 기록은 그대로) */
-async function unown(g) {
-  const game = gameById(g.gameId);
-  if (!game) return;
-  const ok = await confirmDialog('소장에서 뺄까요?',
-    `‘${g.title}’의 소장 표시만 지워요. 게임 정보와 지난 기록은 그대로 남고, 기록할 때 계속 고를 수 있어요.`, { ok: '빼기', danger: true });
-  if (!ok) return;
-  try {
-    const res = await api.saveGame({ id: game.id, type: game.type, title: game.title, memo: game.memo || '', owned: false });
-    upsertGame(res.game);
-    toast('소장에서 뺐어요. 게임 정보와 기록은 그대로예요', 'ok', 3500);
-  } catch (e) {
-    toast(api.errorMessage(e, '저장'), 'error');
-  }
-}
-
-/** 기록이 하나도 없는 게임 정보만 지울 수 있음 */
-async function removeGameInfo(g) {
-  const game = gameById(g.gameId);
-  if (!game || !canDeleteGame(game)) return;
-  const ok = await confirmDialog('게임 정보를 지울까요?', `‘${g.title}’ 등록을 지워요. 이 게임으로 쓴 기록은 없어요.`, { ok: '지우기', danger: true });
-  if (!ok) return;
-  try {
-    await api.deleteGame(game.id);
-  } catch (e) {
-    if (e.code !== 'not_found') { toast(api.errorMessage(e, '삭제'), 'error'); return; }
-  }
-  removeGame(game.id);
-  toast('게임 정보를 지웠어요', 'ok');
-}
 
 /** 게임 메뉴: 기록 보기 · 기록 쓰기 · 정보 고치기 · 소장에서 빼기 (등록 전 예전 기록은 '게임으로 등록') */
 async function openGameMenu(g) {
   let close = () => {};
   const item = (value, ic, label, cls = '') => h('button', { type: 'button', class: ['gmenu-item', cls], onClick: () => close(value) },
     icon(ic), h('span', { text: label }), icon('chevron', 'gmenu-go'));
-  const stat = g.plays
-    ? `${g.plays}번 했어요 · 최근 ${fmtDateDot(g.lastDate)}${g.avgRating ? ` · 평균 ★ ${g.avgRating.toFixed(1)}` : ''}`
-    : `아직 안 해 봤어요${addedOn(g) ? ` · ${fmtDateDot(addedOn(g))} 등록` : ''}`;
+  const stat = statText(g);
   const info = g.game ? gameInfoText(g.game, { genres: 4 }) : '';
   const game = gameById(g.gameId);
   const body = h('div', { class: 'gmenu' },
@@ -112,14 +85,14 @@ async function openGameMenu(g) {
     bind: (c) => { close = c; },
     actions: [{ label: '닫기', value: null, kind: 'ghost' }],
   });
-  if (v === 'records') navigate(gameHref(g));
-  else if (v === 'write') navigate(writeHref(g));
+  if (v === 'records') navigate(recordsHref(g));
+  else if (v === 'write') navigate(gameWriteHref(g));
   else if (v === 'edit') {
     if (game) await openGameEditor(game);
   } else if (v === 'register') {
     await openGameEditor(null, { type: g.type, title: g.title, context: 'collection' });
-  } else if (v === 'unown') await unown(g);
-  else if (v === 'delete') await removeGameInfo(g);
+  } else if (v === 'unown') await setOwned(game, false);
+  else if (v === 'delete') await deleteGameInfo(game);
 }
 
 // ── 목록 ──
@@ -129,10 +102,8 @@ function gameCard(g) {
   const photo = g.cover ? cardPhoto({ photos: [g.cover] }) : null;
   const added = addedOn(g);
   const info = g.game ? gameInfoText(g.game) : '';
-  // 해 본 게임은 그 게임 기록으로, 아직 안 해 본 게임은 메뉴로
-  const main = g.plays
-    ? h('a', { class: 'card-link', href: gameHref(g), 'aria-label': `${g.title}, ${t.short}, ${g.plays}번 했어요` }, g.title)
-    : h('button', { type: 'button', class: 'card-link', 'aria-label': `${g.title}, ${t.short}, 아직 안 해 봤어요`, onClick: () => openGameMenu(g) }, g.title);
+  // 카드를 누르면 게임 상세 (정보 · 플레이 기록하기 · 그 게임 기록)
+  const main = h('a', { class: 'card-link', href: gamePageHref(g), 'aria-label': `${g.title}, ${t.short}, ${g.plays ? `${g.plays}번 했어요` : '아직 안 해 봤어요'}` }, g.title);
   const rating = g.avgRating
     ? h('span', { class: 'gcard-rating', role: 'img', 'aria-label': `평균 별점 ${g.avgRating.toFixed(1)}점` },
       starShape('rcard-star'), h('span', { text: g.avgRating.toFixed(1) }))
@@ -182,7 +153,7 @@ export function mount(root, ctx) {
       results.replaceChildren(isFirstLoad() ? loadingState() : loadErrorState(ctx && ctx.refresh));
       return;
     }
-    const { owned } = collectionOf(state.records, state.games);
+    const owned = gameSummaries().filter((e) => e.owned && KINDS.includes(e.type));
     const shown = sorted(view.type === 'all' ? owned : owned.filter((g) => g.type === view.type));
     count.textContent = `${view.type === 'all' ? '내 소장' : TYPES[view.type].short} ${shown.length}개`;
 
