@@ -135,3 +135,16 @@ export function sectionHead(title, { action, sub } = {}) {
     sub ? h('span', { class: 'sec-sub', text: sub }) : null,
     action || null);
 }
+
+/** 게임 상세 주소: 게임 정보가 있으면 그 게임, 등록 전 예전 기록 이름이면 종류·이름으로 */
+export function gamePageHref(e) {
+  if (e && e.gameId) return `#/game/${encodeURIComponent(e.gameId)}`;
+  return `#/game?type=${encodeURIComponent(e.type)}&title=${encodeURIComponent(e.title)}`;
+}
+
+/** 이 게임으로 새 기록 쓰기 주소 (게임이 골라진 폼) */
+export function gameWriteHref(e) {
+  return e && e.gameId
+    ? `#/new/${e.type}?game=${encodeURIComponent(e.gameId)}`
+    : `#/new/${e.type}?title=${encodeURIComponent(e.title)}`;
+}

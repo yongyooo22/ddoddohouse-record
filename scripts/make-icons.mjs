@@ -1,6 +1,6 @@
 // 앱 아이콘 PNG 생성 (외부 의존성 없음: zlib 로 직접 PNG 인코딩)
-// 디자인: 크림색 둥근 사각형 위에 진초록 선으로 그린 티켓(양옆 반원 홈), 가운데 작은 금빛 별
-//        — 앱 안의 로고(js/dom.js 의 ticket 아이콘)와 같은 모양
+// 디자인: 크림색 둥근 사각형 위에 진초록 선으로 그린 집 모양 기록장 (안에 기록 줄 두 개, 아랫줄은 금빛)
+//        — 앱 안의 로고(js/dom.js 의 logo 아이콘)와 같은 모양
 // 실행: node scripts/make-icons.mjs
 import { writeFileSync } from 'node:fs';
 import { deflateSync } from 'node:zlib';
@@ -30,42 +30,30 @@ function inRoundRect(x, y, x0, y0, x1, y1, r) {
   return dx * dx + dy * dy <= r * r;
 }
 
-/** 티켓 모양: 둥근 사각형에서 왼쪽·오른쪽 가운데(nx0·nx1, ny)를 반원으로 파냄 */
-function inTicket(x, y, x0, y0, x1, y1, r, notch, nx0, nx1, ny) {
-  if (!inRoundRect(x, y, x0, y0, x1, y1, r)) return false;
-  if (Math.hypot(x - nx0, y - ny) < notch) return false;
-  if (Math.hypot(x - nx1, y - ny) < notch) return false;
-  return true;
+/** 점과 선분 사이 거리 */
+function distSeg(x, y, [ax, ay], [bx, by]) {
+  const dx = bx - ax, dy = by - ay;
+  const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy)));
+  return Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
 }
 
-/** 티켓 마크 레이어. 좌표는 512 기준, 반환 [r,g,b,a] 또는 null */
+// 로고 아이콘(24 좌표계)을 512 좌표계로 (90% 크기): 가로 가운데 12, 세로 가운데 12.6
+const K = (512 / 24) * 0.9;
+const P = (x, y) => [256 + (x - 12) * K, 256 + (y - 12.6) * K];
+const HOUSE = [P(5, 10.4), P(12, 4.6), P(19, 10.4), P(19, 20.5), P(5, 20.5)]; // 지붕 꼭대기 → 벽 → 바닥 (닫힌 선)
+const LINE1 = [P(8.6, 12.6), P(15.4, 12.6)];
+const LINE2 = [P(8.6, 16.1), P(12.8, 16.1)];
+const W = 28; // 선 굵기 (끝·꺾이는 곳은 둥글게)
+
+/** 집 모양 마크 레이어. 좌표는 512 기준, 반환 [r,g,b,a] 또는 null */
 function mark(x, y) {
-  const X0 = 84, X1 = 428, Y0 = 140, Y1 = 372; // 티켓 바깥선
-  const R = 36, N = 40, W = 26; // 모서리 · 반원 홈 · 선 굵기
-  const cy = (Y0 + Y1) / 2;
-  let out = null;
-  // 선 = 바깥 티켓 − 안쪽 티켓 (안쪽은 선 굵기만큼 줄이고, 홈은 같은 중심에서 선 굵기만큼 크게)
-  const outer = inTicket(x, y, X0, Y0, X1, Y1, R, N, X0, X1, cy);
-  const inner = inTicket(x, y, X0 + W, Y0 + W, X1 - W, Y1 - W, R - W, N + W, X0, X1, cy);
-  if (outer && !inner) out = C.ink;
-  if (inStar(x - 256, y - cy, 50, 21)) out = C.star;
-  return out;
-}
-
-function inStar(x, y, R, r) {
-  // 5각 별: 극좌표로 경계 계산
-  const ang = Math.atan2(x, -y); // 위쪽이 0
-  const d = Math.hypot(x, y);
-  const seg = (Math.PI * 2) / 5;
-  let a = ((ang % seg) + seg) % seg; // 0..seg
-  if (a > seg / 2) a = seg - a; // 대칭
-  // 꼭짓점(R, 0) 과 안쪽점(r, seg/2) 사이 직선
-  const p1 = [0, R];
-  const p2 = [Math.sin(seg / 2) * r, Math.cos(seg / 2) * r];
-  const px = Math.sin(a) * d, py = Math.cos(a) * d;
-  // 직선 p1-p2 기준 원점 쪽인지
-  const cross = (p2[0] - p1[0]) * (py - p1[1]) - (p2[1] - p1[1]) * (px - p1[0]);
-  return d <= R && cross <= 0;
+  const hw = W / 2;
+  if (distSeg(x, y, ...LINE2) <= hw) return C.star;
+  if (distSeg(x, y, ...LINE1) <= hw) return C.ink;
+  for (let i = 0; i < HOUSE.length; i++) {
+    if (distSeg(x, y, HOUSE[i], HOUSE[(i + 1) % HOUSE.length]) <= hw) return C.ink;
+  }
+  return null;
 }
 
 function blend(dst, src) {

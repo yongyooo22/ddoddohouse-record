@@ -2,10 +2,10 @@
 // 이름만 필수. 대표 이미지 · 내가 소장한 게임 · (보드게임) 인원·예상 시간·장르 · (방탈출) 매장·지점 · 메모는 선택
 import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, LIMITS, GENRE_SUGGESTIONS } from '../constants.js';
-import { state, upsertGame, gamesOfType, isOwnedGame, coverOf, recordsOfGame } from '../store.js';
+import { state, upsertGame, removeGame, gamesOfType, isOwnedGame, coverOf, recordsOfGame } from '../store.js';
 import { nameKey, codePoints, gameInfoText } from '../format.js';
 import * as api from '../api.js';
-import { segmented, chip, openDialog, toast, nextId } from '../ui.js';
+import { segmented, chip, openDialog, confirmDialog, toast, nextId } from '../ui.js';
 import { photoImg } from '../images.js';
 import { coverField } from './photos.js';
 
@@ -343,4 +343,38 @@ export async function openGameEditor(game = null, { type: startType, title: star
 /** 게임 정보 삭제 (기록이 없는 게임만) */
 export function canDeleteGame(g) {
   return !!g && !recordsOfGame(g.id).length && !state.records.some((r) => r.gameId === g.id);
+}
+
+/** 소장 여부만 바꿈 (게임 정보·지난 기록은 그대로). 바꿨으면 true */
+export async function setOwned(game, owned) {
+  if (!game || !OWNABLE.includes(game.type)) return false;
+  if (!owned) {
+    const ok = await confirmDialog('소장에서 뺄까요?',
+      `‘${game.title}’의 소장 표시만 지워요. 게임 정보와 지난 기록은 그대로 남고, 기록할 때 계속 고를 수 있어요.`, { ok: '빼기', danger: true });
+    if (!ok) return false;
+  }
+  try {
+    const res = await api.saveGame({ id: game.id, type: game.type, title: game.title, memo: game.memo || '', owned });
+    upsertGame(res.game);
+    toast(owned ? `‘${res.game.title}’ 내 소장으로 표시했어요` : '소장에서 뺐어요. 게임 정보와 기록은 그대로예요', 'ok', 3500);
+    return true;
+  } catch (e) {
+    toast(api.errorMessage(e, '저장'), 'error');
+    return false;
+  }
+}
+
+/** 기록이 하나도 없는 게임 정보만 지움. 지웠으면 true */
+export async function deleteGameInfo(game) {
+  if (!game || !canDeleteGame(game)) return false;
+  const ok = await confirmDialog('게임 정보를 지울까요?', `‘${game.title}’ 등록을 지워요. 이 게임으로 쓴 기록은 없어요.`, { ok: '지우기', danger: true });
+  if (!ok) return false;
+  try {
+    await api.deleteGame(game.id);
+  } catch (e) {
+    if (e.code !== 'not_found') { toast(api.errorMessage(e, '삭제'), 'error'); return false; }
+  }
+  removeGame(game.id);
+  toast('게임 정보를 지웠어요', 'ok');
+  return true;
 }

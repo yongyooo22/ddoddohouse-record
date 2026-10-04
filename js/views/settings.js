@@ -542,7 +542,7 @@ function render(root) {
       h('div', { class: 'set-col' }, connSec, storageSection()),
       h('div', { class: 'set-col' }, backupSec, themeSec, deviceSec)),
     h('footer', { class: 'set-foot' },
-      h('span', { class: 'logo-mark set-logo', 'aria-hidden': 'true' }, icon('ticket')),
+      h('span', { class: 'logo-mark set-logo', 'aria-hidden': 'true' }, icon('logo')),
       h('p', { text: `${APP_NAME} · v${APP_VERSION}` }),
       h('p', { class: 'muted small', text: '우리끼리만 보는 비공개 기록장이에요' }))));
 }

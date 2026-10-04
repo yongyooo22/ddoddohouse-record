@@ -347,6 +347,17 @@ await step('공유 링크 #k= 로 잠금 해제', async () => {
   check('탭바 표시', !(await page.$eval('#tabbar', (e) => e.hidden)));
   const hist = await page.evaluate(() => history.length);
   check('history 항목에도 키 없음', await page.evaluate(() => !location.href.includes('k=')), String(hist));
+  // 빈 홈: 제목 '플레이 기록' · 작은 '기록 없음' 상자(한 줄 + 기록 남기기) · 멤버 먼저 등록 안내 없음 · 소장 게임 등록 버튼만
+  check('홈 제목은 ‘플레이 기록’ (인사말·오늘 날짜 없음)', (await text('.page-home .home-title')) === '플레이 기록' && !(await page.$('.page-home .home-date')), await text('.page-home .home-head'));
+  check('기록 없음: 한 줄 안내 + ‘기록 남기기’', (await text('.page-home .empty-title')) === '첫 플레이를 기록해 보세요' && !(await page.$('.page-home .empty-text')) &&
+    (await text('.page-home .empty .btn-primary')) === '기록 남기기' && (await page.getAttribute('.page-home .empty .btn-primary', 'href')) === '#/new', await text('.page-home .empty'));
+  check('기록 없음 상자는 낮게 (240px 이하) · 작은 카드 아이콘', await page.$eval('.page-home .empty', (e) => {
+    const ico = e.querySelector('.empty-ico').getBoundingClientRect();
+    return e.getBoundingClientRect().height <= 240 && ico.width <= 44 && getComputedStyle(e.querySelector('.empty-ico')).borderRadius !== '50%';
+  }));
+  check('멤버 먼저 등록 안내 없음', !(await page.$('.page-home .tip')) && !(await page.$('.page-home a[href="#/members"]')));
+  check('내 소장 게임: 없으면 작은 ‘소장 게임 등록’ 버튼만', (await text('.page-home .home-owned .sec-title')) === '내 소장 게임' &&
+    (await text('.page-home .home-owned .btn')) === '소장 게임 등록' && !(await page.$('.page-home .otiles')));
   await noOverflow('빈 홈');
   await shot('03-home-empty');
 });
@@ -1094,7 +1105,8 @@ await step('홈 요약 · 멤버 프로필', async () => {
   const mobRows = await page.$eval('.page-home .summary', (e) => new Set([...e.querySelectorAll('.sum-item')].map((x) => Math.round(x.getBoundingClientRect().top))).size);
   check('휴대폰: 요약 띠는 한 줄 다섯 칸', mobRows === 1, String(mobRows));
   const headH = await page.$eval('.page-home .home-head', (e) => e.getBoundingClientRect().height);
-  check('휴대폰: 인사말은 한 줄로 낮게', headH < 48, String(headH));
+  check('휴대폰: 제목은 한 줄로 낮게', headH < 48, String(headH));
+  check('홈 제목 ‘플레이 기록’', (await text('.page-home .home-title')) === '플레이 기록');
   check('휴대폰: 최근 기록 첫 카드가 첫 화면 위쪽에', await page.$eval('.page-home .rcard', (e) => e.getBoundingClientRect().top < 260));
   check('휴대폰: 최근 기록 한 칸', await page.evaluate(() => {
     const c = [...document.querySelectorAll('.page-home .rlist > .rcard')];
@@ -1103,8 +1115,31 @@ await step('홈 요약 · 멤버 프로필', async () => {
   check('최근 기록이 요약 띠 바로 아래', await page.$eval('.page-home .summary', (e) => !!(e.nextElementSibling && e.nextElementSibling.matches('.home-recent'))));
   check('최근 기록 4개', (await page.$$('.page-home .rcard')).length === 4);
   check('‘전체 보기’ → 기록 목록', (await page.getAttribute('.page-home .home-recent .link-more', 'href')) === '#/records');
+  // 최근 기록 아래 내 소장 게임 (작은 표지 · 최대 6개) → 게임 상세 → 플레이 기록하기
+  check('최근 기록 다음에 내 소장 게임', await page.$eval('.page-home .home-recent', (e) => !!(e.nextElementSibling && e.nextElementSibling.matches('.home-owned'))));
+  check('멤버 먼저 등록 안내 없음', !(await page.$('.page-home .tip')));
+  const ownTiles = await texts('.page-home .otile-name');
+  check('내 소장 게임 표지: 테라포밍 마스 · 6개 이하', ownTiles.includes('테라포밍 마스') && ownTiles.length <= 6, JSON.stringify(ownTiles));
+  check('표지 → 게임 상세 주소', (await page.getAttribute('.page-home .otile-link:has(.otile-name:text-is("테라포밍 마스"))', 'href')) === `#/game/${encodeURIComponent(ids.gTera)}`);
+  check('‘전체 보기’ → 소장', (await page.getAttribute('.page-home .home-owned .link-more', 'href')) === '#/collection');
   await noOverflow('홈');
   await shot('23-home');
+  await page.click('.page-home .otile-link:has(.otile-name:text-is("테라포밍 마스"))');
+  await page.waitForSelector('.page-game');
+  check('게임 상세: 이름 · 내 소장 · 인원·시간·장르', (await text('.page-game .ghero-title')) === '테라포밍 마스' && !!(await page.$('.page-game .ghero .rbadge-own')) &&
+    (await text('.page-game .ghero-info')) === '1~5명 · 90~120분 · 전략', await text('.page-game .ghero'));
+  const teraRecs = (await api('GET', '/api/data')).data.records.filter((r) => r.gameId === ids.gTera).length;
+  check('게임 상세: 그 게임 기록만', (await page.$$('.page-game .rcard')).length === teraRecs && teraRecs > 0, String(teraRecs));
+  check('게임 상세: 기록 수·평균 별점', (await text('.page-game .ghero-stat')).startsWith(`${teraRecs}번 했어요`), await text('.page-game .ghero-stat'));
+  await noOverflow('게임 상세');
+  await shot('23b-game');
+  await page.click('.page-game .ghero-write');
+  await page.waitForSelector('.page-form.t-boardgame');
+  check('플레이 기록하기 → 게임이 골라진 새 기록', (await pickedGame()) === '테라포밍 마스' && page.url().includes(`?game=${encodeURIComponent(ids.gTera)}`), await pickedGame());
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.waitForSelector('.page-game');
+  check('취소 → 게임 상세로 돌아옴', !!(await page.$('.page-game')));
+  await tab('home', '.page-home');
   // 요약 띠의 종류 칸 → 그 종류 목록, 전체 칸 → 전체 목록
   await page.click('.page-home .sum-item:has(.sum-label:text-is("방탈출")) .sum-link');
   const erOnly = await until(async () => { const x = await cardTitles(); return x.length === 2 && x; });
@@ -1164,9 +1199,21 @@ await step('소장 탭 · 소장 필터 · 예전 기록 이름을 게임으로 
     await noOverflow('소장 탭');
     await shot('25-collection');
 
-    // 게임 카드 → 그 게임 기록만 (게임 필터 칩)
+    // 게임 카드 → 게임 상세 (그 게임 기록만 · 플레이 기록하기)
     await page.click(`${tera} .card-link`);
-    await page.waitForSelector('.page-list');
+    await page.waitForSelector('.page-game');
+    check('게임 카드 → 게임 상세 (그 게임 기록 1개)', (await text('.page-game .ghero-title')) === '테라포밍 마스' && (await page.$$('.page-game .rcard')).length === 1 &&
+      (await page.getAttribute('.page-game .ghero-write', 'href')) === `#/new/boardgame?game=${encodeURIComponent(ids.gTera)}`);
+    // 게임 정보 전의 예전 기록(내 소장)도 게임 상세로 — 기록은 그대로 두고 '게임 정보로 등록'을 권함
+    await tab('collection', '.page-collection');
+    await page.click('.page-collection .gcard:has(.card-link:text-is("마지막 야간열차")) .card-link');
+    await page.waitForSelector('.page-game');
+    check('예전 기록 이름의 게임 상세: 기록 1개 · 게임 정보로 등록 · 이름으로 기록 쓰기', (await page.$$('.page-game .rcard')).length === 1 &&
+      !!(await page.$('.page-game .ghero-acts button:has-text("게임 정보로 등록")')) &&
+      (await page.getAttribute('.page-game .ghero-write', 'href')) === `#/new/murdermystery?title=${encodeURIComponent('마지막 야간열차')}`, await text('.page-game .ghero'));
+    await shot('25a-game-legacy');
+    // 그 게임 기록 목록 (게임 필터 칩)
+    await go(`#/records?game=${encodeURIComponent(ids.gTera)}`, '.page-list');
     const only = await until(async () => { const x = await cardTitles(); return x.length === 1 && x; });
     check('게임 카드 → 그 게임 기록만', !!only && only[0] === '테라포밍 마스' && (await text('.page-list .achips')).includes('테라포밍 마스'), String(await cardTitles()));
     check('카드에 내 소장 배지 (게임 정보)', (await text('.page-list .rcard .rbadge')) === '내 소장');
@@ -1333,10 +1380,12 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     check('고친 정보 반영 (같은 id) · 한 칸만 적으면 고정 인원', !!(await toastSeen(/게임 정보를 고쳤어요/)) && (await text(`${gcard('아그리콜라')} .gcard-memo`)) === '확장 2개 포함' &&
       agri2.memo === '확장 2개 포함' && agri2.playersMin === 2 && agri2.playersMax === 2 && (await text(`${gcard('아그리콜라')} .gcard-info`)).startsWith('2명 · '), JSON.stringify(agri2));
 
-    // 안 해 본 게임 카드를 누르면 메뉴 → 이 게임으로 새 기록 쓰기 (게임이 골라진 채)
+    // 안 해 본 게임 카드도 게임 상세로 → 플레이 기록하기 (게임이 골라진 채)
     await page.click(`${gcard('열차 밖의 밤')} .card-link`);
-    await page.waitForSelector(dlg);
-    await page.click(`${dlg} .gmenu-item:has-text("이 게임으로 새 기록 쓰기")`);
+    await page.waitForSelector('.page-game');
+    check('안 해 본 게임 상세: 아직 안 해 봤어요 · 기록 없음 안내', (await text('.page-game .ghero-stat')).startsWith('아직 안 해 봤어요') && !(await page.$('.page-game .rcard')) &&
+      !!(await page.$('.page-game .ghero-none')) && !!(await page.$('.page-game .ghero-more button:has-text("게임 정보 삭제")')), await text('.page-game'));
+    await page.click('.page-game .ghero-write');
     await page.waitForSelector('.page-form.t-murdermystery');
     check('새 기록: 그 게임이 골라진 채', (await pickedGame()) === '열차 밖의 밤');
     await page.click('.save-btn');
@@ -1419,7 +1468,9 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
 await step('푸터: 모든 화면 맨 아래 제작자 표시 (탭 막대에 가리지 않음)', async () => {
   for (const [hash, sel] of [['#/', '.page-home'], ['#/collection', '.page-collection'], ['#/settings', '.page-settings']]) {
     await go(hash, sel);
-    check(`${hash}: 푸터 문구`, (await text('.app-foot')) === '© 2026 제작: 김연경(earthssaem@gmail.com)', await text('.app-foot'));
+    check(`${hash}: 푸터 문구 (이메일은 ‘문의’ 링크)`, (await text('.app-foot')) === '© 2026 김연경 · 문의' &&
+      (await page.getAttribute('.app-foot a', 'href')) === 'mailto:earthssaem@gmail.com', await text('.app-foot'));
+    check(`${hash}: 푸터는 작게`, await page.$eval('.app-foot', (e) => parseFloat(getComputedStyle(e).fontSize) <= 11.5));
     const pos = await page.evaluate(() => {
       scrollTo(0, document.scrollingElement.scrollHeight);
       const f = document.querySelector('.app-foot').getBoundingClientRect();
@@ -3064,9 +3115,10 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
   await page.waitForSelector('.page-home .summary', { timeout: 8000 });
   const side = await page.$eval('#tabbar', (e) => { const b = e.getBoundingClientRect(); return { l: b.left, w: b.width, h: b.height, dir: getComputedStyle(e).flexDirection }; });
-  check('메뉴가 왼쪽 사이드바 (화면 높이 전체)', side.l === 0 && side.w >= 200 && side.w <= 300 && side.h === 900 && side.dir === 'column', JSON.stringify(side));
+  check('메뉴가 왼쪽 사이드바 (화면 높이 전체 · 폭 230~250px)', side.l === 0 && side.w >= 230 && side.w <= 250 && side.h === 900 && side.dir === 'column', JSON.stringify(side));
+  check('사이드바 로고: 집 모양 기록장 (기록 줄 포함)', !!(await page.$('#tabbar .side-logo svg .ico-accent')));
   check('사이드바: 이름 · 새 기록 버튼 · 설정', await page.isVisible('#tabbar .side-brand') && await page.isVisible('#tabbar .side-cta') && await page.isVisible('#tabbar .tab-settings') && !(await page.isVisible('#tabbar .tab-add')));
-  check('본문이 사이드바 오른쪽에서 시작', await page.$eval('#view', (e) => e.getBoundingClientRect().left >= 248));
+  check('본문이 사이드바 오른쪽에서 시작', await page.$eval('#view', (e) => e.getBoundingClientRect().left >= 232));
   const sideTabs = await page.$$eval('#tabbar a.tab', (els) => els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent.trim()));
   check('사이드바 메뉴: 홈 · 기록 · 소장 · 통계 · 멤버 · 설정', JSON.stringify(sideTabs) === JSON.stringify(['홈', '기록', '소장', '통계', '멤버', '설정']), JSON.stringify(sideTabs));
   // 홈: 낮은 요약 띠 바로 아래 최근 기록 — 첫 줄 카드가 스크롤 없이 다 보임
@@ -3076,6 +3128,10 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   });
   check('홈: 요약 띠는 한 줄 · 낮게 (64px 이하)', strip.h >= 36 && strip.h <= 64 && strip.rows === 1, JSON.stringify(strip));
   check('홈: 이번 달 멤버 카드는 멤버 화면으로 (홈엔 없음)', !(await page.$('.page-home .mate')));
+  const sumGap = await page.$$eval('.page-home .summary .sum-link', (els) => Math.max(...els.map((e) => e.querySelector('.sum-value').getBoundingClientRect().left - e.querySelector('.sum-label').getBoundingClientRect().right)));
+  check('홈: 요약 띠 항목명과 숫자가 붙어 있음 (‘보드게임 12회’)', sumGap >= 0 && sumGap <= 16, String(sumGap));
+  check('홈: 카드 모서리 16~20px', await page.$eval('.page-home .rcard', (e) => { const r = parseFloat(getComputedStyle(e).borderTopLeftRadius); return r >= 16 && r <= 20; }) &&
+    await page.$eval('.page-home .summary', (e) => parseFloat(getComputedStyle(e).borderTopLeftRadius) <= 20));
   check('홈: 최근 기록 세 칸', await sideBySide('.page-home .rlist > .rcard:nth-child(1)', '.page-home .rlist > .rcard:nth-child(2)') &&
     await sideBySide('.page-home .rlist > .rcard:nth-child(2)', '.page-home .rlist > .rcard:nth-child(3)'));
   const firstRow = await page.evaluate(() => {
