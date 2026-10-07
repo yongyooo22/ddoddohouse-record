@@ -648,7 +648,7 @@ await step('머더미스터리 기록 (팝업 등록 · 역할·범인·세부 �
   await page.press('.page-form input[aria-label="태그 직접 입력"]', 'Enter');
   const on = await texts('.page-form .chip-tag[aria-pressed="true"] .chip-label');
   check('태그 3개 선택(직접 입력 포함, # 과 공백 제거)', on.length === 3 && on.includes('#인생시나리오'), on.join(','));
-  await noOverflow('머미 폼');
+  await noOverflow('머더미스터리 폼');
   await shot('10-form-murdermystery');
   await page.click('.save-btn');
   await page.waitForSelector('.page-detail', { timeout: 8000 });
@@ -700,7 +700,7 @@ await step('머더미스터리 기록 (팝업 등록 · 역할·범인·세부 �
   const mmGame = (await api('GET', '/api/data')).data.games.find((g) => g.title === '붉은 저택의 초대');
   check('서버: 팝업으로 등록한 작품 (소장 아님) 과 연결', mmGame && mmGame.type === 'murdermystery' && mmGame.owned === false && saved.gameId === mmGame.id, JSON.stringify(mmGame));
   ids.gMm = mmGame && mmGame.id;
-  await noOverflow('머미 상세');
+  await noOverflow('머더미스터리 상세');
   await shot('12-detail-murdermystery');
 });
 
@@ -833,7 +833,7 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   check('기록 5개', titles && titles.length === 5, String(titles));
   const cardOf = (t) => `.page-list .rcard:has(.card-link:text-is("${t}"))`;
   check('보드게임 배지', (await text(`${cardOf('테라포밍 마스')} .badge`)) === '보드게임');
-  check('머미 배지', (await text(`${cardOf('붉은 저택의 초대')} .badge`)) === '머미');
+  check('머더미스터리 배지', (await text(`${cardOf('붉은 저택의 초대')} .badge`)) === '머더미스터리');
   check('방탈출 배지', (await text(`${cardOf('잊혀진 연구소')} .badge`)) === '방탈출');
   // 티켓 카드: 장르 태그 → 제목(최대 두 줄) → 날짜 · 점선 아래 ★ 평점 · 한줄평
   // 우승자·참여자·배역·범인·스포일러·남은 시간·누적 번호는 상세 화면에서
@@ -847,19 +847,19 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   check('보드게임 카드: 우승 도장·승자·참여자는 상세로', !bgText.includes('우승') && !(await page.$(`${bgCard} .av`)) && !(await page.$(`${bgCard} .stamp`)), bgText);
   check('카드 대표 사진 칸 72px 정사각형', await page.$eval(`${bgCard} .rcard-thumb`, (e) => { const b = e.getBoundingClientRect(); return Math.round(b.width) === 72 && Math.round(b.height) === 72; }));
   check('카드 제목은 최대 두 줄', await page.$eval(`${bgCard} .rcard-title`, (e) => getComputedStyle(e).webkitLineClamp === '2'));
-  // 스포일러 머미 기록: 감상은 열기 전까지 가림, 범인·역할은 카드에 없음
+  // 스포일러 머더미스터리 기록: 감상은 열기 전까지 가림, 범인·역할은 카드에 없음
   const mmCard = cardOf('붉은 저택의 초대');
   const mmText = await text(mmCard);
-  check('스포일러 머미 카드: 범인·역할 없음 · 감상은 가림', !mmText.includes('세바스찬') &&
+  check('스포일러 머더미스터리 카드: 범인·역할 없음 · 감상은 가림', !mmText.includes('세바스찬') &&
     !!(await page.$(`${mmCard} .spoiler:not(.is-revealed) .spoiler-btn`)) && await page.$eval(`${mmCard} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true' && getComputedStyle(e).filter.includes('blur')), mmText);
   await page.click(`${mmCard} .spoiler-btn`);
   check('카드에서 열면 감상만 보이고 상세로 넘어가지 않음', !!(await until(() => page.$(`${mmCard} .spoiler.is-revealed`), 2000)) && !!(await page.$('.page-list')) &&
     (await text(`${mmCard} .rcard-one`)).startsWith('범인이 집사였다니'));
-  check('스포일러 머미 카드: 평점은 보임', (await text(`${mmCard} .rcard-rating`)) === '4.0', await text(`${mmCard} .rcard-rating`));
+  check('스포일러 머더미스터리 카드: 평점은 보임', (await text(`${mmCard} .rcard-rating`)) === '4.0', await text(`${mmCard} .rcard-rating`));
   check('방탈출 카드: 작은 성공 배지', (await text(`${cardOf('잊혀진 연구소')} .rbadge`)) === '탈출 성공');
   check('실패 방탈출: 작은 실패 배지', (await text(`${cardOf('저주받은 인형의 집')} .rbadge`)) === '탈출 실패');
-  check('보드게임·머미 카드엔 결과 배지 없음', !(await page.$(`${bgCard} .rbadge-clear, ${bgCard} .rbadge-fail`)) && !(await page.$(`${mmCard} .rbadge`)));
-  check('보드게임 카드: 작은 내 소장 배지 (매장형 머미는 없음)', (await text(`${bgCard} .rbadge`)) === '내 소장');
+  check('보드게임·머더미스터리 카드엔 결과 배지 없음', !(await page.$(`${bgCard} .rbadge-clear, ${bgCard} .rbadge-fail`)) && !(await page.$(`${mmCard} .rbadge`)));
+  check('보드게임 카드: 작은 내 소장 배지 (매장형 머더미스터리는 없음)', (await text(`${bgCard} .rbadge`)) === '내 소장');
   check('카드에 기울인 도장 없음', !(await page.$('.page-list .rcard .stamp')));
   const erText = await text(cardOf('잊혀진 연구소'));
   check('방탈출 카드: 남은 시간·힌트·브랜드·누적 번호는 상세로', !erText.includes('남김') && !erText.includes('힌트') && !erText.includes('키이스케이프') && !erText.includes('번째'), erText);
@@ -878,9 +878,9 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   await shot('15-list');
 
   // 종류 세그먼트
-  await page.click('.page-list .seg-type .seg-item:has-text("머미")');
+  await page.click('.page-list .seg-type .seg-item:has-text("머더미스터리")');
   let t = await until(async () => { const x = await cardTitles(); return x.length === 1 && x; });
-  check('머미 필터 → 1개', t && t[0] === '붉은 저택의 초대', String(t));
+  check('머더미스터리 필터 → 1개', t && t[0] === '붉은 저택의 초대', String(t));
   await page.click('.page-list .seg-type .seg-item:has-text("방탈출")');
   t = await until(async () => { const x = await cardTitles(); return x.length === 2 && x; });
   check('방탈출 필터 → 2개', !!t, String(t));
@@ -1042,7 +1042,7 @@ await step('통계 (생성한 데이터와 일치)', async () => {
   await page.click('.page-stats .seg-type .seg-item:has-text("전체")');
   let tl = await tiles();
   check('전체 4개 · 이번 달 3개', tl['전체 기록'] === '4개' && tl['이번 달'] === '3개', JSON.stringify(tl));
-  check('종류별 1·1·2', tl['보드게임'] === '1회' && tl['머미'] === '1회' && tl['방탈출'] === '2회', JSON.stringify(tl));
+  check('종류별 1·1·2', tl['보드게임'] === '1회' && tl['머더미스터리'] === '1회' && tl['방탈출'] === '2회', JSON.stringify(tl));
   const mem = await hbRows('.page-stats .chart-card:has(.chart-title:text-is("멤버별 참여"))');
   const cnt = (n) => (mem.find((r) => r.name === n) || {}).val;
   check('멤버별 참여 (연경 4 · 영식 4 · 민지짱 2 · 떠난 멤버 1)', cnt('연경') === '4회' && cnt('영식') === '4회' && cnt('민지짱') === '2회' && cnt('(떠난 멤버)') === '1회', JSON.stringify(mem));
@@ -1064,10 +1064,10 @@ await step('통계 (생성한 데이터와 일치)', async () => {
   await noOverflow('통계 보드게임');
   await shot('20-stats-boardgame');
 
-  await page.click('.page-stats .seg-type .seg-item:has-text("머미")');
+  await page.click('.page-stats .seg-type .seg-item:has-text("머더미스터리")');
   await page.waitForSelector('.page-stats .stable');
   tl = await tiles();
-  check('머미 1회 · 1편 · 평균 4.0 · 검거율 0%', tl['플레이'] === '1회' && tl['시나리오'] === '1편' && tl['평균 별점'].startsWith('4.0') && tl['범인 검거율'] === '0%|1번 중 0번', JSON.stringify(tl));
+  check('머더미스터리 1회 · 1편 · 평균 4.0 · 검거율 0%', tl['플레이'] === '1회' && tl['시나리오'] === '1편' && tl['평균 별점'].startsWith('4.0') && tl['범인 검거율'] === '0%|1번 중 0번', JSON.stringify(tl));
   const rowsT = await page.$$eval('.page-stats .stable tbody tr', (els) => els.map((tr) =>
     [tr.querySelector('th .cell-m > span:last-child').textContent.trim(), ...[...tr.querySelectorAll('td')].map((td) => td.textContent.trim())].join(' ')));
   const yk = rowsT.find((r) => r.startsWith('연경 ')) || '';
@@ -1078,7 +1078,7 @@ await step('통계 (생성한 데이터와 일치)', async () => {
   check('제작사 머더랩 1회', pub.length === 1 && pub[0].name === '머더랩' && pub[0].val === '1회', JSON.stringify(pub));
   const avg = await texts('.page-stats .scorebars .sb-row');
   check('세부 점수 평균', avg.length === 5 && avg[0].includes('4.5') && avg[2].includes('5.0'), avg.join(' | '));
-  await noOverflow('통계 머미');
+  await noOverflow('통계 머더미스터리');
   await shot('21-stats-murdermystery');
 
   await page.click('.page-stats .seg-type .seg-item:has-text("방탈출")');
@@ -1099,8 +1099,8 @@ await step('홈 요약 · 멤버 프로필', async () => {
   // 낮은 요약 띠: 전체 · 이번 달 · 종류별 (큰 표지·비율 막대·종류별 최근 날짜 없음)
   const sumOf = () => page.$$eval('.page-home .summary .sum-item', (els) => els.map((e) => `${e.querySelector('.sum-label').textContent} ${e.querySelector('.sum-value').textContent}`));
   const sums = await sumOf();
-  check('요약 띠: 전체 4회 · 이번 달 3회 · 보드게임 1회 · 머미 1회 · 방탈출 2회',
-    JSON.stringify(sums) === JSON.stringify(['전체 4회', '이번 달 3회', '보드게임 1회', '머미 1회', '방탈출 2회']), JSON.stringify(sums));
+  check('요약 띠: 전체 4회 · 이번 달 3회 · 보드게임 1회 · 머더미스터리 1회 · 방탈출 2회',
+    JSON.stringify(sums) === JSON.stringify(['전체 4회', '이번 달 3회', '보드게임 1회', '머더미스터리 1회', '방탈출 2회']), JSON.stringify(sums));
   check('큰 표지·이번 달 멤버 카드는 홈에 없음', !(await page.$('.page-home .cover')) && !(await page.$('.page-home .mate')));
   const mobRows = await page.$eval('.page-home .summary', (e) => new Set([...e.querySelectorAll('.sum-item')].map((x) => Math.round(x.getBoundingClientRect().top))).size);
   check('휴대폰: 요약 띠는 한 줄 다섯 칸', mobRows === 1, String(mobRows));
@@ -1141,7 +1141,7 @@ await step('홈 요약 · 멤버 프로필', async () => {
   check('취소 → 게임 상세로 돌아옴', !!(await page.$('.page-game')));
   await tab('home', '.page-home');
   // 요약 띠의 종류 칸 → 그 종류 목록, 전체 칸 → 전체 목록
-  await page.click('.page-home .sum-item:has(.sum-label:text-is("방탈출")) .sum-link');
+  await page.click('.page-home .sum-item.t-escaperoom .sum-link');
   const erOnly = await until(async () => { const x = await cardTitles(); return x.length === 2 && x; });
   check('요약 띠 방탈출 → 방탈출 2개', !!erOnly && (await text('.page-list .seg-type .seg-input:checked + .seg-item')) === '방탈출', String(await cardTitles()));
   await tab('home', '.page-home');
@@ -1153,14 +1153,14 @@ await step('홈 요약 · 멤버 프로필', async () => {
   check('멤버 화면에 이번 달 멤버 카드는 하나만', (await page.$$('.page-members .mate')).length === 1);
   await go(`#/member/${encodeURIComponent(ids['연경'])}`, '.page-profile');
   const tiles = await texts('.page-profile .ptile');
-  check('프로필: 보드게임 0승 · 머미 범인 1번 · 방탈출 50%', tiles[0].includes('1회') && tiles[0].includes('0승') && tiles[1].includes('범인 1번') && tiles[2].includes('2회') && tiles[2].includes('성공률 50%'), tiles.join(' | '));
+  check('프로필: 보드게임 0승 · 머더미스터리 범인 1번 · 방탈출 50%', tiles[0].includes('1회') && tiles[0].includes('0승') && tiles[1].includes('범인 1번') && tiles[2].includes('2회') && tiles[2].includes('성공률 50%'), tiles.join(' | '));
   check('프로필: 최근 기록 4개', (await page.$$('.page-profile .rcard')).length === 4);
   await noOverflow('멤버 프로필');
   await shot('24-member-profile');
 });
 
 await step('소장 탭 · 소장 필터 · 예전 기록 이름을 게임으로 등록', async () => {
-  // 게임 정보 전의 예전 기록: 대여한 같은 게임 두 판 + 집에서 한 보드게임형 머미(내 소장) 한 판 — 이 단계 끝에 지움
+  // 게임 정보 전의 예전 기록: 대여한 같은 게임 두 판 + 집에서 한 보드게임형 머더미스터리(내 소장) 한 판 — 이 단계 끝에 지움
   const mk = async (record) => (await api('POST', '/api/records', { record })).data.record.id;
   const gamesBefore = new Set((await api('GET', '/api/data')).data.games.map((g) => g.id));
   const extra = [
@@ -1190,8 +1190,8 @@ await step('소장 탭 · 소장 필터 · 예전 기록 이름을 게임으로 
     const teraRec = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.bg);
     check('게임 카드: 인원·시간·장르 · 횟수·최근 날짜·평균 별점', (await text(`${tera} .gcard-info`)) === '1~5명 · 90~120분 · 전략' && (await text(`${tera} .gcard-plays`)) === '1번 했어요' &&
       (await text(`${tera} .gcard-last`)) === `최근 ${teraRec.date.replace(/-/g, '.')}` && (await text(`${tera} .gcard-rating`)) === teraRec.rating.toFixed(1), await text(tera));
-    await page.click('.page-collection .seg-type .seg-item:has-text("머미")');
-    check('종류 고르기: 머미만', JSON.stringify(await texts('.page-collection .gcard-title')) === JSON.stringify(['마지막 야간열차']));
+    await page.click('.page-collection .seg-type .seg-item:has-text("머더미스터리")');
+    check('종류 고르기: 머더미스터리만', JSON.stringify(await texts('.page-collection .gcard-title')) === JSON.stringify(['마지막 야간열차']));
     await page.click('.page-collection .seg-type .seg-item:has-text("전체")');
     await page.selectOption('.page-collection select[aria-label="정렬"]', 'name');
     check('이름순 정렬', JSON.stringify(await texts('.page-collection .gcard-title')) === JSON.stringify(['마지막 야간열차', '테라포밍 마스']));
@@ -1291,8 +1291,8 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
       JSON.stringify(await texts(`${dlg} .dlg-actions button`)) === JSON.stringify(['닫기', '계속 등록', '등록']), JSON.stringify(await texts(`${dlg} .dlg-actions button`)));
     check('이름 칸에 바로 초점', await page.evaluate(() => document.activeElement && document.activeElement.dataset.field === 'game-title'));
     const nameLabel = `${dlg} .field:has([data-field="game-title"]) .field-label`;
-    check('기본 종류 보드게임 · 게임 이름 · 종류는 보드게임·머미만', (await page.$eval(`${dlg} .seg-input:checked`, (e) => e.value)) === 'boardgame' && (await text(nameLabel)) === '게임 이름' &&
-      JSON.stringify(await texts(`${dlg} .seg-type .seg-item`)) === JSON.stringify(['보드게임', '머미']));
+    check('기본 종류 보드게임 · 게임 이름 · 종류는 보드게임·머더미스터리만', (await page.$eval(`${dlg} .seg-input:checked`, (e) => e.value)) === 'boardgame' && (await text(nameLabel)) === '게임 이름' &&
+      JSON.stringify(await texts(`${dlg} .seg-type .seg-item`)) === JSON.stringify(['보드게임', '머더미스터리']));
     check('소장 탭에서 연 창: 내 소장 기본 선택', await page.isChecked(`${dlg} .gf-own-input`));
     // 보드게임 정보: 인원 · 예상 시간은 나란히, 장르는 그 아래
     const pos = await page.evaluate(() => {
@@ -1332,9 +1332,9 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     const dup = await until(async () => { const t = await text(`${dlg} .gf-dup`); return t.includes('같은 이름이 이미 있어요') && t; });
     check('같은 이름 → 기존 게임을 먼저 보여 줌 (이미 내 소장)', !!dup && dup.includes('아그리콜라') && dup.includes('1~4명 · 30~150분') && dup.includes('이미 내 소장'), String(dup));
     await shot('25b2-collection-register-dup');
-    // 머미로 바꿔 Enter 로 등록하고 닫기 (머미에는 인원·장르 칸 없음)
-    await page.click(`${dlg} .seg-item:has-text("머미")`);
-    check('머미 → 작품 이름 · 보드게임 칸 숨김 · 같은 이름 안내 사라짐', (await text(nameLabel)) === '작품 이름' && await page.isHidden(`${dlg} .gf-bg`) && await page.isHidden(`${dlg} .gf-dup`));
+    // 머더미스터리로 바꿔 Enter 로 등록하고 닫기 (머더미스터리에는 인원·장르 칸 없음)
+    await page.click(`${dlg} .seg-item:has-text("머더미스터리")`);
+    check('머더미스터리 → 작품 이름 · 보드게임 칸 숨김 · 같은 이름 안내 사라짐', (await text(nameLabel)) === '작품 이름' && await page.isHidden(`${dlg} .gf-bg`) && await page.isHidden(`${dlg} .gf-dup`));
     await page.fill('[data-field="game-title"]', '열차 밖의 밤');
     await page.press('[data-field="game-title"]', 'Enter');
     await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
@@ -1343,7 +1343,7 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     const agri = games.find((g) => g.title === '아그리콜라');
     check('서버: 내 소장 · 인원 1~4 · 시간 30~150 · 장르 2개', agri && agri.type === 'boardgame' && agri.owned === true && agri.memo === '확장 포함' &&
       agri.playersMin === 1 && agri.playersMax === 4 && agri.timeMin === 30 && agri.timeMax === 150 && JSON.stringify(agri.genres) === '["전략","농장"]', JSON.stringify(agri));
-    check('서버: 머미도 내 소장', games.some((g) => g.type === 'murdermystery' && g.title === '열차 밖의 밤' && g.owned === true), JSON.stringify(games));
+    check('서버: 머더미스터리도 내 소장', games.some((g) => g.type === 'murdermystery' && g.title === '열차 밖의 밤' && g.owned === true), JSON.stringify(games));
 
     // 목록: 기록이 없어도 소장에 보임
     const after = await texts('.page-collection .gcard-title');
@@ -1613,7 +1613,7 @@ await step('다크 테마', async () => {
     await noOverflow(`다크 ${name}`);
     await shot(name);
   }
-  for (const seg of ['보드게임', '머미', '방탈출']) {
+  for (const seg of ['보드게임', '머더미스터리', '방탈출']) {
     await go('#/stats', '.page-stats');
     await page.click(`.page-stats .seg-type .seg-item:has-text("${seg}")`);
     await sleep(100);
@@ -1670,13 +1670,13 @@ await step('좁은 화면 (320px) 가로 넘침', async () => {
     .map((e) => { const b = e.getBoundingClientRect(); return { cls: e.className, l: b.left, r: b.right, mid: b.left + b.width / 2 }; }));
   const plus320 = bar320.find((x) => x.cls.includes('tab-add'));
   check('320px 탭 막대: 일곱 칸이 화면 안 · 새 기록 버튼 가운데', bar320.length === 7 && bar320.every((x) => x.l >= 0 && x.r <= 320) && !!plus320 && Math.abs(plus320.mid - 160) < 2, JSON.stringify(bar320));
-  for (const seg of ['보드게임', '머미', '방탈출']) {
+  for (const seg of ['보드게임', '머더미스터리', '방탈출']) {
     await go('#/stats', '.page-stats');
     await page.click(`.page-stats .seg-type .seg-item:has-text("${seg}")`);
     await noOverflow(`320px 통계 ${seg}`);
   }
   await go('#/stats', '.page-stats');
-  await page.click('.page-stats .seg-type .seg-item:has-text("머미")');
+  await page.click('.page-stats .seg-type .seg-item:has-text("머더미스터리")');
   await shot('320-stats-murdermystery');
   await page.click('.page-stats .seg-type .seg-item:has-text("전체")');
   await page.setViewportSize(VIEWPORT);
@@ -1947,7 +1947,7 @@ await step('데이터: 다른 기록을 저장해도 보관된 초안은 그대�
   const d = await draftNow();
   check('수정 저장 뒤에도 다른 초안 유지', d && d.model && d.model.title === '보관된 초안', JSON.stringify(d));
   await go('#/new', '.page-form.t-murdermystery .draft-banner:not([hidden])');
-  check('새 기록 폼에 그 초안 안내 (초안의 종류로)', (await text('.page-form .draft-banner')).includes('머미 · 보관된 초안'), await text('.page-form .draft-banner'));
+  check('새 기록 폼에 그 초안 안내 (초안의 종류로)', (await text('.page-form .draft-banner')).includes('머더미스터리 · 보관된 초안'), await text('.page-form .draft-banner'));
   // 취소(작성 안 함)도 남의 초안을 지우지 않음
   await go('#/new/escaperoom', '.page-form');
   await setGame('잠깐');
@@ -2037,7 +2037,7 @@ await step('목록: 멤버 ‘모두 보기’·태그 링크는 예전 검색·
   await page.click('.page-list .seg-type .seg-item:has-text("전체")');
 });
 
-await step('머미: 같은 작품을 이미 해 본 멤버 안내', async () => {
+await step('머더미스터리: 같은 작품을 이미 해 본 멤버 안내', async () => {
   await go('#/new/murdermystery', '.page-form');
   await setGame('붉은 저택의 초대');
   const played = await until(async () => text('.page-form .gp-played'), 3000);
@@ -2058,7 +2058,7 @@ await step('통계: 결과 미기록 판은 승률·범인 생존률 분모에�
   const rates = await hbRows('.page-stats .chart-card:has(.chart-title:text-is("멤버별 승률"))');
   const ys = rates.find((r) => r.name === '영식') || {};
   check('협력 미기록 판은 패배로 안 셈 (영식 100%)', ys.val === '100%', JSON.stringify(rates));
-  await page.click('.page-stats .seg-type .seg-item:has-text("머미")');
+  await page.click('.page-stats .seg-type .seg-item:has-text("머더미스터리")');
   await page.waitForSelector('.page-stats .stable');
   const rowsT = await page.$$eval('.page-stats .stable tbody tr', (els) => els.map((tr) =>
     [tr.querySelector('th .cell-m > span:last-child').textContent.trim(), ...[...tr.querySelectorAll('td')].map((td) => td.textContent.trim())].join(' ')));
@@ -3229,7 +3229,7 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   check('통계: 월별 · 요일별 차트가 나란히', await sideBySide('.page-stats .stats-body > .chart-card:nth-child(3)', '.page-stats .stats-body > .chart-card:nth-child(4)'));
   await noOverflow('1440 통계');
   await shot('desktop-stats');
-  for (const seg of ['보드게임', '머미', '방탈출']) {
+  for (const seg of ['보드게임', '머더미스터리', '방탈출']) {
     await page.click(`.page-stats .seg-type .seg-item:has-text("${seg}")`);
     await noOverflow(`1440 통계 ${seg}`);
   }

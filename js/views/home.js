@@ -3,7 +3,7 @@ import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS } from '../constants.js';
 import { state, recordsSorted, isFirstLoad, loadFailed } from '../store.js';
 import { overview } from '../stats.js';
-import { emptyState, loadingState, loadErrorState } from '../ui.js';
+import { emptyState, loadingState, loadErrorState, typeName } from '../ui.js';
 import { recordCard, sectionHead, gamePageHref } from './bits.js';
 import { cardPhoto } from './photos.js';
 import { ownedGames, registerOwned } from './collection.js';
@@ -13,7 +13,7 @@ const OWNED_MAX = 6;
 /** 요약 띠의 한 칸 ('보드게임 12회'). href 가 있으면 그 조건의 목록으로 */
 function sumItem(label, n, href, cls) {
   const inner = [
-    h('span', { class: 'sum-label', text: label }),
+    h('span', { class: 'sum-label' }, label),
     h('span', { class: 'sum-value' }, h('span', { class: 'sum-num', text: String(n) }), h('span', { class: 'sum-unit', text: '회' })),
   ];
   return h('li', { class: ['sum-item', cls] },
@@ -53,7 +53,7 @@ function render(root, ctx) {
     h('ul', { class: 'sum-list' },
       sumItem('전체', total, '#/records?type=all', 'sum-total'),
       sumItem('이번 달', thisMonth, null, 'sum-month'),
-      TYPE_KEYS.map((k) => sumItem(TYPES[k].short, byType[k] || 0, `#/records?type=${k}`, `sum-type ${TYPES[k].cls}`))));
+      TYPE_KEYS.map((k) => sumItem(typeName(k, 'tight'), byType[k] || 0, `#/records?type=${k}`, `sum-type ${TYPES[k].cls}`))));
 
   const recent = recordsSorted().slice(0, 6);
   const recentSec = h('section', { class: 'home-recent' },

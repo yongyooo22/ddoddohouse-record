@@ -4,7 +4,7 @@ import { TYPES, TYPE_KEYS, MM_SCORES, WEEKDAYS } from '../constants.js';
 import { state, memberInfo, isFirstLoad, loadFailed, recordsForStats } from '../store.js';
 import { overview, boardgameStats, mmStats, erStats } from '../stats.js';
 import { fmtAvg, fmtPct, fmtRemaining } from '../format.js';
-import { segmented, avatar, emptyState, scoreBars, loadingState, loadErrorState } from '../ui.js';
+import { segmented, avatar, emptyState, scoreBars, loadingState, loadErrorState, typeName } from '../ui.js';
 
 const ui = { seg: 'all', minPlays: 1, showAllMembers: false };
 
@@ -18,7 +18,7 @@ function span(el, cls) {
 function tiles(items, cls = '') {
   return h('div', { class: ['tiles', `tiles-${items.length}`, cls] }, items.map((it) =>
     h('div', { class: ['tile', it.cls] },
-      h('span', { class: 'tile-label', text: it.label }),
+      h('span', { class: 'tile-label' }, it.label),
       h('span', { class: 'tile-value' }, it.value, it.unit ? h('span', { class: 'tile-unit', text: it.unit }) : null),
       it.sub ? h('span', { class: 'tile-sub', text: it.sub }) : null)));
 }
@@ -110,7 +110,7 @@ function overviewView(records) {
 
   const monthly = (ov.monthly || []).map((mo) => {
     const [y, m] = mo.ym.split('-');
-    const parts = TYPE_KEYS.map((k) => `${TYPES[k].short} ${(mo.byType && mo.byType[k]) || 0}`).join(' · ');
+    const parts = TYPE_KEYS.map((k) => `${TYPES[k].label} ${(mo.byType && mo.byType[k]) || 0}`).join(' · ');
     return {
       label: `${Number(m)}`,
       tip: `${y}년 ${Number(m)}월 — 총 ${mo.count}개 (${parts})`,
@@ -127,12 +127,12 @@ function overviewView(records) {
     ? h('button', { type: 'button', class: 'btn btn-ghost btn-sm btn-block', onClick: () => { ui.showAllMembers = !ui.showAllMembers; rerender(); } }, ui.showAllMembers ? '접기' : `${mc.length - 8}명 더 보기`)
     : null;
 
-  const typeTiles = TYPE_KEYS.map((k) => ({ label: TYPES[k].short, value: String(ov.byType[k] || 0), unit: '회', cls: `tile-type ${TYPES[k].cls}` }));
+  const typeTiles = TYPE_KEYS.map((k) => ({ label: typeName(k), value: String(ov.byType[k] || 0), unit: '회', cls: `tile-type ${TYPES[k].cls}` }));
   return [
     tiles([{ label: '전체 기록', value: String(ov.total), unit: '개', cls: 'tile-hero' }, { label: '이번 달', value: String(ov.thisMonth), unit: '개' }], 'span-5'),
     tiles(typeTiles, 'span-7'),
     span(card('월별 기록', '최근 12개월 · 막대를 누르면 자세히',
-      columns(monthly, { legend: TYPE_KEYS.map((k) => ({ label: TYPES[k].short, cls: `fill-${k}` })) })), 'span-7'),
+      columns(monthly, { legend: TYPE_KEYS.map((k) => ({ label: TYPES[k].label, cls: `fill-${k}` })) })), 'span-7'),
     span(card('요일별', favWd.length ? `주로 ${favWd.join('·')}요일에 모여요` : '',
       columns(wd, { readoutDefault: Math.max(0, (ov.weekday || []).indexOf(maxWd)), highlightMax: true })), 'span-5'),
     span(card('멤버별 참여', `총 ${mc.length}명`,
@@ -183,7 +183,7 @@ function bgView(records) {
 
 function mmView(records) {
   const s = mmStats(records);
-  if (!s.plays) return emptyState({ icon: 'magnifier', title: '머더미스터리 기록이 없어요', text: '머미를 기록하면 범인 검거율과 평점을 모아 보여 드려요.' });
+  if (!s.plays) return emptyState({ icon: 'magnifier', title: '머더미스터리 기록이 없어요', text: '머더미스터리를 기록하면 범인 검거율과 평점을 모아 보여 드려요.' });
   const c = s.culprit || { caught: 0, escaped: 0, rate: null };
   const ms = liveMembers(s.memberStats || []).filter((x) => x.plays > 0);
   const avg = s.avgScores || {};
@@ -263,7 +263,7 @@ export function mount(root, ctx) {
   const body = h('div', { class: 'stats-body' });
   const seg = segmented({
     label: '통계 종류', value: ui.seg, cls: 'seg-type',
-    options: [{ key: 'all', label: '전체' }, ...TYPE_KEYS.map((k) => ({ key: k, label: TYPES[k].short, cls: TYPES[k].cls }))],
+    options: [{ key: 'all', label: '전체' }, ...TYPE_KEYS.map((k) => ({ key: k, label: typeName(k, 'tight'), cls: TYPES[k].cls }))],
     onChange: (v) => { ui.seg = v; ui.minPlays = 1; draw(); },
   });
   function draw() {
