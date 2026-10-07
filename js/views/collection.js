@@ -5,7 +5,7 @@ import { TYPES } from '../constants.js';
 import { state, isFirstLoad, loadFailed, gameById, gameSummaries } from '../store.js';
 import { fmtDateDot, todayStr, gameInfoText } from '../format.js';
 import { navigate } from '../nav.js';
-import { segmented, typeBadge, emptyState, loadingState, loadErrorState, openDialog } from '../ui.js';
+import { segmented, typeBadge, typeName, emptyState, loadingState, loadErrorState, openDialog } from '../ui.js';
 import { cardPhoto } from './photos.js';
 import { openGameEditor, canDeleteGame, setOwned, deleteGameInfo } from './game-form.js';
 import { gamePageHref, gameWriteHref } from './bits.js';
@@ -103,7 +103,7 @@ function gameCard(g) {
   const added = addedOn(g);
   const info = g.game ? gameInfoText(g.game) : '';
   // 카드를 누르면 게임 상세 (정보 · 플레이 기록하기 · 그 게임 기록)
-  const main = h('a', { class: 'card-link', href: gamePageHref(g), 'aria-label': `${g.title}, ${t.short}, ${g.plays ? `${g.plays}번 했어요` : '아직 안 해 봤어요'}` }, g.title);
+  const main = h('a', { class: 'card-link', href: gamePageHref(g), 'aria-label': `${g.title}, ${t.label}, ${g.plays ? `${g.plays}번 했어요` : '아직 안 해 봤어요'}` }, g.title);
   const rating = g.avgRating
     ? h('span', { class: 'gcard-rating', role: 'img', 'aria-label': `평균 별점 ${g.avgRating.toFixed(1)}점` },
       starShape('rcard-star'), h('span', { text: g.avgRating.toFixed(1) }))
@@ -128,7 +128,7 @@ export function mount(root, ctx) {
   const register = () => registerOwned(view.type === 'all' ? undefined : view.type);
   const seg = segmented({
     label: '종류', value: view.type, cls: 'seg-type',
-    options: [{ key: 'all', label: '전체' }, ...KINDS.map((k) => ({ key: k, label: TYPES[k].short, cls: TYPES[k].cls }))],
+    options: [{ key: 'all', label: '전체' }, ...KINDS.map((k) => ({ key: k, label: typeName(k), cls: TYPES[k].cls }))],
     onChange: (v) => { view.type = v; paint(); },
   });
   const sortSel = h('select', { class: 'select select-sm', 'aria-label': '정렬' },
@@ -155,7 +155,7 @@ export function mount(root, ctx) {
     }
     const owned = gameSummaries().filter((e) => e.owned && KINDS.includes(e.type));
     const shown = sorted(view.type === 'all' ? owned : owned.filter((g) => g.type === view.type));
-    count.textContent = `${view.type === 'all' ? '내 소장' : TYPES[view.type].short} ${shown.length}개`;
+    count.textContent = `${view.type === 'all' ? '내 소장' : TYPES[view.type].label} ${shown.length}개`;
 
     const addAction = (label) => h('button', { type: 'button', class: 'btn btn-primary', onClick: register }, icon('plus'), h('span', { text: label }));
     let body;

@@ -3,7 +3,7 @@ import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, OWNERSHIPS } from '../constants.js';
 import { state, recordsSorted, membersSorted, allTags, memberInfo, isFirstLoad, loadFailed, titleOf, gameOfRecord, gameById, isOwnedGame } from '../store.js';
 import { norm, monthKey, fmtMonth } from '../format.js';
-import { segmented, chip, avatar, emptyState, loadingState, loadErrorState } from '../ui.js';
+import { segmented, chip, avatar, emptyState, loadingState, loadErrorState, typeName } from '../ui.js';
 import { ownershipOf, lenderOf, titleKey } from '../stats.js';
 import { recordCard, bgOf, mmOf, erOf } from './bits.js';
 
@@ -71,7 +71,7 @@ export function mount(root, ctx) {
 
   const seg = segmented({
     label: '종류', value: filters.type, cls: 'seg-type',
-    options: [{ key: 'all', label: '전체' }, ...TYPE_KEYS.map((k) => ({ key: k, label: TYPES[k].short, cls: TYPES[k].cls }))],
+    options: [{ key: 'all', label: '전체' }, ...TYPE_KEYS.map((k) => ({ key: k, label: typeName(k, 'tight'), cls: TYPES[k].cls }))],
     onChange: (v) => { filters.type = v; limit = PAGE; renderResults(); },
   });
 
@@ -130,7 +130,7 @@ export function mount(root, ctx) {
           })))
           : h('p', { class: 'muted small', text: '아직 쓴 태그가 없어요' })),
       h('div', { class: 'fp-group' },
-        h('p', { class: 'fp-label', text: '소장 (보드게임·머미)' }),
+        h('p', { class: 'fp-label', text: '소장 (보드게임·머더미스터리)' }),
         h('div', { class: 'chips' }, ownChips())),
       h('div', { class: 'fp-actions' },
         h('button', {
@@ -207,7 +207,7 @@ export function mount(root, ctx) {
     const nf = filters.members.length + filters.tags.length + (filters.own ? 1 : 0) + (filters.title ? 1 : 0) + (filters.game ? 1 : 0);
     filterBadge.hidden = nf === 0;
     filterBadge.textContent = String(nf);
-    const scoped = filters.type === 'all' ? '전체' : TYPES[filters.type].short;
+    const scoped = filters.type === 'all' ? '전체' : TYPES[filters.type].label;
     countEl.textContent = filters.q || nf ? `${scoped} 중 ${list.length}개 찾았어요` : `${scoped} ${list.length}개`;
 
     const out = [];

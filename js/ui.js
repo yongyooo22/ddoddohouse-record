@@ -133,10 +133,22 @@ export function appBar({ title, back, actions = [], cls = '' }) {
 }
 
 // ── 종류 배지 ──
-export function typeBadge(type, { short = true } = {}) {
+export function typeBadge(type) {
   const t = TYPES[type];
   if (!t) return h('span', { class: 'badge', text: '기록' });
-  return h('span', { class: `badge ${t.cls}` }, icon(t.icon), h('span', { text: short ? t.short : t.label }));
+  return h('span', { class: `badge ${t.cls}` }, icon(t.icon), h('span', { text: t.label }));
+}
+
+/**
+ * 종류 이름 — 기본은 풀네임('머더미스터리'). 자리가 좁은 화면에서만 CSS가 줄임말('머미')로 바꿔 보여 줘요.
+ * 글자는 풀네임 그대로 두고 보여 주는 것만 바꾸므로 읽어 주기·검색은 늘 풀네임이에요.
+ * fit: 'tight' = 520px 미만 화면에서 줄임 (칸이 여럿인 필터·요약 띠), 'snug' = 350px 미만에서만 줄임
+ */
+export function typeName(type, fit = 'snug') {
+  const t = TYPES[type];
+  if (!t) return h('span', { text: '기록' });
+  if (t.short === t.label) return h('span', { text: t.label });
+  return h('span', { class: `tn tn-${fit}`, dataset: { short: t.short } }, h('span', { class: 'tn-full', text: t.label }));
 }
 
 export function typeIcon(type, cls = '') {
@@ -281,7 +293,7 @@ export function segmented({ options, value, onChange, label, cls = '', name }) {
     const input = h('input', { type: 'radio', class: 'seg-input', name: n, id, value: o.key, checked: o.key === value });
     input.addEventListener('change', () => { if (input.checked && onChange) onChange(o.key); });
     const lab = h('label', { class: ['seg-item', o.cls], htmlFor: id },
-      o.icon ? icon(o.icon) : null, h('span', { text: o.label }));
+      o.icon ? icon(o.icon) : null, o.label instanceof Node ? o.label : h('span', { text: o.label }));
     wrap.append(input, lab);
   }
   return wrap;

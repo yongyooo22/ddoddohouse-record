@@ -270,6 +270,15 @@ h1, h2, h3, p { margin: 0; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .view:focus { outline: none; }
 .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* 종류 이름: 풀네임('머더미스터리')이 기본, 자리가 좁은 화면에서만 줄임말('머미')로 보여 줌 (글자는 그대로, 스크린리더는 풀네임) */
+@media (max-width: 519.98px) {
+  .tn-tight::after { content: attr(data-short); content: attr(data-short) / ""; }
+  .tn-tight > .tn-full { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+@media (max-width: 349.98px) {
+  .tn-snug::after { content: attr(data-short); content: attr(data-short) / ""; }
+  .tn-snug > .tn-full { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
 .ico { width: 20px; height: 20px; flex: none; }
 .muted { color: var(--ink-3); }
 .small { font-size: 13px; }

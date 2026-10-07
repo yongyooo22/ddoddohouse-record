@@ -185,7 +185,7 @@ function render(root, id, ctx) {
 
   const title = titleOf(r) || '(제목 없음)';
   const hero = h('section', { class: `dhero ${t ? t.cls : ''}` },
-    h('div', { class: 'dhero-top' }, typeBadge(r.type, { short: false }), ordinalLabel(r)),
+    h('div', { class: 'dhero-top' }, typeBadge(r.type), ordinalLabel(r)),
     h('h1', { class: 'dhero-title', text: title }),
     h('p', { class: 'dhero-date' }, icon('calendar'), h('span', { text: fmtDate(r.date) })),
     h('div', { class: 'dhero-rating' }, starsView(r.rating, { size: 'md' })),

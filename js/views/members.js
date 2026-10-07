@@ -6,7 +6,7 @@ import { memberProfile } from '../stats.js';
 import { fmtDate, fmtPct, norm, codePoints } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
-import { appBar, avatar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState } from '../ui.js';
+import { appBar, avatar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState, typeName } from '../ui.js';
 import { recordCard } from './bits.js';
 
 // ── 추가/수정 다이얼로그 ──
@@ -186,7 +186,7 @@ function tile(type, main, sub) {
   const t = TYPES[type];
   return h('div', { class: `ptile ${t.cls}` },
     h('span', { class: 'ptile-ico', 'aria-hidden': 'true' }, icon(t.icon)),
-    h('span', { class: 'ptile-label', text: t.short }),
+    h('span', { class: 'ptile-label' }, typeName(type)),
     h('span', { class: 'ptile-main', text: main }),
     h('span', { class: 'ptile-sub', text: sub }));
 }
@@ -224,7 +224,7 @@ function renderProfile(root, id, ctx) {
   }
 
   // 종류 비율 막대
-  const ratio = h('div', { class: 'ratio', role: 'img', 'aria-label': TYPE_KEYS.map((k) => `${TYPES[k].short} ${byType[k] || 0}회`).join(', ') });
+  const ratio = h('div', { class: 'ratio', role: 'img', 'aria-label': TYPE_KEYS.map((k) => `${TYPES[k].label} ${byType[k] || 0}회`).join(', ') });
   for (const k of TYPE_KEYS) {
     const n = byType[k] || 0;
     if (!n) continue;

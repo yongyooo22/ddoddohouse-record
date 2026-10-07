@@ -10,7 +10,7 @@ import { todayStr, yesterdayStr, defaultRecordDate, fmtDate, relTime, parseDate,
 import * as api from '../api.js';
 import { navigate, goBack } from '../nav.js';
 import {
-  appBar, chip, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge,
+  appBar, chip, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge, typeName,
 } from '../ui.js';
 import { resultSection, detailSection, resultSummary, detailSummary, recalcResults, memberChips, miniCheck } from './form-sections.js';
 import { openMemberEditor } from './members.js';
@@ -394,10 +394,10 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
       isNew
         ? segmented({
           label: '종류', value: type, cls: 'seg-type',
-          options: TYPE_KEYS.map((k) => ({ key: k, label: TYPES[k].short, cls: TYPES[k].cls })),
+          options: TYPE_KEYS.map((k) => ({ key: k, label: typeName(k), cls: TYPES[k].cls })),
           onChange: (v) => setType(v),
         })
-        : h('div', {}, typeBadge(type, { short: false })));
+        : h('div', {}, typeBadge(type)));
   }
 
   const picker = gamePicker({
@@ -651,7 +651,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     gameLabel.textContent = t.noun;
     pageEl.className = `page page-form ${t.cls}`;
     const ttl = pageEl.querySelector('.appbar-title');
-    if (ttl) ttl.textContent = isNew ? '새 기록' : `${t.short} 기록 수정`;
+    if (ttl) ttl.textContent = isNew ? '새 기록' : `${t.label} 기록 수정`;
     paintTypeSlot();
     for (const name of ['result', 'details', 'tags']) rerender(name);
     paintReview();
@@ -680,7 +680,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     banner.hidden = false;
     const dt = TYPES[existingDraft.model.type];
     banner.append(
-      h('p', {}, icon('note'), h('span', { text: `저장하지 않은 작성 내용이 있어요 (${isNew ? `${dt.short} · ${existingDraft.model.title || '게임 미선택'} · ` : ''}${relTime(existingDraft.savedAt)})` })),
+      h('p', {}, icon('note'), h('span', { text: `저장하지 않은 작성 내용이 있어요 (${isNew ? `${dt.label} · ${existingDraft.model.title || '게임 미선택'} · ` : ''}${relTime(existingDraft.savedAt)})` })),
       h('div', { class: 'draft-actions' },
         h('button', {
           type: 'button', class: 'btn btn-ghost btn-sm',
@@ -966,7 +966,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
   buildAll();
   if (!isNew || dirty) openFilled();
   const pageEl = h('div', { class: `page page-form ${t.cls}` },
-    appBar({ title: isNew ? '새 기록' : `${t.short} 기록 수정`, back: isNew ? '#/' : `#/record/${encodeURIComponent(rec.id)}` }),
+    appBar({ title: isNew ? '새 기록' : `${t.label} 기록 수정`, back: isNew ? '#/' : `#/record/${encodeURIComponent(rec.id)}` }),
     form);
   root.replaceChildren(pageEl);
   requestAnimationFrame(grow);

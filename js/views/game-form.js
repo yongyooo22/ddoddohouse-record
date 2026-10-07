@@ -280,7 +280,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     ? h('div', { class: 'field' }, h('span', { class: 'field-label', text: '종류' }),
       segmented({
         label: '종류', value: type, cls: 'seg-type',
-        options: kinds.map((k) => ({ key: k, label: inCollection && k === 'murdermystery' ? '머미' : TYPES[k].short, cls: TYPES[k].cls })),
+        options: kinds.map((k) => ({ key: k, label: TYPES[k].label, cls: TYPES[k].cls })),
         onChange: (v) => { type = v; err.textContent = ''; paintType(); },
       }))
     : null;
