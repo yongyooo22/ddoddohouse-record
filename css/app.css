@@ -1030,6 +1030,25 @@ button.card-link { padding: 0; border: 0; background: none; font: inherit; lette
 .review-one { padding: 2px 0 2px 12px; border-left: 2px solid var(--line-2); font-size: 16px; font-weight: 600; line-height: 1.6; letter-spacing: -.02em; }
 .review-text { font-size: 15.5px; line-height: 1.8; white-space: pre-wrap; }
 .my-role { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
+/* 나 (이 기기에서 기록하는 사람) */
+.me-badge { display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-ink); font-size: 11.5px; font-weight: 700; letter-spacing: 0; vertical-align: middle; }
+.me-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 36px; color: var(--ink-2); font-size: 13px; font-weight: 600; }
+.me-row-text { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.me-row-btn { flex: none; }
+.me-pick { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; max-height: 46vh; overflow-y: auto; }
+.me-pick-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.me-pick-row.is-current { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-ink); }
+.me-pick-row:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.me-pick-name { flex: 1; min-width: 0; font-size: 15.5px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.phero-me { margin-top: 12px; }
+.prole { padding: 16px 18px 6px; }
+.prole-list { margin: 0; padding: 0; list-style: none; }
+.prole-row + .prole-row { border-top: 1px solid var(--line); }
+.prole-link { display: grid; gap: 2px; padding: 11px 0; color: inherit; text-decoration: none; }
+.prole-role { font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
+.prole-title { color: var(--ink-2); font-size: 13.5px; font-weight: 500; }
+.prole-meta { display: flex; align-items: center; gap: 10px; color: var(--ink-3); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.prole-link:focus-visible { outline-offset: -2px; border-radius: 8px; }
 .dgame { display: flex; align-items: center; gap: 14px; padding: 14px 10px 14px 14px; }
 .dgame .gthumb { width: 60px; height: 60px; }
 .dgame-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }

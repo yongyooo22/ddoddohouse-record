@@ -8,6 +8,7 @@ import {
   erStats,
   escapeRoomOrdinals,
   memberProfile,
+  memberRoles,
   participants,
   bgWinners,
   ratingText,
@@ -552,5 +553,38 @@ describe('사진 저장 공간', () => {
     assert.deepEqual(storageUsage(null), { ratio: 0, warn: false, full: false, left: null });
     assert.deepEqual(storageUsage({ count: 0, bytes: 0, ...lim }), { ratio: 0, warn: false, full: false, left: 3000 });
     assert.equal(storageUsage({ count: 'x', bytes: -5, limitBytes: 0, limitCount: 0 }).full, false);
+  });
+});
+
+describe('멤버가 맡았던 역할', () => {
+  const rec = (id, date, mm, extra = {}) => ({ id, type: 'murdermystery', date, title: `작품 ${id}`, rating: 4, createdAt: `${date}T00:00:00.000Z`, members: [], mm, ...extra });
+  const records = [
+    rec('a', '2026-01-01', { roles: [{ memberId: 'm1', character: '세바스찬' }, { memberId: 'm2', character: '집사' }] }),
+    rec('b', '2026-03-01', { roles: [{ memberId: 'm1', character: '웬디' }] }, { spoiler: true }),
+    rec('c', '2026-02-01', { roles: [{ memberId: 'm1', character: '탐정' }], roleSpoiler: true }),
+    rec('d', '2026-04-01', { myRole: '해리엇 부인' }), // 배역 없이 내 역할만
+    rec('e', '2026-05-01', { roles: [{ memberId: 'm1', character: '  ' }] }), // 역할 이름 없음
+    { id: 'f', type: 'boardgame', date: '2026-06-01', title: '카탄', bg: {} },
+  ];
+
+  test('역할 이름이 적힌 기록만 최근 순으로, 스포일러·역할 가리기는 hidden', () => {
+    const list = memberRoles(records, 'm1');
+    assert.deepEqual(list.map((x) => [x.record.id, x.character, x.hidden]), [['b', '웬디', true], ['c', '탐정', true], ['a', '세바스찬', false]]);
+    assert.deepEqual(memberRoles(records, 'm2').map((x) => x.character), ['집사']);
+    assert.deepEqual(memberRoles(records, 'nobody'), []);
+  });
+
+  test('includeMyRole: 이 기기의 나만 배역 없는 내 역할(mm.myRole)도 봄', () => {
+    assert.equal(memberRoles(records, 'm1').some((x) => x.record.id === 'd'), false);
+    const mine = memberRoles(records, 'm1', { includeMyRole: true });
+    assert.deepEqual(mine.map((x) => x.record.id), ['d', 'b', 'c', 'a']);
+    assert.equal(mine[0].character, '해리엇 부인');
+    // 내 배역 항목이 이미 있으면 그 이름이 우선 (배역은 있는데 이름이 비어 있는 e 는 myRole 로 채우지 않음)
+    assert.equal(mine.some((x) => x.record.id === 'e'), false);
+  });
+
+  test('잘못된 입력은 비어 있음', () => {
+    assert.deepEqual(memberRoles(null, 'm1'), []);
+    assert.deepEqual(memberRoles([null, {}, { type: 'murdermystery' }], 'm1'), []);
   });
 });
