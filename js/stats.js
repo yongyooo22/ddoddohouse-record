@@ -260,6 +260,20 @@ export function overview(records, members, now = new Date()) {
   return { total: list.length, thisMonth, byType, monthly, weekday, memberCounts };
 }
 
+/** 달별 기록 수 (yms ['2026-01', …] 순서 그대로): [{ym, count, byType}] */
+export function monthlyOf(records, yms) {
+  const out = arr(yms).map((ym) => ({ ym, count: 0, byType: emptyByType() }));
+  const idx = new Map(out.map((m, i) => [m.ym, i]));
+  for (const r of arr(records)) {
+    if (!isRecord(r)) continue;
+    const i = idx.get(ymOf(r.date));
+    if (i === undefined) continue;
+    out[i].count++;
+    out[i].byType[r.type]++;
+  }
+  return out;
+}
+
 // ── 보드게임 ─────────────────────────────────────────────────
 
 export function boardgameStats(records) {
@@ -331,6 +345,131 @@ export function bgRanking(records, { keep = () => true } = {}) {
   return rows;
 }
 
+/**
+ * 기록 상세의 플레이 결과 줄: 그 판에 함께한 사람 모두 (결과가 없는 사람도).
+ * 등수 순 → 등수 없이 승리만 표시된 사람 → 결과 없는 사람. 같은 등수는 tied
+ * @returns {{memberId, rank, score, winner, hasResult, tied}[]}
+ */
+export function bgResultRows(record) {
+  const r = obj(record);
+  const bg = obj(r.bg);
+  const byId = new Map();
+  if (bg.mode !== 'coop') {
+    for (const x of arr(bg.results).map(obj)) if (typeof x.memberId === 'string' && x.memberId) byId.set(x.memberId, x);
+  }
+  const order = [...participants(r)];
+  const rows = order.map((id, i) => {
+    const x = byId.get(id);
+    const rank = x ? num(x.rank) : null;
+    const score = x ? num(x.score) : null;
+    const winner = !!x && x.winner === true;
+    return { memberId: id, rank: rank !== null && rank >= 1 ? rank : null, score, winner, hasResult: rank !== null || score !== null || winner, tied: false, i };
+  });
+  const rankCount = new Map();
+  for (const x of rows) if (x.rank !== null) rankCount.set(x.rank, (rankCount.get(x.rank) || 0) + 1);
+  for (const x of rows) x.tied = x.rank !== null && rankCount.get(x.rank) > 1;
+  const group = (x) => (x.rank !== null ? 0 : x.winner ? 1 : x.hasResult ? 2 : 3);
+  rows.sort((a, b) => group(a) - group(b) || (a.rank ?? 0) - (b.rank ?? 0) || (b.score ?? -Infinity) - (a.score ?? -Infinity) || a.i - b.i);
+  return rows.map(({ i, ...x }) => x);
+}
+
+/**
+ * 이 기기의 '나'의 보드게임 결과 (나를 모르거나, 함께하지 않았거나, 내 결과가 없으면 null — 짐작해서 만들지 않음)
+ * @returns {null | {kind:'rank', rank, of, tied, winner} | {kind:'win', of, shared} | {kind:'coop', win, of}}
+ *   of: 그 판에 함께한 사람 수
+ */
+export function myBgResult(record, meId) {
+  if (typeof meId !== 'string' || !meId) return null;
+  const r = obj(record);
+  if (r.type !== 'boardgame') return null;
+  const people = participants(r);
+  if (!people.has(meId)) return null;
+  const bg = obj(r.bg);
+  const of = people.size;
+  if (bg.mode === 'coop') return typeof bg.coopWin === 'boolean' ? { kind: 'coop', win: bg.coopWin, of } : null;
+  const mine = bgResultRows(r).find((x) => x.memberId === meId);
+  if (!mine) return null;
+  if (mine.rank !== null) return { kind: 'rank', rank: mine.rank, of, tied: mine.tied, winner: mine.winner };
+  if (mine.winner) return { kind: 'win', of, shared: bgWinners(r).size > 1 };
+  return null;
+}
+
+/**
+ * 보드게임 멤버별 순위와 승률 (한 표로). 승리 = 1등(공동 포함) · 팀 승리 · 협력 승리,
+ * 승률 = 승리 / 결과를 기록한 판 (결과 미입력 판은 패배로 세지 않음 — boardgameStats 와 같은 기준).
+ * 승리 수 → 승률 → 결과 기록 판 수 순, 같으면 같은 자리. 결과 기록 판이 없는 사람은 맨 아래(place null).
+ * avgRank: 점수·등수를 적은 경쟁·팀전 판의 평균 등수 (보조 정보, 없으면 null)
+ * @returns {{memberId, place, plays, decided, wins, rate, avgRank}[]}
+ */
+export function bgMemberTable(records, { keep = () => true } = {}) {
+  const avgRanks = new Map(bgRanking(records).map((x) => [x.memberId, x.avgRank]));
+  const rows = boardgameStats(records).memberWinRates.filter((x) => keep(x.memberId)).map((x) => ({
+    memberId: x.memberId, place: null, plays: x.plays, decided: x.decided, wins: x.wins, rate: x.rate,
+    avgRank: avgRanks.get(x.memberId) ?? null,
+  }));
+  rows.sort((a, b) => (b.decided ? 1 : 0) - (a.decided ? 1 : 0) || b.wins - a.wins || (b.rate ?? -1) - (a.rate ?? -1) ||
+    b.decided - a.decided || b.plays - a.plays || cmpStr(a.memberId, b.memberId));
+  rows.forEach((x, i) => {
+    if (!x.decided) return;
+    const p = rows[i - 1];
+    x.place = p && p.decided && p.wins === x.wins && p.rate === x.rate ? p.place : i + 1;
+  });
+  return rows;
+}
+
+// ── 기간 · 함께한 멤버 ───────────────────────────────────────
+
+export const PERIODS = ['all', 'year', 'month'];
+
+/** 플레이 날짜가 기간 안인지: 'all' 전체 · 'year' 올해 · 'month' 이번 달 (now 의 이 기기 시간대 기준) */
+export function inPeriod(record, period, now = new Date()) {
+  if (period !== 'year' && period !== 'month') return true;
+  const d = str(obj(record).date);
+  const y = String(now.getFullYear());
+  if (period === 'year') return d.slice(0, 4) === y;
+  return d.slice(0, 7) === `${y}-${pad2(now.getMonth() + 1)}`;
+}
+
+export function filterPeriod(records, period, now = new Date()) {
+  return arr(records).filter((r) => isRecord(r) && inPeriod(r, period, now));
+}
+
+/**
+ * 멤버별 함께한 플레이 (기록 한 개 = 한 번. 같은 기록에 두 번 나와도 한 번만 셈)
+ * @returns {Map<string, {n, last, byType}>}  last: 가장 최근 플레이 날짜
+ */
+export function memberActivity(records) {
+  const out = new Map();
+  for (const r of arr(records)) {
+    if (!isRecord(r)) continue;
+    for (const id of participants(r)) {
+      let a = out.get(id);
+      if (!a) out.set(id, (a = { n: 0, last: '', byType: emptyByType() }));
+      a.n++;
+      a.byType[r.type]++;
+      if (str(r.date) > a.last) a.last = str(r.date);
+    }
+  }
+  return out;
+}
+
+/**
+ * 가장 많이 함께한 멤버 (많은 순, 같으면 최근에 함께한 순). exclude(나)·keep(false 면 뺌 — 떠난 멤버 등)
+ * @returns {{memberId, count, last}[]}
+ */
+export function mateRanking(records, { exclude = null, keep = () => true } = {}) {
+  return [...memberActivity(records)]
+    .filter(([id]) => id !== exclude && keep(id))
+    .map(([memberId, a]) => ({ memberId, count: a.n, last: a.last }))
+    .sort((a, b) => b.count - a.count || cmpStr(b.last, a.last) || cmpStr(a.memberId, b.memberId));
+}
+
+/** 맨 앞과 같은 횟수인 사람 모두 (공동 1위). 비었으면 [] */
+export function topTies(list) {
+  const xs = arr(list);
+  return xs.length ? xs.filter((x) => x.count === xs[0].count) : [];
+}
+
 // ── 머더미스터리 ─────────────────────────────────────────────
 
 export function mmStats(records) {
@@ -376,7 +515,8 @@ export function mmStats(records) {
     plays: list.length,
     scenarios,
     avgRating: avg(ratings),
-    culprit: { caught, escaped, rate: caught + escaped ? caught / (caught + escaped) : null },
+    // 검거율의 분모는 검거·도주를 기록한 판만 (decided 0 = '결과 기록 없음', 0% 와 다름)
+    culprit: { caught, escaped, decided: caught + escaped, rate: caught + escaped ? caught / (caught + escaped) : null },
     byPublisher: countByName(list.map((r) => obj(r.mm).publisher)),
     memberStats: [...per.values()]
       .map((t) => ({
@@ -404,27 +544,31 @@ export function erStats(records) {
   const list = ofType(records, 'escaperoom');
   const ers = list.map((r) => obj(r.er));
   const cleared = ers.filter((er) => er.cleared === true).length;
+  // 성공률의 분모는 성공·실패를 기록한 테마만 ('미기록'을 실패로 세지 않음)
+  const decided = ers.filter((er) => typeof er.cleared === 'boolean').length;
   const per = new Map();
   for (const r of list) {
-    const ok = obj(r.er).cleared === true;
+    const res = obj(r.er).cleared;
     for (const id of participants(r)) {
-      const t = tally(per, id, { plays: 0, cleared: 0 });
+      const t = tally(per, id, { plays: 0, decided: 0, cleared: 0 });
       t.plays++;
-      if (ok) t.cleared++;
+      if (typeof res === 'boolean') t.decided++;
+      if (res === true) t.cleared++;
     }
   }
   return {
     plays: list.length,
     cleared,
-    clearRate: list.length ? cleared / list.length : null,
+    decided,
+    clearRate: decided ? cleared / decided : null,
     avgHints: avg(ers.map((er) => num(er.hints)).filter((n) => n !== null)),
     avgRemainingSec: avg(
       ers.filter((er) => er.cleared === true).map((er) => num(er.remainingSec)).filter((n) => n !== null),
     ),
     byBrand: countByName(ers.map((er) => er.brand)),
     memberStats: [...per.values()]
-      .map((t) => ({ ...t, rate: t.plays ? t.cleared / t.plays : 0 }))
-      .sort((a, b) => b.plays - a.plays || b.rate - a.rate),
+      .map((t) => ({ ...t, rate: t.decided ? t.cleared / t.decided : null }))
+      .sort((a, b) => b.plays - a.plays || (b.rate ?? -1) - (a.rate ?? -1)),
     difficultyDist: dist6(ers.map((er) => er.difficulty)),
     fearDist: dist6(ers.map((er) => er.fear)),
   };
@@ -449,7 +593,7 @@ export function memberProfile(records, memberId) {
   const byType = emptyByType();
   const bg = { plays: 0, decided: 0, wins: 0 };
   const mm = { plays: 0, culpritCount: 0, mvpCount: 0 };
-  const er = { plays: 0, cleared: 0 };
+  const er = { plays: 0, decided: 0, cleared: 0 };
   for (const r of mine) {
     byType[r.type]++;
     if (r.type === 'boardgame') {
@@ -465,6 +609,7 @@ export function memberProfile(records, memberId) {
       if (role.mvp === true) mm.mvpCount++;
     } else {
       er.plays++;
+      if (typeof obj(r.er).cleared === 'boolean') er.decided++;
       if (obj(r.er).cleared === true) er.cleared++;
     }
   }
@@ -513,7 +658,7 @@ export function resolveGameIds(records, games) {
  * 게임별 요약 (등록한 게임 정보 + 아직 등록하지 않고 기록에만 있는 이름).
  * @returns {Entry[]}  최근에 한 게임부터, 그 뒤에 아직 안 해 본 등록 게임이 최근에 등록한 것부터
  *   Entry = { key ('g:<게임 id>' | '<종류>:<제목 키>'), type, title, gameId(없으면 null), game(게임 정보 또는 null),
- *             owned(내 소장), plays, lastDate, firstDate(안 해 봤으면 ''), avgRating(없으면 null), latestId,
+ *             owned(내 소장), plays, lastDate, firstDate(안 해 봤으면 ''), avgRating(없으면 null — 별점 없는 판은 빼고), rated(별점 있는 판 수), latestId,
  *             cover(대표 이미지, 없으면 가장 최근 기록 사진, 없으면 null), memo, addedAt(등록 시각 또는 null),
  *             mine·borrowed(예전 기록의 소장 여부 판 수), lenders(예전 기록의 빌려준 사람, 최근 순) }
  */
@@ -557,7 +702,7 @@ export function gameEntries(records, games = []) {
   const out = [];
   for (const { ratings, photo, ...e } of map.values()) {
     const g = e.key.startsWith('g:') ? regs.get(e.key.slice(2)) : null;
-    const entry = { ...e, avgRating: avg(ratings), cover: photo };
+    const entry = { ...e, avgRating: avg(ratings), rated: ratings.length, cover: photo };
     if (g) {
       Object.assign(entry, {
         type: g.type, title: cleanTitle(g.title), gameId: g.id, game: g, owned: isOwnedGame(g),

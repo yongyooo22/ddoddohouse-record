@@ -3,7 +3,7 @@ import { h, icon, starShape } from '../dom.js';
 import { TYPES } from '../constants.js';
 import { fmtDate, fmtDateDot } from '../format.js';
 import { erOrdinals, photosOf, titleOf, gameOfRecord, coverOf, isOwnedGame } from '../store.js';
-import { typeBadge, stamp, spoilerBlock } from '../ui.js';
+import { typeBadge, spoilerBlock } from '../ui.js';
 import { ownershipOf, lenderOf } from '../stats.js';
 import { cardPhoto } from './photos.js';
 
@@ -11,38 +11,6 @@ export const bgOf = (r) => (r && r.bg && typeof r.bg === 'object' ? r.bg : {});
 export const mmOf = (r) => (r && r.mm && typeof r.mm === 'object' ? r.mm : {});
 export const erOf = (r) => (r && r.er && typeof r.er === 'object' ? r.er : {});
 const arr = (v) => (Array.isArray(v) ? v : []);
-
-export function bgWinners(r) {
-  const bg = bgOf(r);
-  if (bg.mode === 'coop') return [];
-  return arr(bg.results).filter((x) => x && x.winner).map((x) => x.memberId);
-}
-
-/** 종류별 도장 (성공/실패/우승/검거 등) */
-export function recordStamp(r) {
-  if (r.type === 'escaperoom') {
-    const er = erOf(r);
-    if (er.cleared === true) return stamp('탈출 성공', 'clear');
-    if (er.cleared === false) return stamp('탈출 실패', 'fail');
-    return null;
-  }
-  if (r.type === 'murdermystery') {
-    const mm = mmOf(r);
-    if (mm.culpritResult === 'caught') return stamp('범인 검거', 'caught');
-    if (mm.culpritResult === 'escaped') return stamp('범인 도주', 'escaped');
-    return null;
-  }
-  if (r.type === 'boardgame') {
-    const bg = bgOf(r);
-    if (bg.mode === 'coop') {
-      if (bg.coopWin === true) return stamp('협력 승리', 'win');
-      if (bg.coopWin === false) return stamp('협력 패배', 'fail');
-      return null;
-    }
-    return bgWinners(r).length ? stamp('우승', 'win') : null;
-  }
-  return null;
-}
 
 /** 스포일러 펼침 기억용 키 (내용이 수정되면 다시 가림) */
 export function spoilerKey(r, part) {
@@ -92,18 +60,10 @@ export function reviewExcerpt(r) {
   return rev.length > 160 ? `${rev.slice(0, 160)}…` : rev;
 }
 
-/** 머더미스터리 카드의 '내 역할' 한 줄 (스포일러 기록·역할 가리기는 카드에 내지 않음) */
-function myRoleLine(r) {
-  if (r.type !== 'murdermystery' || r.spoiler) return null;
-  const mm = mmOf(r);
-  const role = typeof mm.myRole === 'string' ? mm.myRole.trim() : '';
-  if (!role || mm.roleSpoiler) return null;
-  return h('p', { class: 'rcard-role' }, icon('mask'), h('span', { text: `내 역할 · ${role}` }));
-}
-
 /**
  * 목록/홈 기록 카드 — 티켓 모양: 위(대표 이미지 · 종류 · 제목 · 날짜) | 점선 | 아래(별점 · 짧은 감상)
- * 대표 이미지는 그날 찍은 첫 사진, 없으면 게임의 대표 이미지. 스포일러 기록의 감상은 열기 전까지 가림
+ * 대표 이미지는 그날 찍은 첫 사진, 없으면 게임의 대표 이미지. 스포일러 기록의 감상은 열기 전까지 가림.
+ * 머더미스터리의 범인·역할·결말은 작품 스포일러라 카드(목록·미리보기)에는 내지 않음 — 상세에서 열어 봄
  */
 export function recordCard(r) {
   const t = TYPES[r.type];
@@ -129,8 +89,7 @@ export function recordCard(r) {
             class: 'card-link', href: `#/record/${encodeURIComponent(r.id)}`,
             'aria-label': `${title}, ${fmtDate(r.date)}${nPhotos ? `, 사진 ${nPhotos}장` : ''}`,
           }, title)),
-        h('p', { class: 'rcard-date', text: fmtDateDot(r.date) }),
-        myRoleLine(r))),
+        h('p', { class: 'rcard-date', text: fmtDateDot(r.date) }))),
     h('div', { class: 'rcard-stub' },
       rating > 0
         ? h('span', { class: 'rcard-rating', role: 'img', 'aria-label': `별점 ${rating}점` }, starShape('rcard-star'), h('span', { text: rating.toFixed(1) }))
