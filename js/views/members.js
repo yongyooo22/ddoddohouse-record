@@ -166,17 +166,41 @@ function monthMateCard() {
         : null));
 }
 
+/** 멤버별 함께한 기록 수 · 종류별 수 · 최근 날짜 */
 function memberCounts() {
   const counts = new Map();
   for (const r of state.records) {
     for (const id of Array.isArray(r.members) ? r.members : []) {
-      const c = counts.get(id) || { n: 0, last: '' };
+      const c = counts.get(id) || { n: 0, last: '', byType: {} };
       c.n += 1;
+      if (TYPES[r.type]) c.byType[r.type] = (c.byType[r.type] || 0) + 1;
       if (String(r.date || '') > c.last) c.last = String(r.date || '');
       counts.set(id, c);
     }
   }
   return counts;
+}
+
+/**
+ * 멤버 한 줄. 휴대폰은 이름 아래 한 줄 요약, 넓은 화면은 표처럼 칸을 나눠
+ * 함께한 기록 · 종류별 · 최근을 보여 줌 (CSS가 둘 중 하나만 보이게 함)
+ */
+function memberRow(m, c) {
+  const last = c ? fmtDate(c.last, { weekday: false, year: false }) : '';
+  const sr = (t) => h('span', { class: 'sr-only', text: t });
+  const cols = [
+    h('span', { class: `mlist-col mlist-n${c ? '' : ' is-zero'}` }, sr('함께한 기록 '), `${c ? c.n : 0}개`),
+    h('span', { class: 'mlist-col mlist-types' }, c ? [sr('종류별 '),
+      TYPE_KEYS.filter((k) => c.byType[k]).map((k) => h('span', { class: `mlist-type ${TYPES[k].cls}`, text: `${TYPES[k].label} ${c.byType[k]}` }))] : null),
+    h('span', { class: 'mlist-col mlist-last' }, c ? [sr('최근 '), last] : h('span', { 'aria-hidden': 'true', text: '–' })),
+  ];
+  return h('li', {},
+    h('a', { class: 'mlist-row', href: `#/member/${encodeURIComponent(m.id)}` },
+      h('span', { class: 'mlist-text' },
+        h('span', { class: 'mlist-name' }, h('span', { text: m.name }), m.id === getMeId() ? h('span', { class: 'me-badge', text: '나' }) : null),
+        h('span', { class: 'mlist-sub', text: c ? `기록 ${c.n}개 · 최근 ${last}` : '아직 함께한 기록이 없어요' })),
+      cols,
+      icon('chevron', 'mlist-go')));
 }
 
 function renderList(root, ctx) {
@@ -196,15 +220,11 @@ function renderList(root, ctx) {
       : null,
     mems.length ? monthMateCard() : null,
     mems.length
-      ? h('ul', { class: 'mlist card' }, mems.map((m) => {
-        const c = counts.get(m.id);
-        return h('li', {},
-          h('a', { class: 'mlist-row', href: `#/member/${encodeURIComponent(m.id)}` },
-            h('span', { class: 'mlist-text' },
-              h('span', { class: 'mlist-name' }, h('span', { text: m.name }), m.id === getMeId() ? h('span', { class: 'me-badge', text: '나' }) : null),
-              h('span', { class: 'mlist-sub', text: c ? `기록 ${c.n}개 · 최근 ${fmtDate(c.last, { weekday: false, year: false })}` : '아직 함께한 기록이 없어요' })),
-            icon('chevron', 'mlist-go')));
-      }))
+      ? h('section', { class: 'mroster card', 'aria-label': '멤버 목록' },
+        // 표 머리 (넓은 화면에서만 보임 — 칸마다 읽어 주는 이름이 따로 있어서 화면 읽기에서는 숨김)
+        h('div', { class: 'mlist-head', 'aria-hidden': 'true' },
+          h('span', { text: '이름' }), h('span', { text: '함께한 기록' }), h('span', { text: '종류별' }), h('span', { text: '최근' })),
+        h('ul', { class: 'mlist' }, mems.map((m) => memberRow(m, counts.get(m.id)))))
       : pending ? loadingState('멤버를 불러오는 중…')
       : failed ? loadErrorState(ctx && ctx.refresh)
       : emptyState({

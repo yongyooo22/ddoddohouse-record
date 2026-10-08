@@ -408,6 +408,8 @@ await step('멤버 추가 · 중복 · 수정', async () => {
   await add('도윤', 'c8');
   const names = await texts('.page-members .mlist-name');
   check('멤버 4명 표시', names.length === 4, names.join(','));
+  check('휴대폰: 이름 아래 한 줄 요약 (표 머리·칸 없음)', await page.isVisible('.page-members .mlist-sub') &&
+    !(await page.isVisible('.page-members .mlist-head')) && !(await page.isVisible('.page-members .mlist-col')));
 
   // 중복 이름 (대소문자·공백 무시)
   await page.click('.page-members .page-head button[aria-label="멤버 추가"]');
@@ -3243,7 +3245,9 @@ await step('사진: 저장 → 상세 갤러리 · 전체화면 뷰어 · 목록
   check('목록 카드: 사진 수 표시 · 링크 이름에 사진 수', (await text(`${card} .rcard-pn`)) === '4' && /사진 4장/.test(await page.getAttribute(`${card} .card-link`, 'aria-label')));
   const plain = '.page-list .rcard:has(.card-link:text-is("잊혀진 연구소"))';
   check('사진 없는 카드는 예전 모습', !!(await page.$(plain)) && !(await page.$(`${plain} .rcard-photo`)) && !(await page.$eval(plain, (e) => e.classList.contains('has-photo'))));
+  // elementFromPoint 는 화면 안의 점만 봐요 — 카드가 아래 메뉴에 가리거나 화면 밖이면(새벽 0~5시엔 기본 날짜가 어제라 순서가 바뀜) 먼저 가운데로
   check('사진 썸네일을 눌러도 기록이 열림', await page.$eval(`${card} .rcard-photo`, (el) => {
+    el.scrollIntoView({ block: 'center' });
     const b = el.getBoundingClientRect();
     const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
     return !!hit && hit.classList.contains('card-link');
@@ -3990,7 +3994,24 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
 
   await page.click('#tabbar [data-tab="members"]');
   await page.waitForSelector('.page-members .mlist');
-  check('멤버: 카드 격자', await sideBySide('.page-members .mlist li:nth-child(1)', '.page-members .mlist li:nth-child(2)'));
+  // 넓은 화면: 멤버마다 카드가 아니라 한 판 안의 표 (이름 · 함께한 기록 · 종류별 · 최근)
+  check('멤버: 카드 격자가 아닌 한 판 목록 (줄이 위아래로)', (await page.$$('.page-members .mroster.card')).length === 1 && (await page.$$('.page-members .mlist .card')).length === 0 &&
+    await page.evaluate(() => { const [a, b] = [...document.querySelectorAll('.page-members .mlist > li')].map((e) => e.getBoundingClientRect()); return !!a && !!b && b.top >= a.bottom - 1 && Math.abs(a.left - b.left) < 1 && Math.abs(a.width - b.width) < 1; }));
+  check('멤버: 표 머리 칸과 줄의 칸이 같은 자리', await page.evaluate(() => {
+    const head = [...document.querySelectorAll('.page-members .mlist-head > span')].map((e) => e.getBoundingClientRect());
+    const row = document.querySelector('.page-members .mlist-row');
+    const cells = ['.mlist-text', '.mlist-n', '.mlist-types', '.mlist-last'].map((c) => row.querySelector(c).getBoundingClientRect());
+    return head.length === 4 && head.every((b, i) => b.width > 0 && Math.abs(b.left - cells[i].left) < 1 && cells[i].width > 0);
+  }) && (await texts('.page-members .mlist-head > span')).join(',') === '이름,함께한 기록,종류별,최근');
+  check('멤버: 한 줄 요약은 숨김 (칸으로 보여 줌)', !(await page.isVisible('.page-members .mlist-sub')));
+  {
+    const recs = (await api('GET', '/api/data')).data.records.filter((r) => (r.members || []).includes(ids['영식']));
+    const row = `.page-members .mlist-row[href="#/member/${encodeURIComponent(ids['영식'])}"]`;
+    const byType = ['boardgame', 'murdermystery', 'escaperoom'].map((k) => [k, recs.filter((r) => r.type === k).length]).filter(([, n]) => n);
+    const label = { boardgame: '보드게임', murdermystery: '머더미스터리', escaperoom: '방탈출' };
+    check('멤버: 영식 줄 — 함께한 기록 수 · 종류별 수', recs.length > 0 && (await text(`${row} .mlist-n`)) === `함께한 기록 ${recs.length}개` &&
+      (await texts(`${row} .mlist-type`)).join(',') === byType.map(([k, n]) => `${label[k]} ${n}`).join(','), `${await text(`${row} .mlist-n`)} / ${(await texts(`${row} .mlist-type`)).join(',')}`);
+  }
   check('멤버 추가 버튼에 글자', (await text('.page-members .page-head button[aria-label="멤버 추가"]')) === '멤버 추가');
   await noOverflow('1440 멤버');
   await go(`#/member/${encodeURIComponent(ids['영식'])}`, '.page-profile');
