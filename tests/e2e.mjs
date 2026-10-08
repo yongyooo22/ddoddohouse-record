@@ -2249,7 +2249,7 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
 await step('푸터: 모든 화면 맨 아래 제작자 표시 (탭 막대에 가리지 않음)', async () => {
   for (const [hash, sel] of [['#/', '.page-home'], ['#/collection', '.page-collection'], ['#/settings', '.page-settings']]) {
     await go(hash, sel);
-    check(`${hash}: 푸터 문구 (이메일은 ‘문의’ 링크)`, (await text('.app-foot')) === '© 2026 김연경 · 문의' &&
+    check(`${hash}: 푸터 문구 (이메일은 메일 링크)`, (await text('.app-foot')) === '© 2026 제작: 김연경(earthssaem@gmail.com)' && (await text('.app-foot a')) === 'earthssaem@gmail.com' &&
       (await page.getAttribute('.app-foot a', 'href')) === 'mailto:earthssaem@gmail.com', await text('.app-foot'));
     check(`${hash}: 푸터는 작게`, await page.$eval('.app-foot', (e) => parseFloat(getComputedStyle(e).fontSize) <= 11.5));
     const pos = await page.evaluate(() => {
