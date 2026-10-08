@@ -3225,6 +3225,12 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   check('사이드바 로고: 집 모양 기록장 (기록 줄 포함)', !!(await page.$('#tabbar .side-logo svg .ico-accent')));
   check('사이드바: 이름 · 새 기록 버튼 · 설정', await page.isVisible('#tabbar .side-brand') && await page.isVisible('#tabbar .side-cta') && await page.isVisible('#tabbar .tab-settings') && !(await page.isVisible('#tabbar .tab-add')));
   check('본문이 사이드바 오른쪽에서 시작', await page.$eval('#view', (e) => e.getBoundingClientRect().left >= 232));
+  // 왼쪽 위 로고·이름을 누르면 홈으로 (다른 화면에서도, 스크린리더엔 '홈으로')
+  check('사이드바 로고·이름은 홈 링크', (await page.$eval('#tabbar .side-brand', (e) => e.tagName + e.getAttribute('href') + e.getAttribute('aria-label'))) === 'A#/또또하우스 기록장 홈으로');
+  await go('#/stats', '.page-stats');
+  await page.click('#tabbar .side-brand');
+  await page.waitForSelector('.page-home', { timeout: 8000 });
+  check('로고를 누르면 홈 화면 · 메뉴의 홈이 선택됨', (await page.evaluate(() => location.hash)) === '#/' && (await text('#tabbar .tab[aria-current="page"]')) === '홈');
   const sideTabs = await page.$$eval('#tabbar a.tab', (els) => els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => e.textContent.trim()));
   check('사이드바 메뉴: 홈 · 기록 · 소장 · 통계 · 멤버 · 설정', JSON.stringify(sideTabs) === JSON.stringify(['홈', '기록', '소장', '통계', '멤버', '설정']), JSON.stringify(sideTabs));
   // 홈: 낮은 요약 띠 바로 아래 최근 기록 — 첫 줄 카드가 스크롤 없이 다 보임
