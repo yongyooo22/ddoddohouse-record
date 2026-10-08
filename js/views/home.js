@@ -4,6 +4,7 @@ import { TYPES, TYPE_KEYS } from '../constants.js';
 import { state, recordsSorted, isFirstLoad, loadFailed } from '../store.js';
 import { overview } from '../stats.js';
 import { emptyState, loadingState, loadErrorState, typeName } from '../ui.js';
+import { meChip } from './members.js';
 import { recordCard, sectionHead, gamePageHref } from './bits.js';
 import { cardPhoto } from './photos.js';
 import { ownedGames, registerOwned } from './collection.js';
@@ -39,7 +40,7 @@ function render(root, ctx) {
   const thisMonth = ov ? ov.thisMonth : 0;
   const byType = (ov && ov.byType) || {};
 
-  const head = h('header', { class: 'home-head' }, h('h1', { class: 'home-title', text: '플레이 기록' }));
+  const head = h('header', { class: 'home-head' }, h('h1', { class: 'home-title', text: '플레이 기록' }), meChip());
 
   // 첫 로딩 중이거나 불러오기에 실패했으면 0회 요약·빈 안내 대신 그 상태를 보여 줌 (기록이 사라진 것처럼 보이지 않게)
   if (!records.length && (isFirstLoad() || loadFailed())) {

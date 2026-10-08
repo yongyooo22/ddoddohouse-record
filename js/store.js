@@ -28,7 +28,7 @@ export const getMeId = () => {
   const id = lsGet(STORAGE.me);
   return id && state.members.some((m) => m.id === id) ? id : null;
 };
-export const setMeId = (id) => { if (id) lsSet(STORAGE.me, id); else lsRemove(STORAGE.me); bump(); };
+export const setMeId = (id) => { if (id) lsSet(STORAGE.me, id); else lsRemove(STORAGE.me); bump(); emit('me'); };
 
 // ── 테마 ──
 export const getTheme = () => {

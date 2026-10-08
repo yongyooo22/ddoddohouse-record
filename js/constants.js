@@ -99,8 +99,6 @@ export const PALETTE = [
 ];
 export const PALETTE_KEYS = PALETTE.map((p) => p.key);
 
-export const EMOJI_SUGGESTIONS = ['🐻', '🐰', '🦊', '🐱', '🐶', '🐼', '🐯', '🐧', '🦉', '🐸', '🍀', '🌙', '⭐', '🔥', '🍓', '🎩'];
-
 export const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
 // 서버 검증 오류 필드명 → 사람이 읽는 이름

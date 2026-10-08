@@ -393,20 +393,19 @@ await step('?key= 로도 잠금 해제', async () => {
 await step('멤버 추가 · 중복 · 수정', async () => {
   await tab('members', '.page-members');
   check('빈 멤버 안내', !!(await page.$('.page-members .empty')));
-  const add = async (name, emoji, color) => {
+  const add = async (name, color) => {
     await page.click('.page-members .page-head button[aria-label="멤버 추가"]');
     await page.waitForSelector(`${dlg}.dlg-member`);
     await page.fill(`${dlg} input[placeholder="이름 또는 별명"]`, name);
-    if (emoji) await page.click(`${dlg} .emoji-pick[aria-label="${emoji} 고르기"]`);
     if (color) await page.click(`${dlg} label.swatch.mc-${color}`);
     await dialogButton('저장');
     await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
   };
-  await add('연경', '🐰', 'c1');
+  await add('연경', 'c1');
   await shot('04-members-one');
-  await add('영식', '🦊', 'c6');
-  await add('민지', null, 'c4');
-  await add('도윤', '🎩', 'c8');
+  await add('영식', 'c6');
+  await add('민지', 'c4');
+  await add('도윤', 'c8');
   const names = await texts('.page-members .mlist-name');
   check('멤버 4명 표시', names.length === 4, names.join(','));
 
@@ -425,17 +424,17 @@ await step('멤버 추가 · 중복 · 수정', async () => {
   const dup = await api('POST', '/api/members', { member: { name: '영식' } });
   check('서버도 중복 이름 400', dup.status === 400 && dup.data.reason === 'duplicate', JSON.stringify(dup));
 
-  // 수정: 민지 → 민지짱 ⭐
+  // 수정: 민지 → 민지짱 (색도 바꿈)
   await page.click('.page-members .mlist-row:has(.mlist-name > span:text-is("민지"))');
   await page.waitForSelector('.page-profile');
   await page.click('.page-profile .appbar button[aria-label="수정"]');
   await page.waitForSelector(`${dlg}.dlg-member`);
   await page.fill(`${dlg} input[placeholder="이름 또는 별명"]`, '민지짱');
-  await page.click(`${dlg} .emoji-pick[aria-label="⭐ 고르기"]`);
+  await page.click(`${dlg} label.swatch.mc-c2`);
   await dialogButton('저장');
   await page.waitForSelector(dlg, { state: 'detached' });
   check('프로필 이름 갱신', (await until(async () => (await text('.phero-name')) === '민지짱' && '민지짱')) === '민지짱');
-  check('프로필 아바타 이모지', (await text('.phero .av')) === '⭐', await text('.phero .av'));
+  check('프로필에 아바타·이모지 없음', !(await page.$('.phero .av')) && (await text('.phero')).startsWith('민지짱'), await text('.phero'));
   await tab('members', '.page-members');
   const names2 = await texts('.page-members .mlist-name');
   check('목록에 수정된 이름', names2.includes('민지짱') && !names2.includes('민지'), names2.join(','));
