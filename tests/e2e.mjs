@@ -271,7 +271,9 @@ const visibleLabels = () => page.$$eval(
   (els) => els.filter((e) => e.getClientRects().length > 0).map((e) => e.textContent.replace(/\s+/g, ' ').trim()),
 );
 /** 화면에서는 더 이상 입력받지 않는 예전 항목 — 폼에 버튼·영역이 없어야 함 */
-const REMOVED_PANELS = ['members', 'result', 'details', 'tags'];
+const REMOVED_PANELS = ['result', 'details', 'tags'];
+/** 폼의 추가 입력 버튼: 사진 · 함께한 사람(선택) */
+const ADDONS = JSON.stringify(['사진', '함께한 사람']);
 /** 키 순서와 상관없이 같은 내용인지 비교하기 위한 문자열 */
 const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x)
   ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
@@ -424,7 +426,7 @@ await step('멤버 추가 · 중복 · 수정', async () => {
   check('서버도 중복 이름 400', dup.status === 400 && dup.data.reason === 'duplicate', JSON.stringify(dup));
 
   // 수정: 민지 → 민지짱 ⭐
-  await page.click('.page-members .mlist-row:has(.mlist-name:text-is("민지"))');
+  await page.click('.page-members .mlist-row:has(.mlist-name > span:text-is("민지"))');
   await page.waitForSelector('.page-profile');
   await page.click('.page-profile .appbar button[aria-label="수정"]');
   await page.waitForSelector(`${dlg}.dlg-member`);
@@ -474,11 +476,11 @@ await step('보드게임 기록 (새 간단 폼: 소장 게임 검색·선택 ·
   const mainLabels = await visibleLabels();
   check('처음 보이는 항목: 종류·게임·날짜·별점·감상 (내 역할 칸은 숨김)', JSON.stringify(mainLabels) === JSON.stringify(['종류', '게임', '날짜', '별점', '감상']) &&
     await page.isHidden('.page-form [data-field="mm.myRole"]'), JSON.stringify(mainLabels));
-  check('추가 입력은 ‘사진’ 버튼 하나뿐 (영역은 접힘)', JSON.stringify(await texts('.page-form .addon .addon-label')) === JSON.stringify(['사진']) &&
-    (await page.$$eval('.page-form .rec-panel', (els) => els.length === 1 && els.every((e) => e.hidden))), JSON.stringify(await texts('.page-form .addon')));
-  check('함께한 사람·결과·자세한 정보·태그 버튼·영역 없음', await noRemovedPanels() && !(await page.$('.page-form .chip-member, .page-form .chip-tag, .page-form .result-row, .page-form .score-row, .page-form .stamp-choice-clear')));
+  check('추가 입력은 ‘사진’·‘함께한 사람’ 버튼 둘뿐 (영역은 접힘)', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS &&
+    (await page.$$eval('.page-form .rec-panel', (els) => els.length === 2 && els.every((e) => e.hidden))), JSON.stringify(await texts('.page-form .addon')));
+  check('결과·자세한 정보·태그 버튼·영역 없음 (함께한 사람 칩은 펼치기 전엔 없음)', await noRemovedPanels() && !(await page.$('.page-form .chip-member, .page-form .chip-tag, .page-form .result-row, .page-form .score-row, .page-form .stamp-choice-clear')));
   const formText = await text('.page-form');
-  check('폼 글자에도 예전 항목 이름 없음', ['함께한 사람', '자세한 정보', '태그', '순위', '승자', '플레이 시간'].every((w) => !formText.includes(w)), formText);
+  check('폼 글자에도 예전 항목 이름 없음', ['자세한 정보', '태그', '순위', '승자', '플레이 시간'].every((w) => !formText.includes(w)), formText);
   check('하나의 흰 기록 영역 (카드 여러 개 아님)', (await page.$$('.page-form .rec-sheet')).length === 1 && !(await page.$('.page-form .card')));
   check('날짜 기본값 (새벽 5시 전이면 어제, 아니면 오늘)', (await page.inputValue('[data-field="date"]')) === DEFAULT_DATE, `${await page.inputValue('[data-field="date"]')} vs ${DEFAULT_DATE} (${seoulHour}시)`);
   const pressedChip = await page.$$eval('.date-quick .chip[aria-pressed="true"]', (els) => els.map((e) => e.textContent));
@@ -595,7 +597,7 @@ await step('머더미스터리 기록 (팝업 등록 · 작품 태그 · 내 역
   // 종류 · 작품 · 날짜 · 별점 · 내 역할 · 감상 — 사진 버튼 하나, 예전 입력 영역은 없음
   const labels = await visibleLabels();
   check('머더미스터리 폼 항목: 종류·작품·날짜·별점·내 역할·감상', JSON.stringify(labels) === JSON.stringify(['종류', '작품', '날짜', '별점', '내 역할', '감상']), JSON.stringify(labels));
-  check('사진 버튼 하나뿐 · 함께한 사람·결과·자세한 정보·태그 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === JSON.stringify(['사진']) && await noRemovedPanels() &&
+  check('사진·함께한 사람 버튼뿐 · 결과·자세한 정보·태그 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS && await noRemovedPanels() &&
     !(await page.$('.page-form .role-card, .page-form .chip-culprit, .page-form .seg-item:has-text("범인 검거"), .page-form [aria-label="범인 검거 결과"]')));
   const roleIn = '.page-form [data-field="mm.myRole"]';
   check('내 역할: 글칸 하나 (예시 · 30자)', (await text('.page-form .rec-role .field-label')) === '내 역할' && (await page.getAttribute(roleIn, 'placeholder')) === '예) 세바스찬' &&
@@ -754,7 +756,7 @@ await step('방탈출 기록 (새 간단 폼: 테마 등록 · 별점 · 감상)
   check('테마 요약에 매장·지점', (await text('.page-form .gp-picked-meta')) === '키이스케이프 홍대점', await text('.page-form .gp-picked-meta'));
   const labels = await visibleLabels();
   check('방탈출 폼 항목: 종류·테마·날짜·별점·감상 (내 역할 칸 없음)', JSON.stringify(labels) === JSON.stringify(['종류', '테마', '날짜', '별점', '감상']) && await page.isHidden('.page-form [data-field="mm.myRole"]'), JSON.stringify(labels));
-  check('사진 버튼 하나뿐 · 성공 여부·남은 시간·힌트·세부 평가·누적 번호 입력 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === JSON.stringify(['사진']) && await noRemovedPanels() &&
+  check('사진·함께한 사람 버튼뿐 · 성공 여부·남은 시간·힌트·세부 평가·누적 번호 입력 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS && await noRemovedPanels() &&
     !(await page.$('.page-form .stamp-choice-clear, .page-form .stepper-input, .page-form .ordinal-note, .page-form .score-row')));
   await setRating(RATING, ['5']);
   await page.fill(REVIEW, '장치가 끝내준다');
@@ -1027,6 +1029,426 @@ await step('내 역할 (머더미스터리): 종류에 따라 칸 보임/숨김 
   await api('DELETE', `/api/records?id=${encodeURIComponent(roleId)}`);
   await syncFromServer();
   check('(정리) 시험 기록 삭제', (await serverRecord(roleId)) === null);
+});
+
+// ═════════════════════════════════════════════════════════════
+// 나 (이 기기의 멤버): 기기마다 localStorage['ddh:me'] 에 멤버 id 를 저장. 아래 단계들은 시험용 멤버·기록을 만들었다가 마지막에 모두 지움
+const ME_KEY = 'ddh:me';
+const getMeLS = () => page.evaluate((k) => localStorage.getItem(k), ME_KEY);
+const setMeLS = (id) => page.evaluate(([k, v]) => { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); }, [ME_KEY, id]);
+const meT = { recs: [], members: [], base: null };
+const mkRole = (memberId, character) => ({ memberId, character, culprit: false, outcome: null, mvp: false });
+const addonSum = (key) => text(`.page-form .addon[data-panel="${key}"] .addon-sum`);
+const chipPressed = (id) => page.getAttribute(`${panelSel('members')} .chip-member[data-member-id="${id}"]`, 'aria-pressed');
+/** 폼의 ‘나 줄’ 버튼으로 나 고르기 창을 열고 멤버를 고름 */
+async function pickMeIn(id) {
+  await page.click('.page-form .me-row-btn');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await page.click(`${dlg}.dlg-me .me-pick-row[data-member-id="${id}"]`);
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+}
+/** 새 기록·수정 폼에서 나가기 (쓴 게 있으면 ‘그만 쓰기’) */
+async function leaveForm() {
+  await page.click('.page-form .savebar button:has-text("취소")');
+  if (await until(() => page.$(dlg), 800)) await dialogButton('그만 쓰기');
+  await page.waitForSelector('.page-form', { state: 'detached', timeout: 5000 });
+}
+async function saveForm() {
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  const id = STAMP_ID(page.url());
+  meT.recs.push(id);
+  return id;
+}
+async function seedMm(title, { date = PAST, members, myRole = '', roles = [], spoiler = false, roleSpoiler = false, rating = 3.5 }) {
+  const res = await api('POST', '/api/records', { record: { type: 'murdermystery', date, title, members, rating, oneLiner: '', spoiler, mm: { myRole, roles, roleSpoiler } } });
+  if (res.status !== 200) throw new Error(`시험 기록 만들기 실패 ${title}: ${JSON.stringify(res.data)}`);
+  meT.recs.push(res.data.record.id);
+  return res.data.record.id;
+}
+async function addMember(name) {
+  const res = await api('POST', '/api/members', { member: { name } });
+  if (res.status !== 200) throw new Error(`시험 멤버 만들기 실패 ${name}: ${JSON.stringify(res.data)}`);
+  meT.members.push(res.data.member.id);
+  return res.data.member.id;
+}
+async function reloadApp() {
+  await page.reload();
+  await page.waitForSelector('#tabbar:not([hidden])');
+}
+
+await step('나: 멤버 프로필에서 정하고 풀기 · 목록 배지 · 지운 멤버는 나가 아님', async () => {
+  const d = (await api('GET', '/api/data')).data;
+  meT.base = { records: d.records.length, members: d.members.length, games: d.games.length };
+  await setMeLS(null);
+  const yk = ids['연경'];
+  await go(`#/member/${encodeURIComponent(yk)}`, '.page-profile');
+  check('프로필: ‘이 기기에서 나로 설정’ · 아직 누르지 않음 · 나 배지 없음', (await text('.phero-me')) === '이 기기에서 나로 설정' && (await page.getAttribute('.phero-me', 'aria-pressed')) === 'false' &&
+    !(await page.$('.page-profile .me-badge')), await text('.phero'));
+  await page.click('.phero-me');
+  const on = await until(async () => (await page.getAttribute('.phero-me', 'aria-pressed')) === 'true' && (await text('.phero-me')) === '이 기기의 나예요 (해제)', 2500);
+  check('누르면 aria-pressed=true · ‘이 기기의 나예요 (해제)’', !!on, `${await text('.phero-me')} / ${await page.getAttribute('.phero-me', 'aria-pressed')}`);
+  check('히어로 이름 옆에 ‘나’ 배지', (await text('.phero .phero-name .me-badge')) === '나' && (await text('.phero .phero-name > span:first-child')) === '연경', await text('.phero-name'));
+  check('localStorage 에 멤버 id 저장', (await getMeLS()) === yk, String(await getMeLS()));
+  await tab('members', '.page-members');
+  const badgeRows = await page.$$eval('.page-members .mlist-row', (els) => els.filter((e) => e.querySelector('.me-badge')).map((e) => e.querySelector('.mlist-name > span').textContent.trim()));
+  check('멤버 목록: 연경 한 줄에만 ‘나’ 배지', JSON.stringify(badgeRows) === JSON.stringify(['연경']), JSON.stringify(badgeRows));
+  check('배지 글자는 ‘나’', (await text('.page-members .mlist-row .me-badge')) === '나');
+  await noOverflow('멤버 목록 (나 배지)');
+  // 다시 눌러 풀기
+  await page.click(`.page-members .mlist-row:has(.mlist-name > span:text-is("연경"))`);
+  await page.waitForSelector('.page-profile .phero-me');
+  check('프로필을 다시 열어도 ‘나’ 상태', (await page.getAttribute('.phero-me', 'aria-pressed')) === 'true' && !!(await page.$('.phero .me-badge')));
+  await page.click('.phero-me');
+  const off = await until(async () => (await page.getAttribute('.phero-me', 'aria-pressed')) === 'false' && (await text('.phero-me')) === '이 기기에서 나로 설정' && !(await page.$('.phero .me-badge')), 2500);
+  check('다시 누르면 해제 (aria-pressed=false · 배지 사라짐)', !!off, `${await text('.phero-me')} / ${await page.getAttribute('.phero-me', 'aria-pressed')}`);
+  check('해제하면 localStorage 에서 지워짐', (await getMeLS()) === null, String(await getMeLS()));
+  await tab('members', '.page-members');
+  check('멤버 목록에 ‘나’ 배지 없음', !(await page.$('.page-members .me-badge')));
+
+  // 나로 정한 멤버를 지우면 나가 아닌 것으로 (시험용 멤버)
+  const gone = await addMember('임시삭제');
+  await reloadApp();
+  await go(`#/member/${encodeURIComponent(gone)}`, '.page-profile');
+  await page.click('.phero-me');
+  check('(준비) 시험용 멤버를 나로 정함', !!(await until(async () => (await getMeLS()) === gone && (await page.$('.phero .me-badge')), 2500)));
+  await page.click('.page-profile .appbar button[aria-label="삭제"]');
+  await page.waitForSelector(dlg);
+  await dialogButton('삭제');
+  await page.waitForSelector('.page-members', { timeout: 8000 });
+  meT.members = meT.members.filter((x) => x !== gone);
+  check('지운 멤버는 목록에 없고 ‘나’ 배지도 없음', !(await page.$('.page-members .me-badge')) && !(await texts('.page-members .mlist-name')).some((t) => t.includes('임시삭제')));
+  await go('#/new/murdermystery', '.page-form.t-murdermystery');
+  check('새 기록 폼: 지운 멤버는 나로 보지 않음 (아직 안 골랐어요) · 참여자도 비어 있음', (await text('.page-form .me-row')).includes('내가 누구인지 아직 안 골랐어요') && (await addonSum('members')) === '', await text('.page-form .me-row'));
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.waitForSelector('.page-form', { state: 'detached', timeout: 5000 });
+  await setMeLS(null);
+});
+
+await step('나 고르기 (기록 폼): 고르기 · 바꾸기 · 나 해제 · 새 멤버로 등록', async () => {
+  await setMeLS(null);
+  const yk = ids['연경'];
+  const ys = ids['영식'];
+  await go('#/new/murdermystery', '.page-form.t-murdermystery');
+  check('나가 없으면 안내 문구 + ‘나 고르기’', (await text('.page-form .me-row')).includes('내가 누구인지 아직 안 골랐어요') && (await text('.page-form .me-row-btn')) === '나 고르기' && (await addonSum('members')) === '', await text('.page-form .me-row'));
+  check('내 역할 칸 아래에 나 줄', await page.evaluate(() => {
+    const y = (s) => document.querySelector(s).getBoundingClientRect().top;
+    return y('.page-form [data-field="mm.myRole"]') < y('.page-form .me-row') && y('.page-form .me-row') < y('.page-form .rec-review-field');
+  }));
+  check('추가 입력 버튼 둘: 사진 · 함께한 사람', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS);
+  const memberN = (await api('GET', '/api/data')).data.members.length;
+  await page.click('.page-form .me-row-btn');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  const rows = await page.$$eval(`${dlg}.dlg-me .me-pick-row`, (els) => els.map((e) => e.getAttribute('data-member-id')));
+  const acts = await texts(`${dlg} .dlg-actions button`);
+  check('나 고르기 창: 제목 · 멤버 전부 나열', (await text(`${dlg}.dlg-me .dlg-title`)) === '나는 누구인가요?' && rows.length === memberN && rows.includes(yk) && rows.includes(ys), `${rows.length}/${memberN}`);
+  check('나 고르기 창: 아직 나가 없으면 ‘나 해제’ 없음 · 취소 · 새 멤버로 등록', JSON.stringify(acts) === JSON.stringify(['취소', '새 멤버로 등록']), JSON.stringify(acts));
+  await page.keyboard.press('Escape');
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  check('창을 닫으면 그대로 (나 없음)', (await getMeLS()) === null && (await text('.page-form .me-row-btn')) === '나 고르기');
+
+  await pickMeIn(yk);
+  check('고르면 ‘나: 연경’ · 버튼은 ‘바꾸기’', (await text('.page-form .me-row')).includes('나: 연경') && (await text('.page-form .me-row-btn')) === '바꾸기', await text('.page-form .me-row'));
+  check('함께한 사람 버튼 요약에 연경 · localStorage 저장', (await addonSum('members')) === '연경' && (await getMeLS()) === yk, `${await addonSum('members')} / ${await getMeLS()}`);
+  await openPanel('members');
+  check('함께한 사람 칩: 연경만 눌려 있음 · ‘새 멤버’ 버튼', (await chipPressed(yk)) === 'true' && (await chipPressed(ys)) === 'false' && !!(await page.$(`${panelSel('members')} .chip-add`)));
+
+  // 바꾸기 → 영식: 새 기록이라 새 나도 참여자에 들어가고 예전 나도 그대로
+  await page.click('.page-form .me-row-btn');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  check('바꾸기 창: 지금 나(연경)가 표시됨 · ‘나 해제’ 버튼', (await page.getAttribute(`${dlg}.dlg-me .me-pick-row.is-current`, 'data-member-id')) === yk &&
+    (await page.getAttribute(`${dlg}.dlg-me .me-pick-row[data-member-id="${yk}"]`, 'aria-pressed')) === 'true' && (await texts(`${dlg} .dlg-actions button`)).includes('나 해제'));
+  await page.click(`${dlg}.dlg-me .me-pick-row[data-member-id="${ys}"]`);
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  check('영식으로 바뀜: ‘나: 영식’ · localStorage', (await text('.page-form .me-row')).includes('나: 영식') && (await getMeLS()) === ys, await text('.page-form .me-row'));
+  check('새 기록: 영식도 참여자에 추가, 연경은 그대로 (요약 · 칩)', (await addonSum('members')) === '연경, 영식' && (await chipPressed(yk)) === 'true' && (await chipPressed(ys)) === 'true', await addonSum('members'));
+
+  // 나 해제
+  await page.click('.page-form .me-row-btn');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await dialogButton('나 해제');
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  check('나 해제: 안내 문구로 돌아옴 · localStorage 지움 · 참여자는 그대로', (await text('.page-form .me-row')).includes('내가 누구인지 아직 안 골랐어요') && (await text('.page-form .me-row-btn')) === '나 고르기' &&
+    (await getMeLS()) === null && (await addonSum('members')) === '연경, 영식' && (await chipPressed(yk)) === 'true', await text('.page-form .me-row'));
+
+  // 새 멤버로 등록 → 나로 정해지고 참여자에도 들어감
+  await page.click('.page-form .me-row-btn');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await dialogButton('새 멤버로 등록');
+  await page.waitForSelector(`${dlg}.dlg-member`);
+  await page.fill(`${dlg} input[placeholder="이름 또는 별명"]`, '임시새나');
+  await dialogButton('저장');
+  await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
+  const created = (await api('GET', '/api/data')).data.members.find((m) => m.name === '임시새나');
+  if (created) meT.members.push(created.id);
+  check('새 멤버가 서버에 저장됨', !!created);
+  check('새 멤버가 나로: ‘나: 임시새나’ · localStorage', !!created && (await text('.page-form .me-row')).includes('나: 임시새나') && (await getMeLS()) === created.id, `${await text('.page-form .me-row')} / ${await getMeLS()}`);
+  check('참여자에도 들어감 (연경, 영식 외 1명)', (await addonSum('members')) === '연경, 영식 외 1명' && !!created && (await chipPressed(created.id)) === 'true', await addonSum('members'));
+  await leaveForm();
+  if (created) {
+    await api('DELETE', `/api/members?id=${encodeURIComponent(created.id)}`);
+    meT.members = meT.members.filter((x) => x !== created.id);
+  }
+  await setMeLS(null);
+  await syncFromServer();
+});
+
+await step('나가 있을 때 저장: 참여자 · 내 배역(mm.roles) · 함께한 사람은 선택', async () => {
+  const yk = ids['연경'];
+  const ys = ids['영식'];
+  await setMeLS(yk);
+  // ① 머더미스터리: 나는 자동 참여자 · 영식 칩을 더 눌러 함께한 사람 추가 · 내 역할 → mm.roles
+  await go('#/new/murdermystery', '.page-form.t-murdermystery');
+  check('새 폼: ‘나: 연경’ · 요약 연경 (나가 참여자로 시작)', (await text('.page-form .me-row')).includes('나: 연경') && (await text('.page-form .me-row-btn')) === '바꾸기' && (await addonSum('members')) === '연경');
+  await openPanel('members');
+  await page.click(`${panelSel('members')} .chip-member[data-member-id="${ys}"]`);
+  check('칩으로 영식을 더하면 요약 ‘연경, 영식’', (await addonSum('members')) === '연경, 영식' && (await chipPressed(ys)) === 'true', await addonSum('members'));
+  await setGame('붉은 저택의 초대');
+  await page.fill('.page-form [data-field="mm.myRole"]', '해리엇 부인');
+  await setRating(RATING, ['3']);
+  const id1 = await saveForm();
+  const r1 = await serverRecord(id1);
+  check('서버: members 에 나(연경)와 영식', !!r1 && r1.members.length === 2 && r1.members.includes(yk) && r1.members.includes(ys), JSON.stringify(r1 && r1.members));
+  check('서버: mm.myRole = 해리엇 부인', !!r1 && r1.mm.myRole === '해리엇 부인');
+  check('서버: mm.roles 에 나의 배역만 {character, culprit:false, outcome:null, mvp:false}', !!r1 && canon(r1.mm.roles) === canon([mkRole(yk, '해리엇 부인')]), JSON.stringify(r1 && r1.mm.roles));
+
+  // ② 수정: 내 역할만 바꾸면 myRole 과 배역 이름이 함께 바뀜
+  await go(`#/edit/${encodeURIComponent(id1)}`, '.page-form');
+  check('수정 폼: 내 역할이 채워져 있음 · 나 줄', (await page.inputValue('[data-field="mm.myRole"]')) === '해리엇 부인' && (await text('.page-form .me-row')).includes('나: 연경'));
+  await page.fill('[data-field="mm.myRole"]', '선대 공작');
+  await saveForm();
+  const r1b = await serverRecord(id1);
+  check('수정 저장: myRole · roles[나].character 모두 ‘선대 공작’ (배역은 하나뿐)', !!r1b && r1b.mm.myRole === '선대 공작' && canon(r1b.mm.roles) === canon([mkRole(yk, '선대 공작')]) && canon(r1b.members) === canon(r1.members), JSON.stringify(r1b && r1b.mm.roles));
+  // 내 역할을 지우고 저장하면 myRole 은 비고, 배역 이름은 건드리지 않음
+  await go(`#/edit/${encodeURIComponent(id1)}`, '.page-form');
+  await page.fill('[data-field="mm.myRole"]', '');
+  await saveForm();
+  const r1c = await serverRecord(id1);
+  check('내 역할을 비우면 myRole 만 비고 배역은 그대로', !!r1c && r1c.mm.myRole === '' && canon(r1c.mm.roles) === canon([mkRole(yk, '선대 공작')]), JSON.stringify(r1c && r1c.mm));
+
+  // ③ 수정으로는 나를 참여자에 넣지 않음 (참여자 없는 예전 기록)
+  const old = await seedMm('나 없는 예전 기록', { members: [], myRole: '예전역할' });
+  await syncFromServer();
+  await go(`#/edit/${encodeURIComponent(old)}`, '.page-form');
+  check('수정 폼: 참여자 요약 비어 있음', (await addonSum('members')) === '');
+  await page.fill('[data-field="mm.myRole"]', '바뀐역할');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  const o2 = await serverRecord(old);
+  check('수정해도 나는 참여자에 안 들어가고 배역도 안 생김 (members [] · roles [])', !!o2 && o2.members.length === 0 && o2.mm.roles.length === 0 && o2.mm.myRole === '바뀐역할', JSON.stringify(o2 && { m: o2.members, r: o2.mm.roles }));
+
+  // ④ 함께한 사람에서 나를 빼면 내 배역은 만들지 않음 (참여자만 roles 에 있을 수 있어요)
+  await go('#/new/murdermystery', '.page-form.t-murdermystery');
+  await openPanel('members');
+  await page.click(`${panelSel('members')} .chip-member[data-member-id="${yk}"]`);
+  check('칩을 끄면 요약이 비어 있음 (나 줄은 그대로)', (await addonSum('members')) === '' && (await text('.page-form .me-row')).includes('나: 연경'));
+  await setGame('붉은 저택의 초대');
+  await page.fill('[data-field="mm.myRole"]', '집사 대리');
+  const id4 = await saveForm();
+  const r4 = await serverRecord(id4);
+  check('나가 참여자가 아니면: members [] · roles [] · myRole 은 저장', !!r4 && r4.members.length === 0 && r4.mm.roles.length === 0 && r4.mm.myRole === '집사 대리', JSON.stringify(r4 && { m: r4.members, r: r4.mm.roles }));
+
+  // ⑤ 보드게임·방탈출 새 기록도 나를 참여자로 (내 역할 줄은 없음)
+  await go('#/new/boardgame', '.page-form.t-boardgame');
+  check('보드게임 폼: 나 줄 없음 (내 역할 칸이 숨겨져 있음) · 요약 연경', (await page.isHidden('.page-form .me-row')) && (await addonSum('members')) === '연경');
+  await setGame('테라포밍 마스');
+  const id5 = await saveForm();
+  const r5 = await serverRecord(id5);
+  check('보드게임 새 기록: members [나]', !!r5 && canon(r5.members) === canon([yk]), JSON.stringify(r5 && r5.members));
+  await go('#/new/escaperoom', '.page-form.t-escaperoom');
+  check('방탈출 폼: 요약 연경', (await addonSum('members')) === '연경');
+  await setGame('잊혀진 연구소');
+  const id6 = await saveForm();
+  const r6 = await serverRecord(id6);
+  check('방탈출 새 기록: members [나]', !!r6 && canon(r6.members) === canon([yk]), JSON.stringify(r6 && r6.members));
+
+  // ⑥ 나가 없으면 예전처럼 참여자 없이 저장 · 내 역할만 있고 배역은 없음
+  await setMeLS(null);
+  await go('#/new/murdermystery', '.page-form.t-murdermystery');
+  check('나가 없는 새 폼: 요약 비어 있음', (await addonSum('members')) === '');
+  await setGame('붉은 저택의 초대');
+  await page.fill('[data-field="mm.myRole"]', '해리엇 부인');
+  const id7 = await saveForm();
+  const r7 = await serverRecord(id7);
+  check('나가 없으면: members [] · roles [] · myRole 은 저장', !!r7 && r7.members.length === 0 && r7.mm.roles.length === 0 && r7.mm.myRole === '해리엇 부인', JSON.stringify(r7 && { m: r7.members, r: r7.mm.roles }));
+  await go('#/new/boardgame', '.page-form.t-boardgame');
+  await setGame('테라포밍 마스');
+  const id8 = await saveForm();
+  check('나가 없으면 보드게임도 members []', ((await serverRecord(id8)) || { members: ['x'] }).members.length === 0);
+
+  // 정리
+  for (const id of meT.recs.splice(0)) await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
+  await syncFromServer();
+  check('(정리) 시험 기록 삭제', (await api('GET', '/api/data')).data.records.length === meT.base.records);
+});
+
+await step('프로필: 맡았던 역할 (내가 맡았던 역할 · 가려진 역할 · 예전 내 역할 · 10개 제한)', async () => {
+  const na = await addMember('임시나');
+  const nam = await addMember('임시남');
+  const bin = await addMember('임시빈');
+  meT.na = na; meT.nam = nam; meT.bin = bin;
+  const d1 = seoulDate(new Date(Date.now() - 41 * 86400e3));
+  const d2 = seoulDate(new Date(Date.now() - 42 * 86400e3));
+  const d3 = seoulDate(new Date(Date.now() - 43 * 86400e3));
+  const d4 = seoulDate(new Date(Date.now() - 44 * 86400e3));
+  meT.r1 = await seedMm('RP-일반', { date: d1, members: [na, nam], roles: [mkRole(na, '공작부인'), mkRole(nam, '하인 톰')], rating: 4 });
+  meT.r2 = await seedMm('RP-스포일러', { date: d2, members: [na], roles: [mkRole(na, '비밀 범인')], spoiler: true });
+  meT.r3 = await seedMm('RP-예전기록', { date: d3, members: [na], myRole: '레거시역할' });
+  meT.r4 = await seedMm('RP-역할가림', { date: d4, members: [na], roles: [mkRole(na, '가린 역할2')], roleSpoiler: true });
+  meT.r5 = await seedMm('RP-빈배역', { date: d4, members: [na], myRole: '무시됨', roles: [mkRole(na, '')] });
+  await reloadApp();
+  await setMeLS(na);
+  await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
+  const prole = '.page-profile .prole';
+  check('내 프로필: ‘내가 맡았던 역할’ 구역 · 4개', (await text(`${prole} .sec-title`)) === '내가 맡았던 역할' && (await text(`${prole} .sec-sub`)) === '4개', await text(prole));
+  const roleTexts = (await texts(`${prole} .prole-role`)).sort();
+  check('역할: 공작부인 · 예전 기록의 내 역할 · 스포일러/가림 기록은 ‘가려진 역할’ 둘', JSON.stringify(roleTexts) === JSON.stringify(['가려진 역할', '가려진 역할', '공작부인', '레거시역할'].sort()), JSON.stringify(roleTexts));
+  const row1 = `${prole} .prole-row:has(.prole-link[href="#/record/${encodeURIComponent(meT.r1)}"])`;
+  check('일반 기록 행: 역할 · 제목 · 날짜 · 별점 4.0', (await text(`${row1} .prole-role`)) === '공작부인' && (await text(`${row1} .prole-title`)) === 'RP-일반' &&
+    (await text(`${row1} .prole-meta`)).includes(d1.replace(/-/g, '.')) && (await text(`${row1} .prole-meta .stars-num`)) === '4.0', await text(`${row1} .prole-meta`));
+  const whole = await text('.page-profile');
+  const proleText = await text(prole);
+  check('가린 역할의 이름은 프로필 어디에도 없음 (비밀 범인 · 가린 역할2)', !whole.includes('비밀 범인') && !whole.includes('가린 역할2'), whole);
+  check('역할 이름이 빈 배역은 구역에 없음 (내 역할 ‘무시됨’ 도 안 나옴)', !proleText.includes('무시됨') && !proleText.includes('RP-빈배역'), proleText);
+  const hidden = await page.$$eval(`${prole} .prole-row`, (els) => els.filter((e) => e.querySelector('.prole-role').textContent === '가려진 역할').map((e) => e.querySelector('.prole-title').textContent).sort());
+  check('가려진 역할 행은 제목으로만 기록에 이어 줌 (스포일러 · 역할가림)', JSON.stringify(hidden) === JSON.stringify(['RP-스포일러', 'RP-역할가림']), JSON.stringify(hidden));
+  await noOverflow('프로필 (맡았던 역할)');
+  // 제목 링크 → 그 기록 상세
+  await page.click(`${row1} .prole-link`);
+  await page.waitForSelector('.page-detail');
+  check('역할 행을 누르면 그 기록 상세 (#/record/<id>)', STAMP_ID(page.url()) === meT.r1 && (await text('.page-detail .dhero-title')) === 'RP-일반', page.url());
+
+  // 나가 아닌 사람: 배역에 이름이 있는 기록만 (예전 ‘내 역할’은 나에게만)
+  await go(`#/member/${encodeURIComponent(nam)}`, '.page-profile');
+  check('다른 멤버: ‘맡았던 역할’ (내가 아님) · 하인 톰 하나', (await text(`${prole} .sec-title`)) === '맡았던 역할' && JSON.stringify(await texts(`${prole} .prole-role`)) === JSON.stringify(['하인 톰']) &&
+    (await text(`${prole} .sec-sub`)) === '1개', await text(prole));
+  check('다른 멤버 프로필: 나 설정 버튼은 ‘나로 설정’ · 배지 없음', (await text('.phero-me')) === '이 기기에서 나로 설정' && !(await page.$('.page-profile .me-badge')));
+  await go(`#/member/${encodeURIComponent(meT.bin)}`, '.page-profile');
+  check('역할이 없는 멤버: 구역이 없음', !(await page.$('.page-profile .prole')));
+
+  // 나를 풀면 임시나도 일반 멤버: 예전 ‘내 역할’ 기록은 빠짐
+  await setMeLS(null);
+  await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
+  const t3 = (await texts(`${prole} .prole-role`)).sort();
+  check('나가 아니면 ‘맡았던 역할’ · 예전 기록(레거시역할) 빠지고 3개', (await text(`${prole} .sec-title`)) === '맡았던 역할' && JSON.stringify(t3) === JSON.stringify(['가려진 역할', '가려진 역할', '공작부인'].sort()) && !(await text(prole)).includes('레거시역할'), JSON.stringify(t3));
+  await setMeLS(na);
+
+  // 10개 넘으면 최근 10개만 + 안내
+  const many = [];
+  for (let i = 0; i < 12; i++) {
+    many.push(seedMm(`RP-다수${i}`, { date: seoulDate(new Date(Date.now() - (i + 1) * 86400e3)), members: [na], roles: [mkRole(na, `다수역${i}`)] }));
+  }
+  const manyIds = await Promise.all(many);
+  await reloadApp();
+  await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
+  check('16개 중 10개만 보임 + ‘최근 10개만 보여요 (전체 16개)’', (await page.$$(`${prole} .prole-row`)).length === 10 && (await text(`${prole} > p`)) === '최근 10개만 보여요 (전체 16개)' && (await text(`${prole} .sec-sub`)) === '16개', await text(prole));
+  check('최근 것부터: 다수역0(어제)이 맨 위', (await texts(`${prole} .prole-role`))[0] === '다수역0', JSON.stringify((await texts(`${prole} .prole-role`)).slice(0, 3)));
+  await noOverflow('프로필 (역할 10개)');
+  for (const id of manyIds) await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
+  meT.recs = meT.recs.filter((x) => !manyIds.includes(x));
+  await reloadApp();
+  await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
+  check('(정리) 다시 4개 · 안내 없음', (await text(`${prole} .sec-sub`)) === '4개' && !(await page.$(`${prole} > p`)));
+});
+
+await step('나: 수정 폼에서 배역 이름을 내 역할로 채워 줌 (저장해도 배역은 그대로)', async () => {
+  const yk = ids['연경'];
+  await setMeLS(yk);
+  const pre = await seedMm('프리필 시험', { members: [yk, ids['영식']], myRole: '', roles: [mkRole(yk, '프리필 역할'), { ...mkRole(ids['영식'], '탐정 조수'), outcome: 'win' }] });
+  await syncFromServer();
+  const before = await serverRecord(pre);
+  await go(`#/edit/${encodeURIComponent(pre)}`, '.page-form');
+  check('내 역할 입력이 내 배역 이름으로 채워짐', (await page.inputValue('[data-field="mm.myRole"]')) === '프리필 역할', await page.inputValue('[data-field="mm.myRole"]'));
+  check('수정 폼: 나 줄 · 함께한 사람 요약에 두 사람', (await text('.page-form .me-row')).includes('나: 연경') && (await addonSum('members')) === '연경, 영식', await addonSum('members'));
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  const after = await serverRecord(pre);
+  check('아무것도 안 고치고 저장: 배역 그대로 (영식의 승리 · 탐정 조수 포함)', canon(after.mm.roles) === canon(before.mm.roles) && canon(after.members) === canon(before.members), `${canon(before.mm.roles)}\n${canon(after.mm.roles)}`);
+  check('저장하면 mm.myRole 에 이름이 남음', after.mm.myRole === '프리필 역할');
+  // 나가 없으면 채우지 않음
+  await setMeLS(null);
+  const pre2 = await seedMm('프리필 시험 2', { members: [yk], myRole: '', roles: [mkRole(yk, '다른 역할')] });
+  await syncFromServer();
+  await go(`#/edit/${encodeURIComponent(pre2)}`, '.page-form');
+  check('나가 없으면 내 역할 칸은 비어 있음', (await page.inputValue('[data-field="mm.myRole"]')) === '');
+  await leaveForm();
+  // 직접 적은 내 역할이 있으면 그것을 우선
+  await setMeLS(yk);
+  const pre3 = await seedMm('프리필 시험 3', { members: [yk], myRole: '내가 적은 역할', roles: [mkRole(yk, '배역 이름')] });
+  await syncFromServer();
+  await go(`#/edit/${encodeURIComponent(pre3)}`, '.page-form');
+  check('내 역할(myRole)이 있으면 배역 이름으로 덮지 않음', (await page.inputValue('[data-field="mm.myRole"]')) === '내가 적은 역할');
+  await leaveForm();
+  for (const id of [pre, pre2, pre3]) await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
+  meT.recs = meT.recs.filter((x) => ![pre, pre2, pre3].includes(x));
+  await setMeLS(null);
+  await syncFromServer();
+});
+
+await step('나: 레이아웃 (폼 · 나 고르기 창 · 프로필) 390 · 320 · 1440 가로 넘침 없음 + 스크린샷', async () => {
+  const na = meT.na;
+  await setMeLS(na);
+  await reloadApp();
+  // 새 머더미스터리 폼: 나 줄 + 두 추가 버튼 (함께한 사람 펼침)
+  await go('#/new/murdermystery', '.page-form.t-murdermystery');
+  await page.fill('[data-field="mm.myRole"]', '해리엇 부인');
+  await openPanel('members');
+  check('폼: 나 줄 · 버튼 둘', (await text('.page-form .me-row')).includes('나: 임시나') && JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS);
+  check('나 줄 ‘바꾸기’ 버튼은 터치 크기(높이 36px 이상)', await page.$eval('.page-form .me-row-btn', (e) => e.getBoundingClientRect().height >= 36), String(await page.$eval('.page-form .me-row-btn', (e) => e.getBoundingClientRect().height)));
+  await noOverflow('390 나가 있는 머더미스터리 폼');
+  await shot('me-form-mm-390');
+  await page.click('.page-form .me-row-btn');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await noOverflow('390 나 고르기 창');
+  check('나 고르기 창이 화면 안 (아래에서 올라오는 시트)', await page.$eval(`${dlg}.dlg-me`, (e) => { const b = e.getBoundingClientRect(); return b.left >= 0 && b.right <= innerWidth + 1 && b.bottom <= innerHeight + 1; }));
+  await shot('me-pick-dialog-390');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  await page.setViewportSize({ width: 320, height: 640 });
+  await sleep(150);
+  await noOverflow('320 나가 있는 머더미스터리 폼');
+  await page.click('.page-form .me-row-btn');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await noOverflow('320 나 고르기 창');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await sleep(200);
+  await noOverflow('1440 나가 있는 머더미스터리 폼');
+  await shot('me-form-mm-1440');
+  await page.click('.page-form .me-row-btn');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await noOverflow('1440 나 고르기 창');
+  await shot('me-pick-dialog-1440');
+  await page.keyboard.press('Escape');
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  await page.setViewportSize(VIEWPORT);
+  await sleep(150);
+  await leaveForm();
+
+  // 프로필: 맡았던 역할 구역
+  for (const [w, h2, label] of [[390, 844, '390'], [320, 640, '320'], [1440, 900, '1440']]) {
+    await page.setViewportSize({ width: w, height: h2 });
+    await go(`#/member/${encodeURIComponent(na)}`, '.page-profile .prole');
+    await sleep(150);
+    await noOverflow(`${label} 프로필 (맡았던 역할)`);
+    if (w !== 320) await shot(`me-profile-roles-${label}`);
+  }
+  await page.setViewportSize(VIEWPORT);
+  await sleep(150);
+  await go('#/members', '.page-members');
+  await noOverflow('390 멤버 목록 (나 배지)');
+});
+
+await step('나: 시험 데이터 정리', async () => {
+  for (const id of meT.recs.splice(0)) await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
+  for (const id of meT.members.splice(0)) await api('DELETE', `/api/members?id=${encodeURIComponent(id)}`);
+  await setMeLS(null);
+  await reloadApp();
+  const d = (await api('GET', '/api/data')).data;
+  check('시험 멤버·기록이 모두 지워져 처음 개수로 돌아옴', meT.base && d.records.length === meT.base.records && d.members.length === meT.base.members && d.games.length === meT.base.games, JSON.stringify({ base: meT.base, now: [d.records.length, d.members.length, d.games.length] }));
+  check('localStorage 에 나가 남아 있지 않음', (await getMeLS()) === null);
+  await go('#/', '.page-home');
 });
 
 /** 감상·별점·수정 시각만 빼고 비교 (화면에서 고친 두 값 말고는 서버 값이 그대로여야 함) */
@@ -1840,6 +2262,7 @@ await step('401 → 키 삭제 후 잠금, 링크 붙여넣기로 다시 열기'
 });
 
 await step('잠금 해제 정보 지우기', async () => {
+  await setMeLS(ids['연경']); // 이 기기의 ‘나’ 도 함께 지워져야 함
   await page.click('#tabbar .tab-settings');
   await page.waitForSelector('.page-settings');
   await page.click('.page-settings button:has-text("이 기기에서 잠금 해제 정보 지우기")');
@@ -1852,7 +2275,7 @@ await step('잠금 해제 정보 지우기', async () => {
   // 헤더는 브라우저가 처리하고 감춤 — 실제로 캐시가 비는지는 사진 단계에서 확인
   const cr = await cleared;
   check('브라우저 캐시(받아 둔 사진)도 비우라고 요청 (/clear-cache.txt)', !!cr && cr.status() === 200, cr ? String(cr.status()) : '요청 없음');
-  check('키·캐시·초안 삭제', await page.evaluate(() => ['ddh:key', 'ddh:cache', 'ddh:draft'].every((k) => localStorage.getItem(k) === null)));
+  check('키·캐시·초안·나 삭제', await page.evaluate(() => ['ddh:key', 'ddh:cache', 'ddh:draft', 'ddh:me'].every((k) => localStorage.getItem(k) === null)));
   check('주소창 초기화', page.url().endsWith('#/') || !page.url().includes('#/settings'), page.url());
   await page.reload();
   await page.waitForSelector('.lock');

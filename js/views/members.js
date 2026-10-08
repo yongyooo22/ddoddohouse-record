@@ -289,7 +289,7 @@ function renderProfile(root, id, ctx) {
     : null;
   const meBtn = h('button', {
     type: 'button', class: `btn btn-sm ${isMe ? 'btn-soft' : 'btn-ghost'} phero-me`, 'aria-pressed': isMe ? 'true' : 'false',
-    onClick: () => { setMeId(isMe ? null : m.id); toast(isMe ? '이 기기의 나를 해제했어요' : `이 기기에서는 ${m.name} 님이 나예요`, 'ok'); },
+    onClick: () => { setMeId(isMe ? null : m.id); renderProfile(root, id, ctx); const nb = root.querySelector('.phero-me'); if (nb) nb.focus(); toast(isMe ? '이 기기의 나를 해제했어요' : `이 기기에서는 ${m.name} 님이 나예요`, 'ok'); },
   }, icon(isMe ? 'check' : 'users'), h('span', { text: isMe ? '이 기기의 나예요 (해제)' : '이 기기에서 나로 설정' }));
   root.replaceChildren(h('div', { class: 'page page-profile' },
     appBar({
