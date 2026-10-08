@@ -1,22 +1,28 @@
-// 새 기록 / 수정 폼 — 가운데 1열. 처음엔 종류 · 게임 · 날짜 · 별점 · 감상만,
-// 사진 · 함께한 사람 · 결과 · 자세한 정보 · 태그는 작은 버튼으로 펼쳐서 (접어도 값은 그대로)
+// 새 기록 / 수정 폼 — 가운데 1열. 종류 · 게임 · 날짜 · 별점 · (머더미스터리: 내 역할) · 감상만 적고,
+// 사진은 작은 버튼으로 펼쳐서. 예전 기록에 있던 결과·자세한 정보·태그·함께한 사람은 화면에서 빠졌지만
+// 수정해서 저장해도 그 값은 그대로 보존돼요 (모델에 실어 두었다가 다시 보냄)
 import { h, icon } from '../dom.js';
-import { TYPES, TYPE_KEYS, TAG_SUGGESTIONS, LIMITS, FIELD_LABELS, MM_SCORES, ER_SCORES } from '../constants.js';
+import { TYPES, TYPE_KEYS, LIMITS, FIELD_LABELS, MM_SCORES, ER_SCORES } from '../constants.js';
 import {
-  state, recordById, upsertRecord, membersSorted, memberInfo, usedTags, getDraft, setDraft, clearDraftIf, isFirstLoad, photosOf,
-  gameById, recordsOfGame, titleOf, getLastType, setLastType,
+  state, recordById, upsertRecord, getDraft, setDraft, clearDraftIf, isFirstLoad, photosOf,
+  gameById, titleOf, getLastType, setLastType,
 } from '../store.js';
 import { todayStr, yesterdayStr, defaultRecordDate, fmtDate, relTime, parseDate, fmtDateTime } from '../format.js';
 import * as api from '../api.js';
 import { navigate, goBack } from '../nav.js';
 import {
-  appBar, chip, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge, typeName,
+  appBar, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge, typeName,
 } from '../ui.js';
-import { resultSection, detailSection, resultSummary, detailSummary, recalcResults, memberChips, miniCheck } from './form-sections.js';
-import { openMemberEditor } from './members.js';
 import { photoField, discardPhotos } from './photos.js';
 import { gamePicker } from './game-picker.js';
 import { existingPhotos } from '../images.js';
+
+/** 작은 체크 (스포일러 가리기) */
+function miniCheck(label, checked, onChange, title) {
+  const input = h('input', { type: 'checkbox', class: 'mini-check-input', checked });
+  input.addEventListener('change', () => onChange(input.checked));
+  return h('label', { class: 'mini-check', title }, input, h('span', { class: 'mini-check-box', 'aria-hidden': 'true' }, icon('check')), h('span', { text: label }));
+}
 
 // ── 모델 ──
 function blankModel(type) {
@@ -34,7 +40,7 @@ function blankModel(type) {
     photos: [],
     bg: { place: '', playTimeMin: '', mode: 'competitive', results: [], coopWin: null, expansion: '', ownership: null, lender: '' },
     mm: {
-      publisher: '', format: 'store', store: '', gm: '', playerCount: '', playTimeMin: '', roles: [], roleSpoiler: false, culpritResult: null,
+      myRole: '', publisher: '', format: 'store', store: '', gm: '', playerCount: '', playTimeMin: '', roles: [], roleSpoiler: false, culpritResult: null,
       scores: { story: 0, deduction: 0, roleplay: 0, balance: 0, production: 0 }, difficulty: 0, replay: false,
       ownership: null, lender: '',
     },
@@ -92,6 +98,7 @@ function toModel(src, type) {
   if (isObj(src.mm)) {
     const b = src.mm;
     Object.assign(m.mm, {
+      myRole: typeof b.myRole === 'string' ? b.myRole : '',
       publisher: b.publisher || '', format: ['box', 'store', 'online'].includes(b.format) ? b.format : 'store', store: b.store || '', gm: b.gm || '',
       playerCount: b.playerCount ? String(b.playerCount) : '', playTimeMin: b.playTimeMin ? String(b.playTimeMin) : '',
       culpritResult: ['caught', 'escaped'].includes(b.culpritResult) ? b.culpritResult : null,
@@ -166,6 +173,7 @@ function toPayload(m, id, createdAt) {
     const pc = intOrNull(b.playerCount) ?? (n ? Math.min(20, n) : null);
     const own = b.format === 'box' ? ownOrNull(b.ownership) : null; // 예전 기록의 소장 여부 (보드게임형만)
     rec.mm = {
+      myRole: b.myRole.trim(),
       publisher: b.publisher.trim(), format: b.format, store: b.format === 'store' ? b.store.trim() : '', gm: b.gm.trim(),
       playerCount: pc, playTimeMin: intOrNull(b.playTimeMin),
       roles: b.roles.filter((r) => m.members.includes(r.memberId)).map((r) => ({
@@ -251,10 +259,6 @@ export function mount(root, ctx) {
 
 const PANELS = [
   { key: 'photos', label: '사진', icon: 'camera' },
-  { key: 'members', label: '함께한 사람', icon: 'users' },
-  { key: 'result', label: '결과', icon: 'trophy' },
-  { key: 'details', label: '자세한 정보', icon: 'note' },
-  { key: 'tags', label: '태그', icon: 'tag' },
 ];
 
 function buildForm(root, { rec, type: startType, query, orphanId = null }) {
@@ -340,52 +344,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     }
   }
 
-  const ctl = {
-    changed,
-    rerender: (name) => rerender(name),
-    editingId,
-    createdAt: isNew ? '9999' : rec.createdAt,
-    toggleMember,
-    addMember,
-  };
-
-  // ── 멤버 ↔ 결과/역할 동기화 ──
-  function syncMembers() {
-    const b = m.bg;
-    b.results = m.members.map((id) => b.results.find((r) => r.memberId === id) || { memberId: id, score: null, rank: null, winner: false });
-    recalcResults(b, m.ui); // 순위와 자동 승자를 함께 다시 계산
-    const mm = m.mm;
-    mm.roles = m.members.map((id) => mm.roles.find((r) => r.memberId === id) || { memberId: id, character: '', culprit: false, outcome: null, mvp: false });
-  }
-  syncMembers();
-
-  /** 사람 고르기 (함께한 사람 영역·결과 영역 어디서든). origin: 누른 칩이 있는 영역 — 그 칩은 스스로 바뀜 */
-  function toggleMember(id, on, origin) {
-    if (on) {
-      if (m.members.length >= LIMITS.members) { toast(`멤버는 최대 ${LIMITS.members}명까지 고를 수 있어요`, 'error'); return false; }
-      if (!m.members.includes(id)) m.members = [...m.members, id];
-    } else {
-      m.members = m.members.filter((x) => x !== id);
-    }
-    syncMembers();
-    changed();
-    for (const name of ['members', 'result']) {
-      if (name === origin && name === 'members') continue;
-      rerender(name);
-    }
-    if (origin === 'result') {
-      // 결과 영역은 다시 그려지므로 누른 사람 칩으로 초점을 돌려줌
-      const c = panels.result.body && panels.result.body.querySelector(`.chip-member[data-member-id="${CSS.escape(id)}"]`);
-      if (c) c.focus({ preventScroll: true });
-    }
-    return true;
-  }
-  async function addMember(origin) {
-    const saved = await openMemberEditor(null);
-    if (saved && alive) toggleMember(saved.id, true, null);
-    if (origin === 'members') rerender('members');
-  }
-
   // ── 기본 입력: 종류 · 게임 · 날짜 · 별점 · 감상 ──
   const typeSlot = h('div', { class: 'rec-field rec-type' });
   function paintTypeSlot() {
@@ -406,7 +364,11 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
       if (game && game.type !== type) setType(game.type);
       m.gameId = game ? game.id : null;
       m.title = title || '';
-      if (game && isNew) prefillFrom(game);
+      // 새 방탈출 기록: 테마에 등록해 둔 매장·지점을 기록에도 남김 (통계 '브랜드별'이 기록의 값을 읽음)
+      if (game && isNew && game.type === 'escaperoom') {
+        if (!m.er.brand) m.er.brand = (game.brand || '').trim();
+        if (!m.er.branch) m.er.branch = (game.branch || '').trim();
+      }
       changed();
     },
   });
@@ -425,8 +387,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     dateInput.removeAttribute('aria-invalid');
     paintQuick();
     changed();
-    const body = panels.result.body;
-    if (body && body.firstChild && body.firstChild.paintOrdinal) body.firstChild.paintOrdinal();
   }
   dateInput.addEventListener('change', onDate);
   const ratingEl = ratingInput({ value: m.rating, label: '별점', size: 'lg', onChange: (v) => { m.rating = v; changed(); } });
@@ -435,6 +395,19 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
       h('label', { class: 'field-label', htmlFor: dateInput.id, text: '날짜' }),
       h('div', { class: 'date-row' }, dateInput, h('div', { class: 'date-quick', role: 'group', 'aria-label': '빠른 날짜' }, quick.map(([b]) => b)))),
     h('div', { class: 'rec-field rec-rating' }, h('span', { class: 'field-label', id: 'lbl-rating', text: '별점' }), ratingEl));
+
+  // 머더미스터리: 내가 맡은 역할 (참여한 멤버를 고르지 않고 한 줄로)
+  const roleIn = h('input', {
+    type: 'text', class: 'input', value: m.mm.myRole, maxlength: String(LIMITS.character), placeholder: '예) 세바스찬',
+    autocomplete: 'off', id: nextId('myrole'), 'data-field': 'mm.myRole',
+  });
+  roleIn.addEventListener('input', () => { m.mm.myRole = roleIn.value; changed(); });
+  const roleSlot = h('div', { class: 'rec-field rec-role' },
+    h('label', { class: 'field-label', htmlFor: roleIn.id, text: '내 역할' }), roleIn);
+  function paintRole() {
+    roleSlot.hidden = type !== 'murdermystery';
+    roleIn.value = m.mm.myRole;
+  }
 
   // 감상: 한줄평·후기를 하나로. 처음엔 3줄, 쓰는 만큼 늘어남. 스포일러는 바로 옆에 작게
   const reviewIn = h('textarea', { class: 'input textarea rec-review', rows: '3', maxlength: String(LIMITS.review), placeholder: '어땠나요? 한 줄도, 길게도 좋아요', id: nextId('review'), 'data-field': 'review' });
@@ -480,32 +453,16 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     onAdd: () => openPanel('photos'),
   });
 
-  const memberNames = () => {
-    const ns = m.members.map((id) => memberInfo(id).name);
-    return ns.length > 2 ? `${ns.slice(0, 2).join(', ')} 외 ${ns.length - 2}명` : ns.join(', ');
-  };
   const summaries = {
     photos: () => {
       const n = photos.count();
       const busy = photos.busy();
       return n ? `${n}장${busy ? ' · 올리는 중' : ''}` : '';
     },
-    members: memberNames,
-    result: () => resultSummary(m),
-    details: () => detailSummary(m),
-    tags: () => (m.tags.length > 3 ? `${m.tags.slice(0, 3).map((x) => `#${x}`).join(' ')} +${m.tags.length - 3}` : m.tags.map((x) => `#${x}`).join(' ')),
   };
 
   const builders = {
     photos: () => photos.el,
-    members: () => {
-      const mems = membersSorted();
-      return h('div', { class: 'rp-fields' }, memberChips(m, ctl, 'members'),
-        !mems.length ? h('p', { class: 'fhint', text: '아직 등록된 멤버가 없어요. ‘새 멤버’로 바로 추가할 수 있어요.' }) : null);
-    },
-    result: () => resultSection(m, ctl),
-    details: () => detailSection(m, ctl),
-    tags: () => tagsBody(),
   };
 
   for (const p of PANELS) {
@@ -571,77 +528,8 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
       pn.sum.textContent = sum;
     }
   }
-  function rerender(name) {
-    const pn = panels[name];
-    if (pn && pn.built) buildPanel(name);
-    paintAddons();
-  }
 
-  function tagsBody() {
-    const chipsBox = h('div', { class: 'chips', role: 'group', 'aria-label': '태그' });
-    const toggle = (tg, on) => {
-      if (on) {
-        if (m.tags.length >= LIMITS.tags) { toast(`태그는 최대 ${LIMITS.tags}개까지예요`, 'error'); return false; }
-        if (!m.tags.includes(tg)) m.tags = [...m.tags, tg];
-      } else m.tags = m.tags.filter((x) => x !== tg);
-      changed();
-      return true;
-    };
-    // 추천 태그는 이 영역을 열었을 때만 보임
-    const paintChips = () => {
-      const pool = [...m.tags];
-      for (const tg of [...TAG_SUGGESTIONS[type], ...usedTags(type)]) if (!pool.includes(tg)) pool.push(tg);
-      chipsBox.replaceChildren(...pool.slice(0, 30).map((tg) => chip({ label: `#${tg}`, pressed: m.tags.includes(tg), cls: 'chip-tag chip-sm', onToggle: (on) => toggle(tg, on) })));
-    };
-    const input = h('input', { type: 'text', class: 'input', maxlength: String(LIMITS.tag + 1), placeholder: '직접 입력 (예: 인생테마)', enterkeyhint: 'done', 'aria-label': '태그 직접 입력', autocomplete: 'off' });
-    /** 입력칸의 태그 추가. 반환: 추가됨/이미 있음 true, 문제 있음 false, 빈칸 null */
-    const add = () => {
-      const v = input.value.replace(/^#+/, '').replace(/\s+/g, '').trim();
-      if (!v) { input.value = ''; return null; }
-      if (Array.from(v).length > LIMITS.tag) { toast(`태그는 ${LIMITS.tag}자까지예요`, 'error'); openPanel('tags'); input.focus(); return false; }
-      if (!m.tags.includes(v) && !toggle(v, true)) { openPanel('tags'); input.focus(); return false; }
-      input.value = '';
-      paintChips();
-      return true;
-    };
-    // 입력만 하고 ‘추가’를 안 누른 채 저장해도 태그가 사라지지 않게
-    holder.commitTag = add;
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); add(); } });
-    paintChips();
-    return h('div', { class: 'rp-fields' }, chipsBox,
-      h('div', { class: 'tag-add' }, input, h('button', { type: 'button', class: 'btn btn-soft', onClick: add }, '추가')));
-  }
-  const holder = {};
-
-  /** 게임을 고르면 그 게임의 정보를 비어 있는 칸에만 이어서 채움 (방탈출 매장·지점, 머미 제작사·형태, 보드게임 방식) */
-  function prefillFrom(g) {
-    const last = recordsOfGame(g.id).find((r) => r.id !== editingId) || null;
-    const fill = (obj, key, val, isEmpty = (v) => v === '' || v === null) => {
-      if (val === undefined || val === null || val === '' || !isEmpty(obj[key])) return false;
-      obj[key] = typeof val === 'number' ? String(val) : val;
-      return true;
-    };
-    let touched = false;
-    if (type === 'escaperoom') {
-      const e = last && last.er ? last.er : {};
-      touched = fill(m.er, 'brand', (g.brand || '').trim() || e.brand) || touched;
-      touched = fill(m.er, 'branch', (g.branch || '').trim() || e.branch) || touched;
-      touched = fill(m.er, 'genre', e.genre) || touched;
-      touched = fill(m.er, 'timeLimitMin', e.timeLimitMin) || touched;
-    } else if (type === 'murdermystery' && last && last.mm) {
-      touched = fill(m.mm, 'publisher', last.mm.publisher) || touched;
-      if (m.mm.format === 'store' && last.mm.format && last.mm.format !== 'store') { m.mm.format = last.mm.format; touched = true; }
-      if (m.mm.format === 'store') touched = fill(m.mm, 'store', last.mm.store) || touched;
-    } else if (type === 'boardgame' && last && last.bg) {
-      if (m.bg.mode === 'competitive' && last.bg.mode && last.bg.mode !== 'competitive' && !m.bg.results.some((r) => r.score !== null)) {
-        m.bg.mode = last.bg.mode;
-        touched = true;
-      }
-    }
-    if (touched) { rerender('result'); rerender('details'); }
-  }
-
-  /** 종류 바꾸기 (새 기록만). 날짜·별점·감상·사진·사람·태그는 그대로, 다른 종류의 게임은 다시 고름 */
+  /** 종류 바꾸기 (새 기록만). 날짜·별점·감상·사진은 그대로, 다른 종류의 게임은 다시 고름 */
   function setType(v) {
     if (v === type || !TYPES[v]) return;
     type = v;
@@ -653,7 +541,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     const ttl = pageEl.querySelector('.appbar-title');
     if (ttl) ttl.textContent = isNew ? '새 기록' : `${t.label} 기록 수정`;
     paintTypeSlot();
-    for (const name of ['result', 'details', 'tags']) rerender(name);
+    paintRole();
     paintReview();
     try { history.replaceState(history.state, '', `#/new/${v}`); } catch { /* 무시 */ }
     changed();
@@ -669,6 +557,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     dateInput.value = m.date;
     paintQuick();
     ratingEl.setValue(m.rating);
+    paintRole();
     paintReview();
     for (const p of PANELS) { if (panels[p.key].built) buildPanel(p.key); }
     paintAddons();
@@ -698,7 +587,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
             m = toModel(existingDraft.model, type);
             base = draftBase();
             adoptDraftId();
-            syncMembers();
             dirty = true;
             banner.hidden = true;
             photos.reset(m.photos);
@@ -762,35 +650,10 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     }
   }
 
-  /** 숫자 칸 범위 확인 (빈 칸은 통과). 틀리면 안내하고 false */
-  function checkRange(value, min, max, label, sel, unit = '', panel = 'details') {
-    if (value === '' || value === null || value === undefined) return true;
-    const n = Math.round(Number(value));
-    if (Number.isFinite(Number(value)) && n >= min && n <= max) return true;
-    invalid(`${label}은 ${min}~${max}${unit} 사이로 적어 주세요`, sel, panel);
-    return false;
-  }
-
-  /** 게임과 날짜만 있으면 저장 (별점·감상·결과는 선택) */
+  /** 게임과 날짜만 있으면 저장 (별점·감상·내 역할은 선택) */
   function validate() {
     if (!m.gameId && !m.title.trim()) return invalid(`${t.noun}을 골라 주세요`, '[data-field="game"]'), false;
     if (!parseDate(m.date)) return invalid('날짜를 확인해 주세요', '[data-field="date"]'), false;
-    if (type === 'boardgame') {
-      if (!checkRange(m.bg.playTimeMin, 0, 1440, '플레이 시간', 'input[aria-label="플레이 시간(분)"]', '분')) return false;
-    } else if (type === 'murdermystery') {
-      if (!checkRange(m.mm.playerCount, 1, 20, '인원', 'input[aria-label="인원"]', '명')) return false;
-      if (!checkRange(m.mm.playTimeMin, 0, 1440, '플레이 시간', 'input[aria-label="플레이 시간(분)"]', '분')) return false;
-    } else if (type === 'escaperoom') {
-      if (!checkRange(m.er.playerCount, 1, 10, '인원', 'input[aria-label="인원"]', '명')) return false;
-      if (!checkRange(m.er.timeLimitMin, 1, 300, '제한 시간', 'input[aria-label="제한 시간(분)"]', '분')) return false;
-      if (m.er.cleared) {
-        const mm = m.ui.remainMM, ss = m.ui.remainSS;
-        const bad = (mm !== '' && !(Number(mm) >= 0 && Number(mm) <= 300 && Number.isInteger(Number(mm)))) ||
-          (ss !== '' && !(Number(ss) >= 0 && Number(ss) <= 59 && Number.isInteger(Number(ss)))) ||
-          (Number(mm) || 0) * 60 + (Number(ss) || 0) > 18000;
-        if (bad) return invalid('남은 시간은 300분 이하로, 분과 초(0~59)로 적어 주세요', '[data-field="er.remainingSec"]', 'result'), false;
-      }
-    }
     return true;
   }
 
@@ -814,7 +677,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
 
   async function save() {
     if (saving) return;
-    if (holder.commitTag && holder.commitTag() === false) return;
     if (!validate()) return;
     if (photos.busy()) {
       // 사진을 다 올린 다음에 저장 (올리는 중인 사진이 빠진 채 저장되지 않게)
@@ -911,12 +773,12 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     const diffKeys = [];
     // 최신본도 폼과 같은 규칙으로 정리해서 비교 (한줄평·후기를 합친 것 등은 다른 부분으로 치지 않음)
     const theirs = toPayload(toModel(current, current.type), current.id, null);
-    const cmp = [['title', '게임'], ['date', '날짜'], ['rating', '별점'], ['review', '감상'], ['oneLiner', '감상'], ['spoiler', '스포일러'], ['tags', '태그'], ['members', '함께한 사람'], ['photos', '사진']];
+    const cmp = [['title', '게임'], ['date', '날짜'], ['rating', '별점'], ['review', '감상'], ['oneLiner', '감상'], ['spoiler', '스포일러'], ['photos', '사진']];
     for (const [k, label] of cmp) {
       if (JSON.stringify(theirs[k] ?? null) !== JSON.stringify(mine[k] ?? null) && !diffKeys.includes(label)) diffKeys.push(label);
     }
     const blk = { boardgame: 'bg', murdermystery: 'mm', escaperoom: 'er' }[type];
-    if (JSON.stringify(theirs[blk] ?? null) !== JSON.stringify(mine[blk] ?? null)) diffKeys.push('결과·자세한 정보');
+    if (JSON.stringify(theirs[blk] ?? null) !== JSON.stringify(mine[blk] ?? null)) diffKeys.push(type === 'murdermystery' ? '내 역할·자세한 정보' : '자세한 정보');
 
     const body = h('div', { class: 'conflict' },
       h('p', { class: 'dlg-text', text: '내가 수정하는 동안 다른 사람이 이 기록을 먼저 바꿨어요. 최신본은 이래요:' }),
@@ -958,7 +820,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
   const form = h('form', { class: 'form rec-form', novalidate: true });
   form.addEventListener('submit', (e) => { e.preventDefault(); save(); });
   const sheet = h('div', { class: 'rec-sheet' },
-    h('div', { class: 'rec-main' }, typeSlot, gameSlot, dateRate, reviewSlot),
+    h('div', { class: 'rec-main' }, typeSlot, gameSlot, dateRate, roleSlot, reviewSlot),
     h('div', { class: 'rec-more' }, addonBar, panelBox));
   form.append(banner, sheet, h('div', { class: 'savebar' }, cancelBtn, saveBtn));
 

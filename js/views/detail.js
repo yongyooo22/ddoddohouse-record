@@ -46,15 +46,17 @@ function bgSection(r) {
   const bg = bgOf(r);
   const mode = BG_MODES.find((m) => m.key === bg.mode);
   const out = [];
-  out.push(sec('그날의 정보', infoGrid([
-    ['방식', mode ? mode.label : '', 'users'],
+  // 방식은 기본값(경쟁)이면 적은 정보로 보지 않음 — 새 기록은 장소·시간 같은 자세한 정보를 받지 않으므로 값이 있을 때만 보여 줌
+  const grid = infoGrid([
+    ['방식', mode && bg.mode !== 'competitive' ? mode.label : '', 'users'],
     ['장소', bg.place, 'pin'],
     ['플레이 시간', fmtMinutes(bg.playTimeMin), 'clock'],
     ['확장판', bg.expansion, 'sparkle'],
     ['소장 여부', gameOfRecord(r) ? '' : ownershipText(r), 'box'],
-  ]) || h('p', { class: 'muted small', text: '추가 정보 없음' })));
+  ]);
+  if (grid) out.push(sec('그날의 정보', grid));
 
-  if (bg.mode === 'coop') {
+  if (bg.mode === 'coop' && (bg.coopWin !== null && bg.coopWin !== undefined || arr(r.members).length)) {
     out.push(sec('결과',
       h('div', { class: 'result-big' },
         bg.coopWin === true ? stamp('협력 승리', 'win') : bg.coopWin === false ? stamp('협력 패배', 'fail') : h('p', { class: 'muted', text: '결과 미기록' }),
@@ -80,15 +82,18 @@ function mmSection(r) {
   const mm = mmOf(r);
   const fmt = MM_FORMATS.find((f) => f.key === mm.format);
   const out = [];
-  out.push(sec('그날의 정보', infoGrid([
+  // 형태는 '매장형'이 기본값이라, 매장 이름이 있거나 다른 형태일 때만 보여 줌
+  const showFormat = fmt && (mm.format !== 'store' || mm.store);
+  const grid = infoGrid([
     ['제작사', mm.publisher, 'book'],
-    ['형태', fmt ? fmt.label : '', 'dice'],
+    ['형태', showFormat ? fmt.label : '', 'dice'],
     ['매장·지점', mm.format === 'store' ? mm.store : '', 'pin'],
     ['GM', mm.gm, 'mask'],
     ['인원', mm.playerCount ? `${mm.playerCount}인` : '', 'users'],
     ['플레이 시간', fmtMinutes(mm.playTimeMin), 'clock'],
     ['소장 여부', gameOfRecord(r) ? '' : ownershipText(r), 'box'],
-  ]) || h('p', { class: 'muted small', text: '추가 정보 없음' })));
+  ]);
+  if (grid) out.push(sec('그날의 정보', grid));
 
   const roles = arr(mm.roles).filter((x) => x && x.memberId);
   const resultStamp = mm.culpritResult === 'caught' ? stamp('범인 검거', 'caught') : mm.culpritResult === 'escaped' ? stamp('범인 도주', 'escaped') : null;
@@ -111,37 +116,45 @@ function mmSection(r) {
   }
 
   const hasScores = MM_SCORES.some((s) => Number(mm.scores && mm.scores[s.key]) > 0);
-  out.push(sec('세부 평가',
-    hasScores ? scoreBars(MM_SCORES.map((s) => ({ label: s.label, value: mm.scores ? mm.scores[s.key] : 0 }))) : h('p', { class: 'muted small', text: '세부 점수 없음' }),
-    h('div', { class: 'gauges' }, gauge('추리 난이도', mm.difficulty)),
-    mm.replay ? h('p', { class: 'replay' }, icon('heart'), h('span', { text: '다시 하고 싶어요 · 추천해요' })) : null));
+  if (hasScores || Number(mm.difficulty) > 0 || mm.replay) {
+    out.push(sec('세부 평가',
+      hasScores ? scoreBars(MM_SCORES.map((s) => ({ label: s.label, value: mm.scores ? mm.scores[s.key] : 0 }))) : h('p', { class: 'muted small', text: '세부 점수 없음' }),
+      h('div', { class: 'gauges' }, gauge('추리 난이도', mm.difficulty)),
+      mm.replay ? h('p', { class: 'replay' }, icon('heart'), h('span', { text: '다시 하고 싶어요 · 추천해요' })) : null));
+  }
   return out;
 }
 
 function erSection(r) {
   const er = erOf(r);
   const out = [];
-  out.push(sec('그날의 정보', infoGrid([
+  const grid = infoGrid([
     ['브랜드', er.brand, 'door'],
     ['지점', er.branch, 'pin'],
     ['장르', er.genre, 'tag'],
     ['인원', er.playerCount ? `${er.playerCount}인` : '', 'users'],
     ['제한 시간', er.timeLimitMin ? `${er.timeLimitMin}분` : '', 'clock'],
-  ]) || h('p', { class: 'muted small', text: '추가 정보 없음' })));
+  ]);
+  if (grid) out.push(sec('그날의 정보', grid));
 
-  const remain = er.cleared && er.remainingSec !== null && er.remainingSec !== undefined ? fmtRemaining(er.remainingSec) : '';
-  out.push(sec('탈출 결과',
-    h('div', { class: 'result-big result-er' },
-      er.cleared === true ? stamp('탈출 성공', 'clear') : er.cleared === false ? stamp('탈출 실패', 'fail') : h('span', { class: 'muted', text: '결과 미기록' }),
-      h('div', { class: 'er-nums' },
-        h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: remain || '–' }), h('span', { class: 'er-num-l', text: '남은 시간' })),
-        h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: er.hints !== null && er.hints !== undefined && Number.isFinite(Number(er.hints)) ? String(Number(er.hints)) : '–' }), h('span', { class: 'er-num-l', text: '힌트' }))))));
+  const hasHints = er.hints !== null && er.hints !== undefined && Number.isFinite(Number(er.hints));
+  if (er.cleared === true || er.cleared === false || hasHints) {
+    const remain = er.cleared && er.remainingSec !== null && er.remainingSec !== undefined ? fmtRemaining(er.remainingSec) : '';
+    out.push(sec('탈출 결과',
+      h('div', { class: 'result-big result-er' },
+        er.cleared === true ? stamp('탈출 성공', 'clear') : er.cleared === false ? stamp('탈출 실패', 'fail') : h('span', { class: 'muted', text: '결과 미기록' }),
+        h('div', { class: 'er-nums' },
+          h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: remain || '–' }), h('span', { class: 'er-num-l', text: '남은 시간' })),
+          h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: hasHints ? String(Number(er.hints)) : '–' }), h('span', { class: 'er-num-l', text: '힌트' }))))));
+  }
 
   const hasScores = ER_SCORES.some((s) => Number(er.scores && er.scores[s.key]) > 0);
-  out.push(sec('세부 평가',
-    hasScores ? scoreBars(ER_SCORES.map((s) => ({ label: s.label, value: er.scores ? er.scores[s.key] : 0 }))) : h('p', { class: 'muted small', text: '세부 점수 없음' }),
-    h('div', { class: 'gauges' }, gauge('난이도', er.difficulty), gauge('공포도', er.fear), gauge('활동성', er.activity)),
-    er.replay ? h('p', { class: 'replay' }, icon('heart'), h('span', { text: '추천해요' })) : null));
+  if (hasScores || Number(er.difficulty) > 0 || Number(er.fear) > 0 || Number(er.activity) > 0 || er.replay) {
+    out.push(sec('세부 평가',
+      hasScores ? scoreBars(ER_SCORES.map((s) => ({ label: s.label, value: er.scores ? er.scores[s.key] : 0 }))) : h('p', { class: 'muted small', text: '세부 점수 없음' }),
+      h('div', { class: 'gauges' }, gauge('난이도', er.difficulty), gauge('공포도', er.fear), gauge('활동성', er.activity)),
+      er.replay ? h('p', { class: 'replay' }, icon('heart'), h('span', { text: '추천해요' })) : null));
+  }
   return out;
 }
 
@@ -217,7 +230,12 @@ function render(root, id, ctx) {
       h('button', { type: 'button', class: 'icon-btn icon-btn-sm', 'aria-label': `${game.title} 정보 수정`, onClick: () => openGameEditor(game) }, icon('edit')))
     : null;
 
-  const tags = arr(r.tags);
+  // 내 역할 (머더미스터리): 작품 스포일러라 스포일러 기록이거나 '역할 가리기'면 열기 전까지 가림
+  const myRole = r.type === 'murdermystery' ? String(mmOf(r).myRole || '').trim() : '';
+  const roleBody = myRole ? h('p', { class: 'my-role', text: myRole }) : null;
+  const roleSec = roleBody
+    ? sec('내 역할', r.spoiler || mmOf(r).roleSpoiler ? spoilerBlock(roleBody, { label: '내 역할 보기', key: spoilerKey(r, 'myrole') }) : roleBody)
+    : null;
   const photos = gallery(r, { start: galleryAt.get(r.id) || 0, onIndex: (i) => galleryAt.set(r.id, i) });
   // 휴대폰은 한 줄로, 넓은 화면은 (사진·요약·멤버) | (종류별 기록·후기) 두 단으로
   const view = h('div', { class: ['page', 'page-detail', t ? t.cls : ''] },
@@ -232,12 +250,12 @@ function render(root, id, ctx) {
       h('div', { class: 'detail-col detail-col-a' },
         photos,
         hero,
+        roleSec,
         review,
         gameCard,
         members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null),
       h('div', { class: 'detail-col detail-col-b' },
         typeSecs,
-        tags.length ? h('div', { class: 'dtags' }, tags.map((tg) => h('a', { class: 'tag', href: `#/records?tag=${encodeURIComponent(tg)}`, text: `#${tg}` }))) : null,
         h('p', { class: 'dmeta' },
           r.createdAt ? h('span', { text: `작성 ${fmtDateTime(r.createdAt)}` }) : null,
           r.updatedAt && r.updatedAt !== r.createdAt ? h('span', { text: `수정 ${fmtDateTime(r.updatedAt)}` }) : null),

@@ -25,11 +25,9 @@ export const TYPES = {
 
 export const typeOf = (key) => TYPES[key] || null;
 
-// 종류별 추천 태그 (저장은 # 없이)
+// 머더미스터리 작품 태그 추천 (게임 정보에 저장, # 없이)
 export const TAG_SUGGESTIONS = {
-  boardgame: ['전략', '파티', '협력', '추리', '가족', '경매', '덱빌딩', '일꾼놓기', '타일', '카드', '2인추천', '입문추천'],
   murdermystery: ['추리중심', 'RP중심', '감성', '반전', '호러', '코믹', '피폐', '잔혹', '성인', '입문추천', '고인물용', '밸런스좋음'],
-  escaperoom: ['스토리맛집', '인테리어맛집', '장치많음', '자물쇠많음', '공포', '감성', '코믹', '활동성높음', '문제퀄리티', '입문추천', '헬난이도'],
 };
 
 // 보드게임 장르 추천 (게임 정보 — 여러 개 고르거나 직접 추가)
@@ -114,7 +112,7 @@ export const FIELD_LABELS = {
   brand: '브랜드', branch: '지점', genre: '장르', timeLimitMin: '제한 시간', remainingSec: '남은 시간',
   hints: '힌트', fear: '공포도', activity: '활동성', name: '이름', emoji: '이모지', color: '색', photos: '사진',
   ownership: '소장 여부', lender: '빌려준 사람', gameId: '게임', memo: '메모', owned: '소장 여부', cover: '대표 이미지',
-  playersMin: '최소 인원', playersMax: '최대 인원', timeMin: '예상 시간', timeMax: '예상 시간', genres: '장르', roleSpoiler: '역할 가리기',
+  playersMin: '최소 인원', playersMax: '최대 인원', timeMin: '예상 시간', timeMax: '예상 시간', genres: '장르', myRole: '내 역할', roleSpoiler: '역할 가리기',
 };
 
 export const STORAGE = {

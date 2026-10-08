@@ -807,6 +807,9 @@ a.sum-link:focus-visible { outline-offset: -3px; }
 .rcard-top { display: flex; align-items: center; gap: 6px; min-width: 0; margin-bottom: 2px; }
 .rcard-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; font-size: 16px; font-weight: 700; letter-spacing: -.025em; line-height: 1.35; }
 .rcard-date { color: var(--ink-3); font-size: 12.5px; font-weight: 500; letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.rcard-role { display: flex; align-items: center; gap: 5px; min-width: 0; margin-top: 2px; color: var(--tc-ink, var(--ink-2)); font-size: 12.5px; font-weight: 600; }
+.rcard-role .ico { width: 13px; height: 13px; }
+.rcard-role span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 방탈출 성공·실패: 작은 가로 배지 */
 .rbadge { flex: none; margin-left: auto; padding: 2px 8px; border-radius: 6px; font-size: 11.5px; font-weight: 700; line-height: 1.45; white-space: nowrap; }
 .rbadge-clear { background: color-mix(in srgb, var(--st-clear) 12%, var(--surface)); color: var(--st-clear); }
@@ -1024,6 +1027,7 @@ button.card-link { padding: 0; border: 0; background: none; font: inherit; lette
 .review-body { display: flex; flex-direction: column; gap: 10px; }
 .review-one { padding: 2px 0 2px 12px; border-left: 2px solid var(--line-2); font-size: 16px; font-weight: 600; line-height: 1.6; letter-spacing: -.02em; }
 .review-text { font-size: 15.5px; line-height: 1.8; white-space: pre-wrap; }
+.my-role { font-size: 17px; font-weight: 650; letter-spacing: -.01em; }
 .dgame { display: flex; align-items: center; gap: 14px; padding: 14px 10px 14px 14px; }
 .dgame .gthumb { width: 60px; height: 60px; }
 .dgame-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }

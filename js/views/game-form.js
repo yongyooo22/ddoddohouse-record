@@ -1,7 +1,7 @@
 // 게임 정보 등록 · 수정 창 (게임·작품·테마). 소장 탭과 기록 폼의 '＋ 새 게임 등록'이 같은 창을 씀
 // 이름만 필수. 대표 이미지 · 내가 소장한 게임 · (보드게임) 인원·예상 시간·장르 · (방탈출) 매장·지점 · 메모는 선택
 import { h, icon } from '../dom.js';
-import { TYPES, TYPE_KEYS, LIMITS, GENRE_SUGGESTIONS } from '../constants.js';
+import { TYPES, TYPE_KEYS, LIMITS, GENRE_SUGGESTIONS, TAG_SUGGESTIONS } from '../constants.js';
 import { state, upsertGame, removeGame, gamesOfType, isOwnedGame, coverOf, recordsOfGame } from '../store.js';
 import { nameKey, codePoints, gameInfoText } from '../format.js';
 import * as api from '../api.js';
@@ -79,15 +79,18 @@ export async function openGameEditor(game = null, { type: startType, title: star
   const rangeRow = (labelText, a, b, unit) => h('div', { class: 'field gf-range' },
     h('span', { class: 'field-label', text: labelText }),
     h('div', { class: 'gf-range-in' }, a, h('span', { class: 'gf-tilde', text: '~' }), b, h('span', { class: 'unit', text: unit })));
+  // 보드게임은 '장르', 머더미스터리는 '태그' — 같은 목록(genres)에 저장
+  const genreWord = () => (type === 'murdermystery' ? '태그' : '장르');
   const genreChips = h('div', { class: 'chips gf-genres', role: 'group', 'aria-label': '장르' });
   const genreIn = h('input', { type: 'text', class: 'input', maxlength: String(LIMITS.gameGenre + 1), placeholder: '직접 추가', 'aria-label': '장르 직접 추가', autocomplete: 'off', enterkeyhint: 'done' });
+  const genreLabel = h('span', { class: 'field-label', text: '장르' });
   function paintGenres() {
     const pool = [...genres];
-    for (const g of GENRE_SUGGESTIONS) if (!pool.includes(g)) pool.push(g);
+    for (const g of (type === 'murdermystery' ? TAG_SUGGESTIONS.murdermystery : GENRE_SUGGESTIONS)) if (!pool.includes(g)) pool.push(g);
     genreChips.replaceChildren(...pool.map((g) => chip({
       label: g, pressed: genres.includes(g), cls: 'chip-sm',
       onToggle: (on) => {
-        if (on && genres.length >= LIMITS.gameGenres) { toast(`장르는 ${LIMITS.gameGenres}개까지예요`, 'error'); return false; }
+        if (on && genres.length >= LIMITS.gameGenres) { toast(`${genreWord()}는 ${LIMITS.gameGenres}개까지예요`, 'error'); return false; }
         genres = on ? [...genres, g] : genres.filter((x) => x !== g);
         return true;
       },
@@ -97,9 +100,9 @@ export async function openGameEditor(game = null, { type: startType, title: star
   function addGenre() {
     const v = genreIn.value.trim().replace(/\s+/g, ' ');
     if (!v) return true;
-    if (codePoints(v).length > LIMITS.gameGenre) { err.textContent = `장르는 ${LIMITS.gameGenre}자까지예요`; genreIn.focus(); return false; }
+    if (codePoints(v).length > LIMITS.gameGenre) { err.textContent = `${genreWord()}는 ${LIMITS.gameGenre}자까지예요`; genreIn.focus(); return false; }
     if (!genres.includes(v)) {
-      if (genres.length >= LIMITS.gameGenres) { err.textContent = `장르는 ${LIMITS.gameGenres}개까지예요`; return false; }
+      if (genres.length >= LIMITS.gameGenres) { err.textContent = `${genreWord()}는 ${LIMITS.gameGenres}개까지예요`; return false; }
       genres = [...genres, v];
     }
     genreIn.value = '';
@@ -114,9 +117,10 @@ export async function openGameEditor(game = null, { type: startType, title: star
     h('div', { class: 'gf-row gf-ranges' },
       rangeRow('인원', pMin, pMax, '명'),
       rangeRow('예상 시간', tMin, tMax, '분')),
-    h('p', { class: 'field-hint gf-range-hint', text: '1인 게임이나 인원·시간이 정해져 있으면 한 칸만 적어요' }),
-    h('div', { class: 'field' }, h('span', { class: 'field-label', text: '장르' }), genreChips,
-      h('div', { class: 'tag-add' }, genreIn, h('button', { type: 'button', class: 'btn btn-soft', onClick: addGenre }, '추가'))));
+    h('p', { class: 'field-hint gf-range-hint', text: '1인 게임이나 인원·시간이 정해져 있으면 한 칸만 적어요' }));
+  // 장르(보드게임) · 태그(머더미스터리)
+  const genreBox = h('div', { class: 'field gf-genre-box' }, genreLabel, genreChips,
+    h('div', { class: 'tag-add' }, genreIn, h('button', { type: 'button', class: 'btn btn-soft', onClick: addGenre }, '추가')));
 
   // 방탈출: 매장 · 지점
   const brandIn = h('input', { type: 'text', class: 'input', maxlength: String(LIMITS.brand), value: game ? game.brand || '' : '', placeholder: '예) 키이스케이프', autocomplete: 'off', 'aria-label': '매장(브랜드)' });
@@ -142,6 +146,11 @@ export async function openGameEditor(game = null, { type: startType, title: star
     titleIn.placeholder = t.titlePlaceholder;
     memoIn.placeholder = { boardgame: '예) 확장 포함', murdermystery: '예) 보드게임형 · 6인', escaperoom: '예) 공포 2단계' }[type];
     bgBox.hidden = type !== 'boardgame';
+    genreBox.hidden = type === 'escaperoom';
+    genreLabel.textContent = genreWord();
+    genreChips.setAttribute('aria-label', genreWord());
+    genreIn.setAttribute('aria-label', `${genreWord()} 직접 추가`);
+    paintGenres();
     erBox.hidden = type !== 'escaperoom';
     ownRow.hidden = !OWNABLE.includes(type); // 방탈출 테마에는 소장 여부 없음
     paintDup();
@@ -213,8 +222,10 @@ export async function openGameEditor(game = null, { type: startType, title: star
     if (codePoints(memo).length > LIMITS.gameMemo) return fail(`메모는 ${LIMITS.gameMemo}자까지예요`, memoIn);
     const payload = { ...(game ? { id: game.id } : {}), type, title, memo };
     if (OWNABLE.includes(type)) payload.owned = ownedOn;
-    if (type === 'boardgame') {
-      if (!addGenre()) return false;
+    if (type !== 'escaperoom' && !addGenre()) return false;
+    if (type === 'murdermystery') {
+      payload.genres = genres;
+    } else if (type === 'boardgame') {
       const a = readInt(pMin, 1, LIMITS.gamePlayers), b = readInt(pMax, 1, LIMITS.gamePlayers);
       if (Number.isNaN(a)) return fail(`인원은 1~${LIMITS.gamePlayers}명으로 적어 주세요`, pMin);
       if (Number.isNaN(b)) return fail(`인원은 1~${LIMITS.gamePlayers}명으로 적어 주세요`, pMax);
@@ -291,6 +302,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     dupBox,
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: '대표 이미지 (선택)' }), cover.el),
     bgBox,
+    genreBox,
     erBox,
     ownRow,
     h('div', { class: 'field' }, h('label', { class: 'field-label', htmlFor: memoIn.id, text: '메모 (선택)' }), memoIn),

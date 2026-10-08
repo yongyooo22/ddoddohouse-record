@@ -92,6 +92,15 @@ export function reviewExcerpt(r) {
   return rev.length > 160 ? `${rev.slice(0, 160)}…` : rev;
 }
 
+/** 머더미스터리 카드의 '내 역할' 한 줄 (스포일러 기록·역할 가리기는 카드에 내지 않음) */
+function myRoleLine(r) {
+  if (r.type !== 'murdermystery' || r.spoiler) return null;
+  const mm = mmOf(r);
+  const role = typeof mm.myRole === 'string' ? mm.myRole.trim() : '';
+  if (!role || mm.roleSpoiler) return null;
+  return h('p', { class: 'rcard-role' }, icon('mask'), h('span', { text: `내 역할 · ${role}` }));
+}
+
 /**
  * 목록/홈 기록 카드 — 티켓 모양: 위(대표 이미지 · 종류 · 제목 · 날짜) | 점선 | 아래(별점 · 짧은 감상)
  * 대표 이미지는 그날 찍은 첫 사진, 없으면 게임의 대표 이미지. 스포일러 기록의 감상은 열기 전까지 가림
@@ -120,7 +129,8 @@ export function recordCard(r) {
             class: 'card-link', href: `#/record/${encodeURIComponent(r.id)}`,
             'aria-label': `${title}, ${fmtDate(r.date)}${nPhotos ? `, 사진 ${nPhotos}장` : ''}`,
           }, title)),
-        h('p', { class: 'rcard-date', text: fmtDateDot(r.date) }))),
+        h('p', { class: 'rcard-date', text: fmtDateDot(r.date) }),
+        myRoleLine(r))),
     h('div', { class: 'rcard-stub' },
       rating > 0
         ? h('span', { class: 'rcard-rating', role: 'img', 'aria-label': `별점 ${rating}점` }, starShape('rcard-star'), h('span', { text: rating.toFixed(1) }))

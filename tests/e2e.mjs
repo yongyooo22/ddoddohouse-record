@@ -225,11 +225,7 @@ async function setRating(trackSel, keys) {
 async function ratingOf(trackSel) {
   return page.getAttribute(trackSel, 'aria-valuenow');
 }
-async function pickMembers(names) {
-  await openPanel('members');
-  for (const n of names) await page.click(`.page-form .rec-panel[data-panel="members"] .chip-member:has(.chip-label:text-is("${n}"))`);
-}
-// ── 기록 폼 도우미 (가운데 1열: 종류 · 게임 · 날짜 · 별점 · 감상 + 펼치는 영역) ──
+// ── 기록 폼 도우미 (가운데 1열: 종류 · 게임 · 날짜 · 별점 · (머더미스터리) 내 역할 · 감상 + 사진 버튼) ──
 const RATING = '.page-form .rec-rating .rating-track';
 const REVIEW = '.page-form [data-field="review"]';
 const panelSel = (key) => `.page-form .rec-panel[data-panel="${key}"]`;
@@ -243,6 +239,10 @@ async function openPanel(key) {
 async function foldPanel(key) {
   if (await page.$(`${panelSel(key)}:not([hidden])`)) await page.click(`${panelSel(key)} .rp-fold`);
 }
+/** 저장 직후 주소(#/record/<id>)에서 기록 id */
+const STAMP_ID = (url) => decodeURIComponent(url.split('#/record/')[1] || '');
+/** 폼에 남아 있으면 안 되는 예전 입력 영역(버튼·패널)이 없는지 */
+const noRemovedPanels = () => page.evaluate((keys) => keys.every((k) => !document.querySelector(`.page-form .addon[data-panel="${k}"]`) && !document.querySelector(`.page-form .rec-panel[data-panel="${k}"]`)), REMOVED_PANELS);
 const pickedGame = () => text('.page-form .gp-picked-name');
 /**
  * 게임 고르기: 같은 종류에 등록된 이름이면 검색해서 고르고, 없으면 검색 영역의 '＋ 새 게임 등록' 창에서 등록
@@ -265,9 +265,24 @@ async function setGame(name, { extra = null } = {}) {
   }
   await page.waitForSelector('.page-form .gp-picked');
 }
-async function scoreRow(label, keys) {
-  await openPanel('details');
-  await setRating(`.page-form .score-row:has(.score-label:text-is("${label}")) .rating-track`, keys);
+/** 폼에 지금 보이는 입력 이름들 (숨긴 칸 제외) */
+const visibleLabels = () => page.$$eval(
+  '.page-form .rec-main > .rec-field > .field-label, .page-form .rec-main .rec-row .field-label, .page-form .rec-review-field .field-head > .field-label',
+  (els) => els.filter((e) => e.getClientRects().length > 0).map((e) => e.textContent.replace(/\s+/g, ' ').trim()),
+);
+/** 화면에서는 더 이상 입력받지 않는 예전 항목 — 폼에 버튼·영역이 없어야 함 */
+const REMOVED_PANELS = ['members', 'result', 'details', 'tags'];
+/** 키 순서와 상관없이 같은 내용인지 비교하기 위한 문자열 */
+const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x)
+  ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
+const serverRecord = async (id) => (await api('GET', '/api/data')).data.records.find((r) => r.id === id) || null;
+/** 서버의 기록 하나를 API 로 덮어씀 (예전 화면이 만들던 '자세한 정보'를 넣어 예전 기록을 흉내) */
+async function seedLegacy(id, patch) {
+  const cur = (await api('GET', '/api/data')).data.records.find((r) => r.id === id);
+  const next = { ...cur, ...patch };
+  for (const k of ['bg', 'mm', 'er']) if (patch[k]) next[k] = { ...(cur[k] || {}), ...patch[k] };
+  const res = await api('POST', '/api/records', { record: next, baseUpdatedAt: cur.updatedAt });
+  return res;
 }
 async function bodyBg() {
   return page.evaluate(() => getComputedStyle(document.body).backgroundColor);
@@ -444,7 +459,7 @@ await step('API 로 비교용 기록 준비', async () => {
   await page.waitForSelector('.page-members');
 });
 
-await step('보드게임 기록 (소장 게임 검색·선택 · 점수·자동 순위·승자)', async () => {
+await step('보드게임 기록 (새 간단 폼: 소장 게임 검색·선택 · 날짜 · 별점 · 감상)', async () => {
   // 소장 탭에 먼저 등록해 둔 게임 (인원·예상 시간·장르는 게임 정보로 한 번만)
   const reg = await api('POST', '/api/games', { game: { type: 'boardgame', title: '테라포밍 마스', owned: true, playersMin: 1, playersMax: 5, timeMin: 90, timeMax: 120, genres: ['전략'] } });
   check('소장 게임 등록 (API)', reg.status === 200 && reg.data.game.owned === true, JSON.stringify(reg.data));
@@ -455,11 +470,15 @@ await step('보드게임 기록 (소장 게임 검색·선택 · 점수·자동 
   await page.waitForSelector('.page-form.t-boardgame');
   check('＋ → 종류 고르기 없이 바로 폼 (기본 보드게임)', page.url().endsWith('#/new/boardgame') && (await page.$eval('.page-form .rec-type .seg-input:checked', (e) => e.value)) === 'boardgame', page.url());
   check('폼에서는 탭바 숨김', await page.$eval('#tabbar', (e) => e.hidden));
-  // 처음엔 종류 · 게임 · 날짜 · 별점 · 감상만, 나머지는 작은 버튼
-  const mainLabels = await texts('.page-form .rec-main > .rec-field > .field-label, .page-form .rec-main .rec-row .field-label, .page-form .rec-review-field .field-head > .field-label');
-  check('처음 보이는 항목: 종류·게임·날짜·별점·감상', JSON.stringify(mainLabels) === JSON.stringify(['종류', '게임', '날짜', '별점', '감상']), JSON.stringify(mainLabels));
-  check('추가 입력은 버튼만 (영역은 모두 접힘)', JSON.stringify(await texts('.page-form .addon .addon-label')) === JSON.stringify(['사진', '함께한 사람', '결과', '자세한 정보', '태그']) &&
-    (await page.$$eval('.page-form .rec-panel', (els) => els.every((e) => e.hidden))), JSON.stringify(await texts('.page-form .addon')));
+  // 처음엔 종류 · 게임 · 날짜 · 별점 · 감상만 (내 역할 칸은 머더미스터리에만), 추가 입력은 ‘사진’ 버튼 하나
+  const mainLabels = await visibleLabels();
+  check('처음 보이는 항목: 종류·게임·날짜·별점·감상 (내 역할 칸은 숨김)', JSON.stringify(mainLabels) === JSON.stringify(['종류', '게임', '날짜', '별점', '감상']) &&
+    await page.isHidden('.page-form [data-field="mm.myRole"]'), JSON.stringify(mainLabels));
+  check('추가 입력은 ‘사진’ 버튼 하나뿐 (영역은 접힘)', JSON.stringify(await texts('.page-form .addon .addon-label')) === JSON.stringify(['사진']) &&
+    (await page.$$eval('.page-form .rec-panel', (els) => els.length === 1 && els.every((e) => e.hidden))), JSON.stringify(await texts('.page-form .addon')));
+  check('함께한 사람·결과·자세한 정보·태그 버튼·영역 없음', await noRemovedPanels() && !(await page.$('.page-form .chip-member, .page-form .chip-tag, .page-form .result-row, .page-form .score-row, .page-form .stamp-choice-clear')));
+  const formText = await text('.page-form');
+  check('폼 글자에도 예전 항목 이름 없음', ['함께한 사람', '자세한 정보', '태그', '순위', '승자', '플레이 시간'].every((w) => !formText.includes(w)), formText);
   check('하나의 흰 기록 영역 (카드 여러 개 아님)', (await page.$$('.page-form .rec-sheet')).length === 1 && !(await page.$('.page-form .card')));
   check('날짜 기본값 (새벽 5시 전이면 어제, 아니면 오늘)', (await page.inputValue('[data-field="date"]')) === DEFAULT_DATE, `${await page.inputValue('[data-field="date"]')} vs ${DEFAULT_DATE} (${seoulHour}시)`);
   const pressedChip = await page.$$eval('.date-quick .chip[aria-pressed="true"]', (els) => els.map((e) => e.textContent));
@@ -509,46 +528,10 @@ await step('보드게임 기록 (소장 게임 검색·선택 · 점수·자동 
   await page.fill(REVIEW, '화성 개척은 역시 재밌다\n영식이 막판 도시 타일로 역전했다.\n다음엔 확장 더 넣어서!\n\n다음 판은 더 길게.\n끝.');
   const h1 = await page.$eval(REVIEW, (e) => e.getBoundingClientRect().height);
   check('쓰는 만큼 감상 칸이 늘어남', h1 > h0 + 30, `${h0} → ${h1}`);
-
-  await pickMembers(['연경', '영식', '민지짱']);
-  await openPanel('details');
-  await page.fill('.page-form input[placeholder="예) 또또하우스"]', '또또하우스 거실');
-  await page.fill('.page-form input[aria-label="플레이 시간(분)"]', '150');
-  await page.fill('.page-form input[placeholder="예) 서곡"]', '서곡');
-  await openPanel('result');
-  check('결과 영역: 게임 방식 · 참여자', !!(await page.$(`${panelSel('result')} [aria-label="게임 방식"]`)) &&
-    (await page.$$(`${panelSel('result')} .chip-member[aria-pressed="true"]`)).length === 3);
-  const row = (n) => `.result-row:has(.rr-name:text-is("${n}"))`;
-  await page.fill(`${row('연경')} .input-score`, '85');
-  await page.fill(`${row('영식')} .input-score`, '92');
-  await page.fill(`${row('민지짱')} .input-score`, '85');
-  const ranks = {
-    연경: await text(`${row('연경')} .rank-badge`),
-    영식: await text(`${row('영식')} .rank-badge`),
-    민지짱: await text(`${row('민지짱')} .rank-badge`),
-  };
-  check('자동 순위(동점 포함)', ranks.연경 === '2등' && ranks.영식 === '1등' && ranks.민지짱 === '2등', JSON.stringify(ranks));
-  const wins = await page.$$eval('.result-row .win-toggle', (els) => els.map((e) => e.getAttribute('aria-pressed')));
-  check('승자 자동 표시(영식만)', JSON.stringify(wins) === JSON.stringify(['false', 'true', 'false']), JSON.stringify(wins));
-  await page.selectOption('.page-form select[aria-label="순위 계산 방식"]', 'low');
-  const lowRanks = await texts('.result-row .rank-badge');
-  check('낮은 점수 1등 모드', JSON.stringify(lowRanks) === JSON.stringify(['1등', '3등', '1등']), JSON.stringify(lowRanks));
-  await page.selectOption('.page-form select[aria-label="순위 계산 방식"]', 'high');
-  const wins2 = await page.$$eval('.result-row .win-toggle', (els) => els.map((e) => e.getAttribute('aria-pressed')));
-  check('높은 점수 모드로 돌아오면 다시 영식 승', JSON.stringify(wins2) === JSON.stringify(['false', 'true', 'false']), JSON.stringify(wins2));
-  // 태그 추천은 태그 영역을 열었을 때만
-  check('태그 영역을 열기 전엔 추천 태그 없음', !(await page.isVisible('.page-form .chip-tag')));
-  await openPanel('tags');
-  await page.click('.chip-tag:has(.chip-label:text-is("#전략"))');
   check('게임 정보(소장 여부·대표 이미지)는 기록에서 다시 묻지 않음', !(await page.$('.page-form .seg-own')) && !(await page.$('.page-form .cv-field')));
+  check('사진 버튼의 요약은 비어 있음', (await text('.page-form .addon[data-panel="photos"] .addon-sum')) === '');
   await noOverflow('보드게임 폼');
   await shot('08-form-boardgame');
-  // 접어도 값은 그대로, 버튼에 요약
-  for (const k of ['members', 'result', 'details', 'tags']) await foldPanel(k);
-  const sums = Object.fromEntries(await page.$$eval('.page-form .addon', (els) => els.map((e) => [e.dataset.panel, e.querySelector('.addon-sum').textContent])));
-  check('접은 버튼에 요약: 사람 이름 · 우승자 · 자세한 정보 · 태그', sums.members === '연경, 영식 외 1명' && sums.result === '영식 우승' &&
-    sums.details === '또또하우스 거실 · 150분 · 서곡' && sums.tags === '#전략' && sums.photos === '', JSON.stringify(sums));
-  await shot('08b-form-boardgame-folded');
 
   // 저장 버튼 연타 → POST 1번
   let posts = 0;
@@ -561,33 +544,68 @@ await step('보드게임 기록 (소장 게임 검색·선택 · 점수·자동 
   check('연타해도 저장 요청 1번', posts === 1, String(posts));
   check('저장 토스트', !!(await toastSeen(/기록을 저장했어요/)));
   check('저장 후 초안 삭제', (await page.evaluate(() => localStorage.getItem('ddh:draft'))) === null);
-  ids.bg = decodeURIComponent(page.url().split('#/record/')[1] || '');
+  ids.bg = STAMP_ID(page.url());
+  check('상세: 별점 4.5', (await text('.dhero-rating .stars-num')) === '4.5');
+  check('상세: 감상', (await text('.page-detail .review-text')).startsWith('화성 개척은 역시 재밌다'));
+  const gameInfo = await text('.page-detail .dgame');
+  check('상세: 게임 정보(이름 · 내 소장 · 인원·예상 시간·장르)', gameInfo.includes('테라포밍 마스') && gameInfo.includes('내 소장') && gameInfo.includes('1~5명 · 90~120분 · 전략'), gameInfo);
+  check('상세: 적지 않은 순위·그날의 정보·태그·멤버는 아예 안 보임', !(await page.$('.page-detail .rank-row')) && !(await page.$('.page-detail .info-grid')) && !(await page.$('.page-detail .dtags')) &&
+    !(await page.$('.page-detail .mrows')) && !(await page.$('.page-detail .dhero-stamp')), await text('.page-detail'));
+  const saved = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.bg);
+  check('서버 저장: 게임 연결(gameId) · 제목 · 날짜', saved && saved.gameId === ids.gTera && saved.title === '테라포밍 마스' && saved.date === TODAY, JSON.stringify(saved && { gameId: saved.gameId, title: saved.title, date: saved.date }));
+  check('서버 저장: 감상은 하나(후기), 한줄평 비움 · 별점 4.5', saved && saved.review.startsWith('화성 개척은') && saved.oneLiner === '' && saved.rating === 4.5, JSON.stringify(saved));
+  check('서버 저장: 적지 않은 것은 비어 있음 (멤버·결과·태그·소장 여부)', saved && saved.members.length === 0 && saved.tags.length === 0 && saved.bg.results.length === 0 &&
+    saved.bg.ownership === null && saved.bg.place === '' && saved.bg.playTimeMin === null, JSON.stringify(saved && saved.bg));
+  await noOverflow('보드게임 상세');
+  await shot('09-detail-boardgame');
+});
+
+await step('예전 기록 준비 (API) — 보드게임: 멤버·점수·순위·승자·장소·태그', async () => {
+  // 예전 화면(함께한 사람·결과·자세한 정보·태그)으로 남긴 기록을 흉내: 이후 단계의 통계·프로필·소장·백업 검사에 쓰임
+  const res = await seedLegacy(ids.bg, {
+    members: [ids['연경'], ids['영식'], ids['민지짱']], tags: ['전략'],
+    bg: {
+      place: '또또하우스 거실', playTimeMin: 150, mode: 'competitive', expansion: '서곡',
+      results: [
+        { memberId: ids['연경'], score: 85, rank: 2, winner: false },
+        { memberId: ids['영식'], score: 92, rank: 1, winner: true },
+        { memberId: ids['민지짱'], score: 85, rank: 2, winner: false },
+      ],
+    },
+  });
+  check('예전 형태 보드게임 기록 저장', res.status === 200 && res.data.record.bg.results.length === 3 && res.data.record.tags[0] === '전략', JSON.stringify(res.data));
+  await page.reload();
+  await page.waitForSelector('#tabbar:not([hidden])');
+  await go(`#/record/${encodeURIComponent(ids.bg)}`, '.page-detail');
   const rows = await texts('.page-detail .rank-row');
   check('상세: 순위 3줄, 영식 1등', rows.length === 3 && rows[0].startsWith('1') && rows[0].includes('영식'), rows.join(' | '));
   check('상세: 우승자 표시', (await texts('.page-detail .rank-row.is-winner .mrow-name')).join() === '영식');
   check('상세: 우승 도장', (await text('.dhero-stamp')).includes('우승'));
   const info = await text('.page-detail .info-grid');
-  check('상세: 장소·시간·확장판 (그날의 정보)', info.includes('또또하우스 거실') && info.includes('2시간 30분') && info.includes('서곡'), info);
-  const gameInfo = await text('.page-detail .dgame');
-  check('상세: 게임 정보(이름 · 내 소장 · 인원·예상 시간·장르)', gameInfo.includes('테라포밍 마스') && gameInfo.includes('내 소장') && gameInfo.includes('1~5명 · 90~120분 · 전략'), gameInfo);
-  check('상세: 별점 4.5', (await text('.dhero-rating .stars-num')) === '4.5');
-  check('상세: 감상', (await text('.page-detail .review-text')).startsWith('화성 개척은 역시 재밌다'));
-  check('상세: 태그', (await texts('.page-detail .dtags .tag')).includes('#전략'));
-  const saved = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.bg);
-  check('서버 저장: 게임 연결(gameId) · 제목', saved && saved.gameId === ids.gTera && saved.title === '테라포밍 마스', JSON.stringify(saved && { gameId: saved.gameId, title: saved.title }));
-  check('서버 저장: 결과·순위·승자', saved && saved.bg.results.length === 3 && saved.bg.results.find((x) => x.memberId === ids['영식']).winner === true &&
-    saved.bg.results.find((x) => x.memberId === ids['연경']).rank === 2 && saved.bg.playTimeMin === 150, JSON.stringify(saved && saved.bg));
-  check('서버 저장: 감상은 하나(후기), 한줄평 비움 · 소장 여부는 기록에 안 씀', saved && saved.review.startsWith('화성 개척은') && saved.oneLiner === '' && saved.bg.ownership === null, JSON.stringify(saved));
-  await noOverflow('보드게임 상세');
-  await shot('09-detail-boardgame');
+  check('상세: 장소·시간·확장판 (그날의 정보)', info.includes('또또하우스 거실') && info.includes('2시간 30분') && info.includes('서곡') && !info.includes('경쟁'), info);
+  check('상세: 함께한 멤버 3명', (await text('.page-detail .dsec:has(.mrows) .dsec-title')) === '함께한 멤버 3명', await text('.page-detail .dsec:has(.mrows) .dsec-title'));
+  check('상세: 태그는 더 이상 보이지 않음 (서버에는 그대로)', !(await page.$('.page-detail .dtags')) && !(await page.$('.page-detail a[href*="tag="]')));
+  await noOverflow('보드게임 상세 (예전 기록)');
+  await shot('09b-detail-boardgame-legacy');
 });
 
-await step('머더미스터리 기록 (팝업 등록 · 역할·범인·세부 점수·스포일러)', async () => {
-  await page.click('.page-detail .appbar button[aria-label="뒤로"]');
-  await page.waitForSelector('.page-form, .page-list, .page-home', { timeout: 5000 }).catch(() => {});
+await step('머더미스터리 기록 (팝업 등록 · 작품 태그 · 내 역할 · 스포일러)', async () => {
   await go('#/new/murdermystery', '.page-form.t-murdermystery');
   await page.click('.date-quick .chip:text-is("오늘")');
-  // 날짜·감상을 먼저 쓴 뒤 팝업으로 새 작품 등록 → 쓰던 값은 그대로
+  // 종류 · 작품 · 날짜 · 별점 · 내 역할 · 감상 — 사진 버튼 하나, 예전 입력 영역은 없음
+  const labels = await visibleLabels();
+  check('머더미스터리 폼 항목: 종류·작품·날짜·별점·내 역할·감상', JSON.stringify(labels) === JSON.stringify(['종류', '작품', '날짜', '별점', '내 역할', '감상']), JSON.stringify(labels));
+  check('사진 버튼 하나뿐 · 함께한 사람·결과·자세한 정보·태그 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === JSON.stringify(['사진']) && await noRemovedPanels() &&
+    !(await page.$('.page-form .role-card, .page-form .chip-culprit, .page-form .seg-item:has-text("범인 검거"), .page-form [aria-label="범인 검거 결과"]')));
+  const roleIn = '.page-form [data-field="mm.myRole"]';
+  check('내 역할: 글칸 하나 (예시 · 30자)', (await text('.page-form .rec-role .field-label')) === '내 역할' && (await page.getAttribute(roleIn, 'placeholder')) === '예) 세바스찬' &&
+    (await page.getAttribute(roleIn, 'maxlength')) === '30' && (await page.getAttribute(roleIn, 'type')) === 'text');
+  check('내 역할 칸이 날짜·별점 아래, 감상 위', await page.evaluate(() => {
+    const y = (s) => document.querySelector(s).getBoundingClientRect().top;
+    return y('.page-form .rec-date-rate') < y('.page-form .rec-role') && y('.page-form .rec-role') < y('.page-form .rec-review-field');
+  }));
+  // 날짜·내 역할·감상을 먼저 쓴 뒤 팝업으로 새 작품 등록 → 쓰던 값은 그대로
+  await page.fill(roleIn, '마르타');
   await page.fill(REVIEW, '범인이 집사였다니\n\n집사가 범인이었고 끝까지 안 들켰다. 마지막 투표에서 영식이 엉뚱한 사람을 찍음.');
   await setRating(RATING, ['4']);
   await page.fill('.page-form .gp-input', '붉은 저택의 초대');
@@ -599,76 +617,99 @@ await step('머더미스터리 기록 (팝업 등록 · 역할·범인·세부 �
     (await page.inputValue('[data-field="game-title"]')) === '붉은 저택의 초대' && (await text(`${dlg} .dlg-title`)) === '새 작품 등록');
   check('기록에서 연 등록 창: 내 소장은 기본 선택 안 함', (await page.isChecked(`${dlg} .gf-own-input`)) === false);
   check('이름만 필수 (대표 이미지·소장은 선택)', (await text(`${dlg} .gform`)).includes('대표 이미지 (선택)'));
-  // 취소해도 쓰던 날짜·감상·별점은 그대로
+  // 머더미스터리 작품에는 ‘태그’ (보드게임의 ‘장르’ 자리) — 인원·시간 칸은 없음
+  check('작품 등록 창: ‘태그’ 칸 · 추천 칩 · 직접 추가 (장르·인원·시간 칸 없음)', (await text(`${dlg} .gf-genre-box .field-label`)) === '태그' && await page.isVisible(`${dlg} .gf-genre-box`) &&
+    (await texts(`${dlg} .gf-genres .chip-label`)).slice(0, 4).join() === '추리중심,RP중심,감성,반전' && !!(await page.$(`${dlg} input[aria-label="태그 직접 추가"]`)) &&
+    await page.isHidden(`${dlg} .gf-bg`) && !(await text(`${dlg} .gform`)).includes('장르'), await text(`${dlg} .gform`));
+  // 취소해도 쓰던 날짜·내 역할·감상·별점은 그대로
   await dialogButton('취소');
   await page.waitForSelector(dlg, { state: 'detached' });
-  check('팝업을 취소해도 감상·날짜·별점 유지', (await page.inputValue(REVIEW)).startsWith('범인이 집사였다니') && (await page.inputValue('[data-field="date"]')) === TODAY && (await ratingOf(RATING)) === '4');
+  check('팝업을 취소해도 내 역할·감상·날짜·별점 유지', (await page.inputValue(REVIEW)).startsWith('범인이 집사였다니') && (await page.inputValue('[data-field="date"]')) === TODAY && (await ratingOf(RATING)) === '4' &&
+    (await page.inputValue(roleIn)) === '마르타');
   await page.click('.page-form .gp-add');
   await page.waitForSelector(`${dlg}.dlg-game-form`);
+  await page.click(`${dlg} .gf-genres .chip:has-text("반전")`);
+  await page.click(`${dlg} .gf-genres .chip:has-text("추리중심")`);
+  await page.fill(`${dlg} input[aria-label="태그 직접 추가"]`, '인생작');
+  await page.press(`${dlg} input[aria-label="태그 직접 추가"]`, 'Enter');
+  check('직접 넣은 태그도 칩으로 · 선택됨', (await page.getAttribute(`${dlg} .gf-genres .chip:has-text("인생작")`, 'aria-pressed')) === 'true');
+  await shot('10a-game-dialog-murdermystery');
   await dialogButton('등록');
   await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
   check('등록하면 팝업이 닫히고 방금 등록한 작품이 선택됨', (await pickedGame()) === '붉은 저택의 초대');
-  check('등록 뒤에도 쓰던 감상 유지', (await page.inputValue(REVIEW)).startsWith('범인이 집사였다니'));
-  await pickMembers(['연경', '영식', '도윤']);
-  await openPanel('details');
-  await page.fill('.page-form input[placeholder="예) 머더랩"]', '머더랩');
-  await page.click('.page-form .seg-item:has-text("보드게임형")');
-  check('보드게임형: 매장 칸 숨김 · 소장 여부는 기록에서 안 물음', await page.isHidden('.page-form input[placeholder="예) 강남점"]') && !(await page.$('.page-form .seg-own')));
-  await page.click('.page-form .seg-item:has-text("매장형")');
-  await page.fill('.page-form input[placeholder="예) 강남점"]', '강남점');
-  await page.fill('.page-form input[placeholder="선택"]', '하람');
-  await page.fill('.page-form input[aria-label="인원"]', '6');
-  await page.fill('.page-form input[aria-label="플레이 시간(분)"]', '240');
-  await openPanel('result');
-  const role = (n) => `.role-card:has(.rr-name:text-is("${n}"))`;
-  await page.fill(`${role('연경')} .role-char-input`, '집사 세바스찬');
-  await page.click(`${role('연경')} .chip-culprit`);
-  await page.click(`${role('연경')} .chip-mvp`);
-  await page.click(`${role('연경')} .seg-item:has-text("승")`);
-  await page.fill(`${role('영식')} .role-char-input`, '탐정 조수');
-  await page.click(`${role('영식')} .seg-item:has-text("패")`);
-  await page.fill(`${role('도윤')} .role-char-input`, '정원사');
-  check('범인 카드 강조', await page.$eval(role('연경'), (e) => e.classList.contains('is-culprit')));
-  await page.click('.page-form [aria-label="범인 검거 결과"] .seg-item:has-text("범인 도주")');
-  check('결과 영역에 역할 가리기', !!(await page.$(`${panelSel('result')} .mini-check:has-text("역할·범인 가리기")`)));
-  await scoreRow('스토리', ['4', 'ArrowRight']);
-  await scoreRow('추리', ['4']);
-  await scoreRow('롤플레이', ['5']);
-  await scoreRow('밸런스', ['3', 'ArrowRight']);
-  await scoreRow('연출·구성물', ['4']);
-  await scoreRow('추리 난이도', ['3']);
-  await page.click('.page-form label.switch-row:has-text("다시 하고 싶어요")');
-  // 스포일러는 감상 바로 옆에 작게
-  check('스포일러 체크는 감상 옆', !!(await page.$('.page-form .rec-review-field .rec-spoiler .mini-check')));
+  check('작품 요약에 태그 (두 개까지 + 외 1)', (await text('.page-form .gp-picked-meta')) === '반전, 추리중심 외 1', await text('.page-form .gp-picked-meta'));
+  check('등록 뒤에도 쓰던 내용 유지', (await page.inputValue(REVIEW)).startsWith('범인이 집사였다니') && (await page.inputValue(roleIn)) === '마르타');
+  // 스포일러는 감상 바로 옆에 작게 (내 역할도 함께 가림)
+  check('스포일러 체크는 감상 옆 · 안내에 감상·역할', !!(await page.$('.page-form .rec-review-field .rec-spoiler .mini-check')) &&
+    (await page.getAttribute('.page-form .rec-spoiler .mini-check', 'title')) === '목록과 상세에서 감상·역할을 열기 전까지 가려요');
   await page.click('.page-form .rec-spoiler .mini-check');
-  await openPanel('tags');
-  await page.click('.chip-tag:has(.chip-label:text-is("#반전"))');
-  await page.click('.chip-tag:has(.chip-label:text-is("#추리중심"))');
-  await page.fill('.page-form input[aria-label="태그 직접 입력"]', '#인생 시나리오');
-  await page.press('.page-form input[aria-label="태그 직접 입력"]', 'Enter');
-  const on = await texts('.page-form .chip-tag[aria-pressed="true"] .chip-label');
-  check('태그 3개 선택(직접 입력 포함, # 과 공백 제거)', on.length === 3 && on.includes('#인생시나리오'), on.join(','));
   await noOverflow('머더미스터리 폼');
   await shot('10-form-murdermystery');
   await page.click('.save-btn');
   await page.waitForSelector('.page-detail', { timeout: 8000 });
-  ids.mm = decodeURIComponent(page.url().split('#/record/')[1] || '');
+  ids.mm = STAMP_ID(page.url());
 
-  // 상세: 스포일러는 가려져 있다가 열면 보임 (감상 · 범인/역할)
+  // 상세: 스포일러라 감상과 내 역할은 가려져 있다가 열면 보임
   const reviewSec = '.page-detail .dsec:has(.dsec-title:text-is("감상"))';
-  const rolesSec = '.page-detail .dsec:has(.dsec-title:text-is("역할과 결과"))';
+  const myRoleSec = '.page-detail .dsec:has(.dsec-title:text-is("내 역할"))';
   const blurred = await page.$$eval('.page-detail .spoiler .spoiler-content', (els) => els.map((e) => getComputedStyle(e).filter));
-  check('상세: 감상·범인/역할 모두 가림', blurred.length === 2 && blurred.every((f) => f.includes('blur')), JSON.stringify(blurred));
-  check('상세: 가린 내용은 스크린리더에도 숨김', await page.$eval(`${reviewSec} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true'));
-  check('상세: 가린 역할의 멤버 링크는 키보드로도 못 감(inert)', await page.$eval(`${rolesSec} .spoiler-content`, (e) => e.inert === true && e.getAttribute('aria-hidden') === 'true'));
-  check('상세: 범인 도주 결과 도장은 그대로 보임', (await text(`${rolesSec} .result-big`)).includes('범인 도주'));
-  check('상세: 역할 가림 버튼', (await text(`${rolesSec} .spoiler-btn`)) === '범인·역할 보기', await text(`${rolesSec} .spoiler-btn`));
+  check('상세: 감상·내 역할 모두 가림', blurred.length === 2 && blurred.every((f) => f.includes('blur')), JSON.stringify(blurred));
+  check('상세: 내 역할 칸이 감상보다 위', (await (await page.$(myRoleSec)).boundingBox()).y < (await (await page.$(reviewSec)).boundingBox()).y);
+  check('상세: 가린 내용은 스크린리더에도 숨김 · 키보드로도 못 감', await page.$eval(`${myRoleSec} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true' && e.inert === true) &&
+    await page.$eval(`${reviewSec} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true'));
+  check('상세: 내 역할 가림 버튼', (await text(`${myRoleSec} .spoiler-btn`)) === '내 역할 보기', await text(`${myRoleSec} .spoiler-btn`));
+  check('상세: 적지 않은 역할과 결과·그날의 정보·세부 평가·태그는 안 보임', !(await page.$('.page-detail .role-row')) && !(await page.$('.page-detail .info-grid')) && !(await page.$('.page-detail .scorebars')) &&
+    !(await page.$('.page-detail .dtags')) && !(await page.$('.page-detail .dsec:has(.dsec-title:text-is("역할과 결과"))')) && !(await page.$('.page-detail .dsec:has(.dsec-title:text-is("세부 평가"))')) &&
+    !(await page.$('.page-detail .dsec:has(.dsec-title:text-is("그날의 정보"))')), await text('.page-detail'));
+  const dgame = await text('.page-detail .dgame');
+  check('상세: 작품 정보에 태그', dgame.includes('붉은 저택의 초대') && (await text('.page-detail .dgame-meta')) === '반전, 추리중심, 인생작', dgame);
   await shot('11-detail-murdermystery-hidden');
+  await page.click(`${myRoleSec} .spoiler-btn`);
+  check('내 역할 열면 보임', !!(await until(async () => (await text(`${myRoleSec} .my-role`)) === '마르타' && (await page.$eval(`${myRoleSec} .spoiler-content`, (e) => getComputedStyle(e).filter === 'none')), 2000)) &&
+    (await page.$eval(`${myRoleSec} .spoiler-content`, (e) => e.inert === false)), await text(myRoleSec));
+  check('내 역할을 열어도 감상은 계속 가림', !!(await page.$(`${reviewSec} .spoiler:not(.is-revealed) .spoiler-btn`)));
   await page.click(`${reviewSec} .spoiler .spoiler-btn`);
   const after = await until(() => page.$eval(`${reviewSec} .spoiler-content`, (e) => (getComputedStyle(e).filter === 'none' ? 'none' : '')), 2000);
   check('열면 감상 보임', after === 'none', await page.$eval(`${reviewSec} .spoiler-content`, (e) => getComputedStyle(e).filter));
-  check('감상을 열어도 범인/역할은 계속 가림', !!(await page.$(`${rolesSec} .spoiler:not(.is-revealed) .spoiler-btn`)));
   check('감상 내용', (await text('.page-detail .review-text')).includes('집사가 범인이었고'));
+  const saved = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.mm);
+  check('서버 저장: 내 역할(mm.myRole) · 스포일러 · 별점 4', saved && saved.mm.myRole === '마르타' && saved.spoiler === true && saved.rating === 4 && saved.type === 'murdermystery', JSON.stringify(saved && saved.mm));
+  check('서버 저장: 적지 않은 것은 비어 있음 (멤버·역할·검거 결과·점수·태그)', saved && saved.members.length === 0 && saved.mm.roles.length === 0 && saved.mm.culpritResult === null &&
+    Object.values(saved.mm.scores).every((v) => v === 0) && saved.tags.length === 0 && saved.mm.publisher === '' && saved.mm.roleSpoiler === false, JSON.stringify(saved && saved.mm));
+  const mmGame = (await api('GET', '/api/data')).data.games.find((g) => g.title === '붉은 저택의 초대');
+  check('서버: 팝업으로 등록한 작품 (소장 아님) · 태그(genres) 3개 · 기록과 연결', mmGame && mmGame.type === 'murdermystery' && mmGame.owned === false && saved.gameId === mmGame.id &&
+    JSON.stringify(mmGame.genres) === JSON.stringify(['반전', '추리중심', '인생작']), JSON.stringify(mmGame));
+  ids.gMm = mmGame && mmGame.id;
+  await noOverflow('머더미스터리 상세');
+  await shot('12-detail-murdermystery');
+});
+
+await step('예전 기록 준비 (API) — 머더미스터리: 멤버·역할·범인·점수·태그', async () => {
+  const res = await seedLegacy(ids.mm, {
+    members: [ids['연경'], ids['영식'], ids['도윤']], tags: ['반전', '추리중심', '인생시나리오'],
+    mm: {
+      publisher: '머더랩', format: 'store', store: '강남점', gm: '하람', playerCount: 6, playTimeMin: 240,
+      roles: [
+        { memberId: ids['연경'], character: '집사 세바스찬', culprit: true, outcome: 'win', mvp: true },
+        { memberId: ids['영식'], character: '탐정 조수', culprit: false, outcome: 'lose', mvp: false },
+        { memberId: ids['도윤'], character: '정원사', culprit: false, outcome: null, mvp: false },
+      ],
+      culpritResult: 'escaped', scores: { story: 4.5, deduction: 4, roleplay: 5, balance: 3.5, production: 4 }, difficulty: 3, replay: true,
+    },
+  });
+  check('예전 형태 머더미스터리 기록 저장 (내 역할은 그대로)', res.status === 200 && res.data.record.mm.roles.length === 3 && res.data.record.mm.myRole === '마르타', JSON.stringify(res.data));
+  await page.reload();
+  await page.waitForSelector('#tabbar:not([hidden])');
+  await go(`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail');
+  const reviewSec = '.page-detail .dsec:has(.dsec-title:text-is("감상"))';
+  const rolesSec = '.page-detail .dsec:has(.dsec-title:text-is("역할과 결과"))';
+  const blurred = await page.$$eval('.page-detail .spoiler .spoiler-content', (els) => els.map((e) => getComputedStyle(e).filter));
+  check('상세: 감상·내 역할·범인/역할 모두 가림', blurred.length === 3 && blurred.every((f) => f.includes('blur')), JSON.stringify(blurred));
+  check('상세: 가린 역할의 멤버 링크는 키보드로도 못 감(inert)', await page.$eval(`${rolesSec} .spoiler-content`, (e) => e.inert === true && e.getAttribute('aria-hidden') === 'true'));
+  check('상세: 범인 도주 결과 도장은 그대로 보임', (await text(`${rolesSec} .result-big`)).includes('범인 도주'));
+  check('상세: 역할 가림 버튼', (await text(`${rolesSec} .spoiler-btn`)) === '범인·역할 보기', await text(`${rolesSec} .spoiler-btn`));
+  await page.click(`${reviewSec} .spoiler .spoiler-btn`);
+  check('감상을 열어도 범인/역할은 계속 가림', !!(await page.$(`${rolesSec} .spoiler:not(.is-revealed) .spoiler-btn`)));
   // 백그라운드 새로고침(다시 온라인 등)으로 화면을 다시 그려도 연 스포일러는 그대로
   const reqs = [];
   const onReq = (r) => { if (r.url().endsWith('/api/data')) reqs.push(r); };
@@ -691,106 +732,92 @@ await step('머더미스터리 기록 (팝업 등록 · 역할·범인·세부 �
   const bars = await texts('.page-detail .scorebars .sb-row');
   check('세부 점수 5개', bars.length === 5 && bars[0].includes('4.5') && bars[3].includes('3.5'), bars.join(' | '));
   check('추천 표시', (await text('.page-detail .replay')).includes('다시 하고 싶어요'));
-  const tags = await texts('.page-detail .dtags .tag');
-  check('태그 표시', ['#반전', '#추리중심', '#인생시나리오'].every((t) => tags.includes(t)), tags.join(','));
-  const saved = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.mm);
-  check('서버 저장: 역할·범인·점수', saved && saved.mm.roles.length === 3 && saved.mm.culpritResult === 'escaped' &&
-    saved.mm.scores.story === 4.5 && saved.mm.difficulty === 3 && saved.mm.replay === true && saved.spoiler === true &&
-    saved.mm.roles.find((x) => x.memberId === ids['연경']).culprit === true, JSON.stringify(saved && saved.mm));
-  const mmGame = (await api('GET', '/api/data')).data.games.find((g) => g.title === '붉은 저택의 초대');
-  check('서버: 팝업으로 등록한 작품 (소장 아님) 과 연결', mmGame && mmGame.type === 'murdermystery' && mmGame.owned === false && saved.gameId === mmGame.id, JSON.stringify(mmGame));
-  ids.gMm = mmGame && mmGame.id;
-  await noOverflow('머더미스터리 상세');
-  await shot('12-detail-murdermystery');
+  check('태그는 보이지 않음', !(await page.$('.page-detail .dtags')));
+  await noOverflow('머더미스터리 상세 (예전 기록)');
+  await shot('12b-detail-murdermystery-legacy');
 });
 
-await step('방탈출 기록 (테마의 매장·지점 재사용 · 성공·남은 시간·힌트)', async () => {
+await step('방탈출 기록 (새 간단 폼: 테마 등록 · 별점 · 감상)', async () => {
   await go('#/new/escaperoom', '.page-form.t-escaperoom');
   await page.click('.date-quick .chip:text-is("오늘")');
-  // 새 테마를 매장·지점과 함께 등록 (방탈출에는 소장 여부 없음)
+  // 새 테마를 매장·지점과 함께 등록 (방탈출에는 소장 여부·장르·태그 없음)
   await setGame('잊혀진 연구소', {
     extra: async () => {
       check('방탈출 등록 창: 소장 여부 없음 · 매장·지점', await page.isHidden(`${dlg} .gf-own`) && await page.isVisible(`${dlg} input[aria-label="매장(브랜드)"]`));
+      check('방탈출 등록 창: 장르·태그 칸 없음', await page.isHidden(`${dlg} .gf-genre-box`) && await page.isHidden(`${dlg} .gf-bg`) &&
+        !(await page.$$eval(`${dlg} .field-label`, (els) => els.some((e) => e.getClientRects().length > 0 && /장르|태그/.test(e.textContent)))));
       await page.fill(`${dlg} input[aria-label="매장(브랜드)"]`, '키이스케이프');
       await page.fill(`${dlg} input[aria-label="지점"]`, '홍대점');
       await shot('13a-game-dialog-escaperoom');
     },
   });
   check('테마 요약에 매장·지점', (await text('.page-form .gp-picked-meta')) === '키이스케이프 홍대점', await text('.page-form .gp-picked-meta'));
+  const labels = await visibleLabels();
+  check('방탈출 폼 항목: 종류·테마·날짜·별점·감상 (내 역할 칸 없음)', JSON.stringify(labels) === JSON.stringify(['종류', '테마', '날짜', '별점', '감상']) && await page.isHidden('.page-form [data-field="mm.myRole"]'), JSON.stringify(labels));
+  check('사진 버튼 하나뿐 · 성공 여부·남은 시간·힌트·세부 평가·누적 번호 입력 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === JSON.stringify(['사진']) && await noRemovedPanels() &&
+    !(await page.$('.page-form .stamp-choice-clear, .page-form .stepper-input, .page-form .ordinal-note, .page-form .score-row')));
   await setRating(RATING, ['5']);
-  await pickMembers(['연경', '영식', '민지짱']);
-  await openPanel('result');
-  check('테마에 등록한 매장·지점을 결과에 채움', (await page.inputValue('.page-form input[aria-label="매장(브랜드)"]')) === '키이스케이프' &&
-    (await page.inputValue('.page-form input[aria-label="지점"]')) === '홍대점');
-  check('누적 번호 미리보기 (2번째)', (await text('.ordinal-note')).includes('2번째'), await text('.ordinal-note'));
-  const stampOpacity = await page.$eval('label.stamp-choice-clear .stamp', (e) => Number(getComputedStyle(e).opacity));
-  check('고르기 전 도장도 읽힘 (흐리게만, 흑백 아님)', stampOpacity >= 0.55 && (await page.$eval('label.stamp-choice-clear .stamp', (e) => getComputedStyle(e).filter)) === 'none', String(stampOpacity));
-  check('힌트는 적기 전엔 비어 있음 (0개로 치지 않음)', (await page.inputValue('.stepper-input')) === '');
-  await openPanel('details');
-  await page.fill('.page-form input[placeholder="예) 추리"]', 'SF');
-  await page.fill('.page-form input[aria-label="제한 시간(분)"]', '500');
-  await foldPanel('details');
-  await page.click('.save-btn');
-  check('제한 시간 범위 확인', !!(await toastSeen(/제한 시간은 1~300분 사이로/)));
-  check('접혀 있던 자세한 정보를 펼치고 칸 표시', await page.isVisible(panelSel('details')) && (await page.getAttribute('.page-form input[aria-label="제한 시간(분)"]', 'aria-invalid')) === 'true');
-  await page.fill('.page-form input[aria-label="제한 시간(분)"]', '75');
-  check('고치면 제한 시간 오류 표시 사라짐', (await page.getAttribute('.page-form input[aria-label="제한 시간(분)"]', 'aria-invalid')) === null);
-  await page.click('label.stamp-choice-clear');
-  await page.fill('input[aria-label="남은 시간 분"]', '300');
-  await page.fill('input[aria-label="남은 시간 초"]', '59');
-  await page.click('.save-btn');
-  check('남은 시간 300분 초과 거부', !!(await toastSeen(/남은 시간은 300분 이하로/)));
-  await page.fill('input[aria-label="남은 시간 분"]', '12');
-  await page.fill('input[aria-label="남은 시간 초"]', '34');
-  await page.click('button[aria-label="힌트 수 늘리기"]');
-  await page.click('button[aria-label="힌트 수 늘리기"]');
-  check('힌트 2', (await page.inputValue('.stepper-input')) === '2');
-  await scoreRow('스토리', ['4']);
-  await scoreRow('인테리어', ['5']);
-  await scoreRow('문제', ['4', 'ArrowRight']);
-  await scoreRow('장치·연출', ['3']);
-  await scoreRow('난이도', ['3', 'ArrowRight']);
-  check('공포도 0 은 ‘없음/미평가’로 안내', (await text('.page-form .score-row:has(.score-label:text-is("공포도")) .rating-out')) === '없음/미평가',
-    await text('.page-form .score-row:has(.score-label:text-is("공포도")) .rating-out'));
-  await scoreRow('공포도', ['1']);
-  await scoreRow('활동성', ['2']);
-  await page.click('.page-form label.switch-row:has-text("추천해요")');
   await page.fill(REVIEW, '장치가 끝내준다');
   await noOverflow('방탈출 폼');
   await shot('13-form-escaperoom');
   await page.click('.save-btn');
   await page.waitForSelector('.page-detail', { timeout: 8000 });
-  ids.er = decodeURIComponent(page.url().split('#/record/')[1] || '');
+  ids.er = STAMP_ID(page.url());
+  check('상세: 별점 5.0 · 감상', (await text('.dhero-rating .stars-num')) === '5.0' && (await text('.page-detail .review-text')) === '장치가 끝내준다');
+  check('상세: 적지 않은 탈출 결과·세부 평가는 안 보임 · 그날의 정보엔 테마의 매장·지점만', !(await page.$('.page-detail .result-er')) && !(await page.$('.page-detail .er-nums')) && !(await page.$('.page-detail .gauge-item')) &&
+    !(await page.$('.page-detail .scorebars')) && !(await page.$('.page-detail .dtags')) &&
+    (await text('.page-detail .info-grid')).includes('키이스케이프') && (await text('.page-detail .info-grid')).includes('홍대점') && (await page.$$('.page-detail .info-item')).length === 2, await text('.page-detail'));
+  check('2번째 방탈출', (await text('.dhero-top .ordinal')) === '2번째 방탈출', await text('.dhero-top .ordinal'));
+  const saved = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.er);
+  check('서버 저장: 결과·힌트·시간은 비어 있음(null) · 별점 5', saved && saved.er.cleared === null && saved.er.hints === null && saved.er.remainingSec === null && saved.er.timeLimitMin === null &&
+    saved.er.brand === '키이스케이프' && saved.er.branch === '홍대점' && // 고른 테마의 매장·지점은 기록에도 남음 (통계 '브랜드별')
+    saved.rating === 5 && saved.members.length === 0 && saved.tags.length === 0, JSON.stringify(saved && saved.er));
+  const g = (await api('GET', '/api/data')).data.games.find((x) => x.title === '잊혀진 연구소');
+  check('서버: 테마 정보(소장 없음 · 매장·지점 · 장르 없음)', g && g.type === 'escaperoom' && g.owned === false && g.brand === '키이스케이프' && g.branch === '홍대점' && !('genres' in g) && saved.gameId === g.id, JSON.stringify(g));
+  ids.gEr = g && g.id;
+  await noOverflow('방탈출 상세');
+  await shot('14-detail-escaperoom');
+
+  // 같은 테마를 다시 기록 (게임과 날짜만으로 저장) → 테마의 기록 2개
+  await go('#/new/escaperoom', '.page-form.t-escaperoom');
+  await setGame('잊혀진 연구소');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  const bare = STAMP_ID(page.url());
+  check('상세: 게임과 날짜만 있어도 저장 · 결과·힌트 칸 없음', !(await page.$('.page-detail .result-er')) && !(await page.$('.page-detail .er-nums')));
+  check('같은 테마를 다시 기록 → 기록 2개', (await text('.page-detail .dgame')).includes('기록 2개'), await text('.page-detail .dgame'));
+  const bareRec = (await api('GET', '/api/data')).data.records.find((r) => r.id === bare);
+  await go('#/records', '.page-list');
+  check('게임·날짜만으로 저장 · 결과·힌트·시간·별점·감상은 비어 있음', bareRec && bareRec.er.cleared === null && bareRec.er.hints === null && bareRec.er.remainingSec === null &&
+    bareRec.rating === 0 && bareRec.review === '' && bareRec.gameId === ids.gEr, JSON.stringify(bareRec && bareRec.er));
+
+  await api('DELETE', `/api/records?id=${encodeURIComponent(bare)}`);
+  await syncFromServer();
+});
+
+await step('예전 기록 준비 (API) — 방탈출: 멤버·성공·남은 시간·힌트·세부 평가', async () => {
+  const res = await seedLegacy(ids.er, {
+    members: [ids['연경'], ids['영식'], ids['민지짱']],
+    er: {
+      brand: '키이스케이프', branch: '홍대점', genre: 'SF', playerCount: 3, timeLimitMin: 75, cleared: true, remainingSec: 754, hints: 2,
+      scores: { story: 4, interior: 5, puzzle: 4.5, device: 3 }, difficulty: 3.5, fear: 1, activity: 2, replay: true,
+    },
+  });
+  check('예전 형태 방탈출 기록 저장', res.status === 200 && res.data.record.er.remainingSec === 754 && res.data.record.er.hints === 2, JSON.stringify(res.data));
+  await page.reload();
+  await page.waitForSelector('#tabbar:not([hidden])');
+  await go(`#/record/${encodeURIComponent(ids.er)}`, '.page-detail');
   const nums = await texts('.page-detail .er-num');
   check('남은 시간 12:34 · 힌트 2', nums.some((n) => n.includes('12:34')) && nums.some((n) => n.startsWith('2')), nums.join(' | '));
   check('탈출 성공 도장', (await text('.dhero-stamp')).includes('탈출 성공'));
   check('2번째 방탈출', (await text('.dhero-top .ordinal')) === '2번째 방탈출', await text('.dhero-top .ordinal'));
   const gauges = await texts('.page-detail .gauge-item');
   check('난이도·공포도·활동성 게이지', gauges.length === 3 && gauges[0].includes('3.5'), gauges.join(' | '));
-  const saved = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.er);
-  check('서버 저장: remainingSec=754, hints=2, 매장·지점', saved && saved.er.cleared === true && saved.er.remainingSec === 754 && saved.er.hints === 2 &&
-    saved.er.timeLimitMin === 75 && saved.er.playerCount === 3 && saved.er.scores.puzzle === 4.5 && saved.er.brand === '키이스케이프' && saved.er.branch === '홍대점', JSON.stringify(saved && saved.er));
-  const g = (await api('GET', '/api/data')).data.games.find((x) => x.title === '잊혀진 연구소');
-  check('서버: 테마 정보(소장 없음 · 매장·지점)', g && g.type === 'escaperoom' && g.owned === false && g.brand === '키이스케이프' && saved.gameId === g.id, JSON.stringify(g));
-  ids.gEr = g && g.id;
-  await noOverflow('방탈출 상세');
-  await shot('14-detail-escaperoom');
-
-  // 결과를 하나도 고르지 않고 저장해도 실패·0개로 저장되지 않음 (게임과 날짜만으로 저장)
-  await go('#/new/escaperoom', '.page-form.t-escaperoom');
-  await setGame('잊혀진 연구소');
-  await page.click('.save-btn');
-  await page.waitForSelector('.page-detail', { timeout: 8000 });
-  const bare = decodeURIComponent(page.url().split('#/record/')[1] || '');
-  check('상세: 결과 미기록 · 힌트 –', (await text('.page-detail .result-er')).includes('결과 미기록') && (await texts('.page-detail .er-num-v')).includes('–'));
-  check('같은 테마를 다시 기록 → 기록 2개', (await text('.page-detail .dgame')).includes('기록 2개'), await text('.page-detail .dgame'));
-  const bareRec = (await api('GET', '/api/data')).data.records.find((r) => r.id === bare);
-  await go('#/records', '.page-list');
-  check('게임·날짜만으로 저장 · 결과·힌트·시간은 비어 있음(null)', bareRec && bareRec.er.cleared === null && bareRec.er.hints === null && bareRec.er.remainingSec === null &&
-    bareRec.rating === 0 && bareRec.review === '' && bareRec.er.brand === '키이스케이프', JSON.stringify(bareRec && bareRec.er));
-
-  await api('DELETE', `/api/records?id=${encodeURIComponent(bare)}`);
-  await syncFromServer();
+  check('세부 점수 4개 · 추천', (await texts('.page-detail .scorebars .sb-row')).length === 4 && (await text('.page-detail .replay')).includes('추천해요'));
+  const info = await text('.page-detail .info-grid');
+  check('브랜드·지점·장르·인원·제한 시간', ['키이스케이프', '홍대점', 'SF', '3인', '75분'].every((s) => info.includes(s)), info);
+  await noOverflow('방탈출 상세 (예전 기록)');
+  await shot('14b-detail-escaperoom-legacy');
 });
 
 await step('초안 이어 쓰기 (같은 id 로 저장)', async () => {
@@ -815,7 +842,6 @@ await step('초안 이어 쓰기 (같은 id 로 저장)', async () => {
   check('새 기록 폼에 초안 안내 (종류 · 게임)', (await text('.page-form .draft-banner')).includes('보드게임 · 삭제할 게임') && page.url().endsWith('#/new/boardgame'), await text('.page-form .draft-banner'));
   await page.click('.page-form .draft-banner button:has-text("불러오기")');
   check('게임·감상 복원', (await pickedGame()) === '삭제할 게임' && (await page.inputValue(REVIEW)) === '종류를 바꿔도 남는 감상');
-  await pickMembers(['연경']);
   await page.click('.save-btn');
   await page.waitForSelector('.page-detail', { timeout: 8000 });
   ids.junk = decodeURIComponent(page.url().split('#/record/')[1] || '');
@@ -850,7 +876,7 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   // 스포일러 머더미스터리 기록: 감상은 열기 전까지 가림, 범인·역할은 카드에 없음
   const mmCard = cardOf('붉은 저택의 초대');
   const mmText = await text(mmCard);
-  check('스포일러 머더미스터리 카드: 범인·역할 없음 · 감상은 가림', !mmText.includes('세바스찬') &&
+  check('스포일러 머더미스터리 카드: 내 역할·범인·역할 없음 · 감상은 가림', !mmText.includes('마르타') && !mmText.includes('세바스찬') && !(await page.$(`${mmCard} .rcard-role`)) &&
     !!(await page.$(`${mmCard} .spoiler:not(.is-revealed) .spoiler-btn`)) && await page.$eval(`${mmCard} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true' && getComputedStyle(e).filter.includes('blur')), mmText);
   await page.click(`${mmCard} .spoiler-btn`);
   check('카드에서 열면 감상만 보이고 상세로 넘어가지 않음', !!(await until(() => page.$(`${mmCard} .spoiler.is-revealed`), 2000)) && !!(await page.$('.page-list')) &&
@@ -885,7 +911,7 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   t = await until(async () => { const x = await cardTitles(); return x.length === 2 && x; });
   check('방탈출 필터 → 2개', !!t, String(t));
   await page.click('.page-list .seg-type .seg-item:has-text("전체")');
-  // 검색 (제목 · 매장 · 태그 · 후기)
+  // 검색 (제목 · 매장 · 내 역할 · 후기) — 태그는 더 이상 검색·필터 대상이 아님
   const search = async (q, expect) => {
     await page.fill('.page-list .search-input', q);
     const got = await until(async () => { const x = await cardTitles(); return JSON.stringify(x.sort()) === JSON.stringify([...expect].sort()) && x; }, 3000);
@@ -893,19 +919,24 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   };
   await search('연구소', ['잊혀진 연구소']);
   await search('강남점', ['붉은 저택의 초대', '저주받은 인형의 집']);
-  await search('#반전', ['붉은 저택의 초대']);
+  check('검색창 안내: 제목, 매장, 역할, 감상', (await page.getAttribute('.page-list .search-input', 'placeholder')) === '제목, 매장, 역할, 감상 검색');
+  await search('#반전', []); // 예전 기록에 태그가 남아 있어도 검색에는 안 잡힘
+  await search('마르타', ['붉은 저택의 초대']); // 내 역할(mm.myRole)
+  await search('집사 세바스찬', ['붉은 저택의 초대']); // 예전 기록의 배역 이름
   await search('역전했다', ['테라포밍 마스']);
   await search('없는검색어', []);
   check('결과 없음 안내', !!(await page.$('.page-list .empty')));
   await search('', ['테라포밍 마스', '붉은 저택의 초대', '잊혀진 연구소', '저주받은 인형의 집', '삭제할 게임']);
-  // 멤버 필터
+  // 멤버 필터 (태그 묶음은 없음)
   await page.click('.page-list .list-tools button:has-text("필터")');
+  const groups2 = await texts('.page-list .filter-panel .fp-label');
+  check('필터 영역: 멤버·소장 묶음만 (태그 묶음·태그 칩 없음)', groups2.length >= 2 && groups2.every((g) => !g.includes('태그')) && !(await page.$('.page-list .filter-panel .chip-tag')), groups2.join(' | '));
   await page.click('.page-list .filter-panel .chip-member:has(.chip-label:text-is("민지짱"))');
   t = await until(async () => { const x = await cardTitles(); return x.length === 2 && x; });
   check('멤버 필터(민지짱) → 2개', !!t, String(await cardTitles()));
-  await page.click('.page-list .filter-panel .chip-tag:has(.chip-label:text-is("#전략"))');
+  await page.click('.page-list .filter-panel .chip-own:has-text("내 소장")');
   t = await until(async () => { const x = await cardTitles(); return x.length === 1 && x; });
-  check('멤버+태그 필터 → 1개', t && t[0] === '테라포밍 마스', String(await cardTitles()));
+  check('멤버+소장 필터 → 1개', t && t[0] === '테라포밍 마스', String(await cardTitles()));
   await noOverflow('필터 열린 목록');
   await shot('16-list-filtered');
   check('적용 중인 필터는 칩 · 필터 버튼에 개수', (await texts('.page-list .achips .achip')).length === 2 && (await text('.page-list .filter-btn .fbadge')) === '2');
@@ -926,7 +957,83 @@ await step('목록 · 배지 · 필터 · 검색', async () => {
   await page.click('.page-list .seg-type .seg-item:has-text("전체")');
 });
 
-await step('기록 수정', async () => {
+await step('내 역할 (머더미스터리): 종류에 따라 칸 보임/숨김 · 목록 카드 · 상세 · 검색 · 스포일러 가리기', async () => {
+  const role = '.page-form [data-field="mm.myRole"]';
+  const typeBtn = (label) => `.page-form .rec-type .seg-item:has-text("${label}")`;
+  // 새 기록: 종류를 바꾸면 내 역할 칸이 나타나고 사라짐 (쓴 값은 남음)
+  await go('#/new/boardgame', '.page-form.t-boardgame');
+  check('보드게임 새 기록: 내 역할 칸 없음', await page.isHidden(role));
+  await page.click(typeBtn('머더미스터리'));
+  await page.waitForSelector('.page-form.t-murdermystery');
+  check('머더미스터리로 바꾸면 내 역할 칸이 나타남', await page.isVisible(role) && JSON.stringify(await visibleLabels()) === JSON.stringify(['종류', '작품', '날짜', '별점', '내 역할', '감상']), JSON.stringify(await visibleLabels()));
+  await page.fill(role, '해리엇 부인');
+  await page.click(typeBtn('방탈출'));
+  check('방탈출로 바꾸면 숨김', await page.isHidden(role) && JSON.stringify(await visibleLabels()) === JSON.stringify(['종류', '테마', '날짜', '별점', '감상']), JSON.stringify(await visibleLabels()));
+  await page.click(typeBtn('보드게임'));
+  check('보드게임으로 바꿔도 숨김', await page.isHidden(role));
+  await page.click(typeBtn('머더미스터리'));
+  check('다시 머더미스터리로 오면 쓰던 내 역할 그대로', (await page.isVisible(role)) && (await page.inputValue(role)) === '해리엇 부인');
+  await setGame('붉은 저택의 초대');
+  await setRating(RATING, ['3']);
+  await page.fill(REVIEW, '내 역할 시험용 감상');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  const roleId = STAMP_ID(page.url());
+  const mySec = '.page-detail .dsec:has(.dsec-title:text-is("내 역할"))';
+  check('상세: 스포일러가 아니면 내 역할을 가리지 않고 보여 줌', (await text(`${mySec} .my-role`)) === '해리엇 부인' && !(await page.$(`${mySec} .spoiler`)) && !(await page.$('.page-detail .spoiler')), await text(mySec));
+  const saved = await serverRecord(roleId);
+  check('서버 저장: mm.myRole · 스포일러 아님', saved && saved.mm.myRole === '해리엇 부인' && saved.spoiler === false && saved.mm.roleSpoiler === false && saved.gameId === ids.gMm, JSON.stringify(saved && { spoiler: saved.spoiler, gameId: saved.gameId, gMm: ids.gMm, myRole: saved.mm.myRole }));
+  await noOverflow('내 역할 상세');
+  await shot('12c-detail-myrole');
+
+  // 목록: 스포일러가 아닌 카드에는 ‘내 역할 · …’ 한 줄, 스포일러 카드·다른 종류에는 없음
+  await go('#/records', '.page-list');
+  const cardOf = (id) => `.page-list .rcard:has(.card-link[href="#/record/${encodeURIComponent(id)}"])`;
+  await page.waitForSelector(cardOf(roleId));
+  check('목록 카드: ‘내 역할 · 해리엇 부인’ 한 줄', (await text(`${cardOf(roleId)} .rcard-role`)) === '내 역할 · 해리엇 부인' && (await page.$$(`${cardOf(roleId)} .rcard-role`)).length === 1, await text(cardOf(roleId)));
+  check('스포일러 기록 카드에는 내 역할 없음 · 다른 종류 카드에도 없음', !(await page.$(`${cardOf(ids.mm)} .rcard-role`)) && (await page.$$('.page-list .rcard-role')).length === 1);
+  await noOverflow('내 역할 목록');
+  await shot('15b-list-myrole');
+  // 검색: 내 역할(mm.myRole)도 찾고, 예전 기록의 배역 이름·스포일러 기록도 찾음
+  const hrefs = () => page.$$eval('.page-list .rcard .card-link', (els) => els.map((e) => e.getAttribute('href')).sort());
+  const href = (id) => `#/record/${encodeURIComponent(id)}`;
+  const searchHrefs = async (q, expect) => {
+    await page.fill('.page-list .search-input', q);
+    const got = await until(async () => { const x = await hrefs(); return JSON.stringify(x) === JSON.stringify(expect.map(href).sort()) && x; }, 3000);
+    check(`검색 "${q}" → ${expect.length}개`, !!got, JSON.stringify(await hrefs()));
+  };
+  await searchHrefs('해리엇', [roleId]);
+  await searchHrefs('마르타', [ids.mm]);
+  await searchHrefs('집사 세바스찬', [ids.mm]);
+  await page.fill('.page-list .search-input', '');
+
+  // 수정 폼에 저장된 내 역할이 채워져 있고, 스포일러를 켜면 상세·카드에서 가림
+  await go(`#/edit/${encodeURIComponent(roleId)}`, '.page-form');
+  check('수정 폼: 내 역할 채워짐 · 보이는 항목', (await page.inputValue(role)) === '해리엇 부인' && JSON.stringify(await visibleLabels()) === JSON.stringify(['종류', '작품', '날짜', '별점', '내 역할', '감상']));
+  await page.click('.page-form .rec-spoiler .mini-check');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  check('스포일러로 바꾸면 상세의 내 역할이 가려짐', (await text(`${mySec} .spoiler-btn`)) === '내 역할 보기' && await page.$eval(`${mySec} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true'));
+  await go('#/records', '.page-list');
+  check('스포일러 카드에는 내 역할 없음', !!(await page.waitForSelector(cardOf(roleId))) && !(await page.$(`${cardOf(roleId)} .rcard-role`)) && (await page.$$('.page-list .rcard-role')).length === 0);
+  // ‘역할 가리기’(mm.roleSpoiler)만 켠 예전 기록: 감상은 보이고 내 역할만 가림
+  check('(준비) 스포일러 끄고 역할만 가리기', (await seedLegacy(roleId, { spoiler: false, mm: { roleSpoiler: true } })).status === 200);
+  await syncFromServer();
+  check('역할 가리기만 켠 카드에도 내 역할 없음', !(await page.$(`${cardOf(roleId)} .rcard-role`)));
+  await go(`#/record/${encodeURIComponent(roleId)}`, '.page-detail');
+  check('상세: 감상은 보이고 내 역할만 가림', !!(await page.$(`${mySec} .spoiler:not(.is-revealed)`)) && (await page.$$('.page-detail .spoiler')).length === 1 && (await text('.page-detail .review-text')) === '내 역할 시험용 감상');
+  await page.click(`${mySec} .spoiler-btn`);
+  check('눌러서 열면 내 역할이 보임', !!(await until(async () => (await text(`${mySec} .my-role`)) === '해리엇 부인' && (await page.$eval(`${mySec} .spoiler-content`, (e) => getComputedStyle(e).filter === 'none')), 2000)));
+  await api('DELETE', `/api/records?id=${encodeURIComponent(roleId)}`);
+  await syncFromServer();
+  check('(정리) 시험 기록 삭제', (await serverRecord(roleId)) === null);
+});
+
+/** 감상·별점·수정 시각만 빼고 비교 (화면에서 고친 두 값 말고는 서버 값이 그대로여야 함) */
+const withoutEdited = ({ review, rating, updatedAt, ...rest }) => canon(rest);
+
+await step('기록 수정 (예전 멤버·순위·태그는 화면에 없어도 그대로 보존)', async () => {
+  const before = await serverRecord(ids.bg);
   await go(`#/record/${encodeURIComponent(ids.bg)}`, '.page-detail');
   await page.click('.page-detail .dactions a:has-text("수정하기")');
   await page.waitForSelector('.page-form');
@@ -934,9 +1041,9 @@ await step('기록 수정', async () => {
   check('수정 폼에 기존 별점', (await ratingOf(RATING)) === '4.5');
   check('수정 폼: 종류는 고정 표시', !!(await page.$('.page-form .rec-type .badge')) && !(await page.$('.page-form .rec-type .seg')));
   const open = await page.$$eval('.page-form .rec-panel:not([hidden])', (els) => els.map((e) => e.dataset.panel));
-  check('수정 폼: 값이 있는 영역만 펼침', JSON.stringify(open) === JSON.stringify(['members', 'result', 'details', 'tags']), JSON.stringify(open));
-  const ranks = await page.$$eval('.result-row select.select-rank', (els) => els.map((e) => e.value));
-  check('수정 폼: 저장된 순위 유지(직접 입력)', JSON.stringify(ranks) === JSON.stringify(['2', '1', '2']), JSON.stringify(ranks));
+  check('수정 폼: 사진이 없으면 펼쳐진 영역 없음', JSON.stringify(open) === JSON.stringify([]), JSON.stringify(open));
+  check('수정 폼에도 멤버·순위·자세한 정보·태그 입력은 없음 (보이는 항목: 종류·게임·날짜·별점·감상)', await noRemovedPanels() && !(await page.$('.page-form .result-row, .page-form .chip-member, .page-form .chip-tag')) &&
+    JSON.stringify(await visibleLabels()) === JSON.stringify(['종류', '게임', '날짜', '별점', '감상']), JSON.stringify(await visibleLabels()));
   await page.fill(REVIEW, '화성 개척은 언제나 옳다\n영식이 막판 도시 타일로 역전했다.');
   await setRating(RATING, ['ArrowRight']);
   await page.click('.save-btn');
@@ -948,6 +1055,10 @@ await step('기록 수정', async () => {
   const rows = await texts('.page-detail .rank-row');
   check('수정 후에도 순위 유지', rows[0] && rows[0].includes('영식'), rows.join(' | '));
   check('수정 후에도 게임 연결 유지', (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.bg).gameId === ids.gTera);
+  const after = await serverRecord(ids.bg);
+  check('서버: 감상·별점만 바뀜', after.review.startsWith('화성 개척은 언제나 옳다') && after.rating === 5 && before.rating === 4.5 && after.updatedAt !== before.updatedAt);
+  check('서버: 멤버·순위·점수·승자·장소·시간·확장판·태그·날짜·게임 연결이 그대로', withoutEdited(after) === withoutEdited(before) && after.members.length === 3 && after.bg.results.length === 3 &&
+    after.tags.join() === '전략' && after.bg.place === '또또하우스 거실', `${withoutEdited(before)}\n${withoutEdited(after)}`);
 });
 
 await step('동시 수정 충돌 (409) — 취소 후 초안으로 덮어쓰기', async () => {
@@ -990,6 +1101,8 @@ await step('동시 수정 충돌 (409) — 취소 후 초안으로 덮어쓰기'
   check('덮어쓴 뒤 초안 삭제', (await page.evaluate(() => localStorage.getItem('ddh:draft'))) === null);
   const saved = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.er);
   check('서버에도 내 내용', saved.title === '잊혀진 연구소' && saved.review.includes('(내 수정)') && saved.rating === 5 && saved.er.remainingSec === 754, JSON.stringify(saved));
+  check('예전 방탈출 기록: 멤버·성공·남은 시간·힌트·세부 평가·장르가 수정 뒤에도 그대로', withoutEdited(saved) === withoutEdited(cur) && saved.members.length === 3 && saved.er.cleared === true &&
+    saved.er.hints === 2 && saved.er.scores.puzzle === 4.5 && saved.er.fear === 1 && saved.er.replay === true && saved.er.genre === 'SF', JSON.stringify(saved.er));
 });
 
 await step('기록 삭제 (확인 다이얼로그)', async () => {
@@ -1026,10 +1139,22 @@ await step('멤버 삭제 → (떠난 멤버)', async () => {
   const roles = await texts('.page-detail .role-row');
   check('역할에도 (떠난 멤버)', roles.some((r) => r.includes('(떠난 멤버)') && r.includes('정원사')), roles.join(' | '));
   check('떠난 멤버는 링크 아님', !!(await page.$('.page-detail .mrow.is-gone')) && !(await page.$('.page-detail a.mrow.is-gone')));
+  // 수정 폼에는 멤버·역할 칸이 없지만, 떠난 멤버가 들어 있는 예전 기록을 고쳐 저장해도 멤버·역할·범인·점수는 그대로
+  const beforeMm = await serverRecord(ids.mm);
   await go(`#/edit/${encodeURIComponent(ids.mm)}`, '.page-form');
-  check('수정 폼: 떠난 멤버 칩 유지', (await texts('.page-form .chip-member.is-gone .chip-label')).includes('(떠난 멤버)'));
-  await page.click('.page-form .savebar button:has-text("취소")');
-  await page.waitForSelector('.page-detail', { timeout: 5000 });
+  check('수정 폼: 저장된 내 역할이 채워져 있음 · 떠난 멤버 칩 같은 건 없음', (await page.inputValue('[data-field="mm.myRole"]')) === '마르타' && await noRemovedPanels() &&
+    !(await page.$('.page-form .chip-member, .page-form .role-card')));
+  check('수정 폼: 보이는 항목은 종류·작품·날짜·별점·내 역할·감상', JSON.stringify(await visibleLabels()) === JSON.stringify(['종류', '작품', '날짜', '별점', '내 역할', '감상']), JSON.stringify(await visibleLabels()));
+  await page.fill(REVIEW, `${beforeMm.review} (다시 읽고 고침)`);
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  const afterMm = await serverRecord(ids.mm);
+  check('서버: 감상만 바뀜', afterMm.review.endsWith('(다시 읽고 고침)') && afterMm.rating === beforeMm.rating);
+  check('서버: 떠난 멤버 포함 멤버·역할·범인·검거 결과·점수·태그·내 역할이 그대로', withoutEdited(afterMm) === withoutEdited(beforeMm) && afterMm.members.includes(ids['도윤']) && afterMm.mm.roles.length === 3 &&
+    afterMm.mm.roles.find((x) => x.memberId === ids['연경']).culprit === true && afterMm.mm.culpritResult === 'escaped' && afterMm.mm.scores.story === 4.5 && afterMm.mm.myRole === '마르타' &&
+    afterMm.tags.length === 3, `${withoutEdited(beforeMm)}\n${withoutEdited(afterMm)}`);
+  const rolesAfter = await texts('.page-detail .role-row');
+  check('상세: 역할에 (떠난 멤버) 그대로', rolesAfter.some((r) => r.includes('(떠난 멤버)') && r.includes('정원사')), rolesAfter.join(' | '));
 });
 
 await step('통계 (생성한 데이터와 일치)', async () => {
@@ -1301,6 +1426,8 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     });
     check('인원·예상 시간 나란히 · 장르는 아래', Math.abs(pos.p - pos.t) < 2 && pos.g > pos.p + 20, JSON.stringify(pos));
     check('장르 추천 칩 (전략·파티·추리·협력 …)', (await texts(`${dlg} .gf-genres .chip-label`)).slice(0, 4).join() === '전략,파티,추리,협력', JSON.stringify(await texts(`${dlg} .gf-genres .chip-label`)));
+    check('보드게임 등록 창: 이름표는 ‘장르’ (인원·예상 시간 칸도 있음)', (await text(`${dlg} .gf-genre-box .field-label`)) === '장르' && await page.isVisible(`${dlg} input[aria-label="장르 직접 추가"]`) &&
+      await page.isVisible(`${dlg} .gf-bg`));
     await noOverflow('소장 게임 등록 창');
     await shot('25b-collection-register');
 
@@ -1332,10 +1459,19 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     const dup = await until(async () => { const t = await text(`${dlg} .gf-dup`); return t.includes('같은 이름이 이미 있어요') && t; });
     check('같은 이름 → 기존 게임을 먼저 보여 줌 (이미 내 소장)', !!dup && dup.includes('아그리콜라') && dup.includes('1~4명 · 30~150분') && dup.includes('이미 내 소장'), String(dup));
     await shot('25b2-collection-register-dup');
-    // 머더미스터리로 바꿔 Enter 로 등록하고 닫기 (머더미스터리에는 인원·장르 칸 없음)
+    // 머더미스터리로 바꾸면 인원·시간 칸은 숨고 장르 자리가 ‘태그’(추천 칩도 작품용)로 바뀜
     await page.click(`${dlg} .seg-item:has-text("머더미스터리")`);
     check('머더미스터리 → 작품 이름 · 보드게임 칸 숨김 · 같은 이름 안내 사라짐', (await text(nameLabel)) === '작품 이름' && await page.isHidden(`${dlg} .gf-bg`) && await page.isHidden(`${dlg} .gf-dup`));
+    check('머더미스터리 → 장르 대신 ‘태그’ 칸 · 작품 태그 추천 칩', (await text(`${dlg} .gf-genre-box .field-label`)) === '태그' && await page.isVisible(`${dlg} .gf-genre-box`) &&
+      (await texts(`${dlg} .gf-genres .chip-label`)).slice(0, 4).join() === '추리중심,RP중심,감성,반전' && !!(await page.$(`${dlg} input[aria-label="태그 직접 추가"]`)), JSON.stringify(await texts(`${dlg} .gf-genres .chip-label`)));
+    await page.click(`${dlg} .seg-item:has-text("보드게임")`);
+    check('다시 보드게임 → ‘장르’ 이름표 · 장르 추천 칩', (await text(`${dlg} .gf-genre-box .field-label`)) === '장르' && (await texts(`${dlg} .gf-genres .chip-label`)).slice(0, 4).join() === '전략,파티,추리,협력' && await page.isVisible(`${dlg} .gf-bg`));
+    await page.click(`${dlg} .seg-item:has-text("머더미스터리")`);
     await page.fill('[data-field="game-title"]', '열차 밖의 밤');
+    await page.click(`${dlg} .gf-genres .chip:has-text("호러")`);
+    await page.fill(`${dlg} input[aria-label="태그 직접 추가"]`, '열차물');
+    await page.press(`${dlg} input[aria-label="태그 직접 추가"]`, 'Enter');
+    check('태그 두 개 선택 (추천 칩 + 직접 추가)', JSON.stringify(await texts(`${dlg} .gf-genres .chip[aria-pressed="true"] .chip-label`)) === JSON.stringify(['호러', '열차물']), JSON.stringify(await texts(`${dlg} .gf-genres .chip[aria-pressed="true"] .chip-label`)));
     await page.press('[data-field="game-title"]', 'Enter');
     await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
     check('닫으면 몇 개 등록했는지 알림', !!(await toastSeen(/소장 게임 2개를 등록했어요/)), String(await texts('.toast')));
@@ -1343,7 +1479,8 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     const agri = games.find((g) => g.title === '아그리콜라');
     check('서버: 내 소장 · 인원 1~4 · 시간 30~150 · 장르 2개', agri && agri.type === 'boardgame' && agri.owned === true && agri.memo === '확장 포함' &&
       agri.playersMin === 1 && agri.playersMax === 4 && agri.timeMin === 30 && agri.timeMax === 150 && JSON.stringify(agri.genres) === '["전략","농장"]', JSON.stringify(agri));
-    check('서버: 머더미스터리도 내 소장', games.some((g) => g.type === 'murdermystery' && g.title === '열차 밖의 밤' && g.owned === true), JSON.stringify(games));
+    check('서버: 머더미스터리도 내 소장 · 태그는 genres 에', games.some((g) => g.type === 'murdermystery' && g.title === '열차 밖의 밤' && g.owned === true && JSON.stringify(g.genres) === JSON.stringify(['호러', '열차물'])), JSON.stringify(games));
+    check('서버: 머더미스터리 작품에는 인원·시간 값 없음', games.filter((g) => g.title === '열차 밖의 밤').every((g) => !('playersMin' in g) && !('timeMin' in g)), JSON.stringify(games.filter((g) => g.title === '열차 밖의 밤')));
 
     // 목록: 기록이 없어도 소장에 보임
     const after = await texts('.page-collection .gcard-title');
@@ -1353,6 +1490,7 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     check('안 해 본 게임 카드: 인원·시간·장르 · 안내 · 등록일 · 메모 · 메뉴', (await text(`${gcard('아그리콜라')} .gcard-info`)) === '1~4명 · 30~150분 · 전략, 농장' &&
       (await text(`${gcard('아그리콜라')} .gcard-plays`)) === '아직 안 해 봤어요' && (await text(`${gcard('아그리콜라')} .gcard-last`)) === `${todayDot} 등록` &&
       (await text(`${gcard('아그리콜라')} .gcard-memo`)) === '확장 포함' && !!(await page.$(`${gcard('아그리콜라')} .gcard-more`)), await text(gcard('아그리콜라')));
+    check('머더미스터리 카드: 정보 줄에 태그', (await text(`${gcard('열차 밖의 밤')} .gcard-info`)) === '호러, 열차물', await text(gcard('열차 밖의 밤')));
     await page.selectOption('.page-collection select[aria-label="정렬"]', 'plays');
     check('많이 한 순: 안 해 본 게임은 뒤로', (await texts('.page-collection .gcard-title')).slice(-2).every((x) => ['아그리콜라', '열차 밖의 밤'].includes(x)));
     await page.selectOption('.page-collection select[aria-label="정렬"]', 'recent');
@@ -1383,6 +1521,7 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     // 안 해 본 게임 카드도 게임 상세로 → 플레이 기록하기 (게임이 골라진 채)
     await page.click(`${gcard('열차 밖의 밤')} .card-link`);
     await page.waitForSelector('.page-game');
+    check('작품 상세에도 태그', (await text('.page-game .ghero-info')) === '호러, 열차물', await text('.page-game .ghero'));
     check('안 해 본 게임 상세: 아직 안 해 봤어요 · 기록 없음 안내', (await text('.page-game .ghero-stat')).startsWith('아직 안 해 봤어요') && !(await page.$('.page-game .rcard')) &&
       !!(await page.$('.page-game .ghero-none')) && !!(await page.$('.page-game .ghero-more button:has-text("게임 정보 삭제")')), await text('.page-game'));
     await page.click('.page-game .ghero-write');
@@ -1496,7 +1635,7 @@ await step('설정: 내보내기 · 가져오기', async () => {
   const json = JSON.parse(readFileSync(exportFile, 'utf8'));
   check('파일 이름', /^ddoddohouse-backup-\d{8}\.json$/.test(dl.suggestedFilename()), dl.suggestedFilename());
   check('JSON: 기록 4 · 멤버 3', json.records.length === 4 && json.members.length === 3, `${json.records.length}/${json.members.length}`);
-  check('JSON: 앱 표시·세부 블록 포함', json.app === 'ddoddohouse-record' && json.records.find((r) => r.id === ids.mm).mm.roles.length === 3);
+  check('JSON: 앱 표시·세부 블록 포함 (내 역할도)', json.app === 'ddoddohouse-record' && json.records.find((r) => r.id === ids.mm).mm.roles.length === 3 && json.records.find((r) => r.id === ids.mm).mm.myRole === '마르타');
 
   // 서버에서 기록 하나를 지운 뒤 백업에서 되살리기
   const before = json.records.find((r) => r.id === ids.er0);
@@ -1609,7 +1748,7 @@ await step('다크 테마', async () => {
   ];
   for (const [hash, sel, name] of screens) {
     await go(hash, sel);
-    if (name.startsWith('form-')) await pickMembers(['연경', '영식']);
+    if (name === 'form-murdermystery') await page.fill('.page-form [data-field="mm.myRole"]', '마르타'); // 내 역할 칸이 채워진 모습도 확인
     await noOverflow(`다크 ${name}`);
     await shot(name);
   }
@@ -1735,7 +1874,6 @@ async function syncFromServer() {
   ]);
   await sleep(150);
 }
-const serverRecord = async (id) => (await api('GET', '/api/data')).data.records.find((r) => r.id === id) || null;
 const draftNow = () => page.evaluate(() => JSON.parse(localStorage.getItem('ddh:draft') || 'null'));
 
 await step('보안: 다른 사이트의 키 없는 요청(<img>·preflight)으로 잠기지 않음', async () => {
@@ -1985,36 +2123,7 @@ await step('가져오기: 이름이 같은 멤버는 기존 멤버로 합쳐서 
   await syncFromServer();
 });
 
-await step('폼: 멤버를 빼면 자동 승자도 다시 계산 · 입력만 한 태그도 저장', async () => {
-  await go('#/new/boardgame', '.page-form');
-  await setGame('승자 재계산 게임');
-  await pickMembers(['연경', '영식']);
-  await openPanel('result');
-  const row = (n) => `.result-row:has(.rr-name:text-is("${n}"))`;
-  await page.fill(`${row('연경')} .input-score`, '10');
-  await page.fill(`${row('영식')} .input-score`, '5');
-  check('처음엔 연경 승', (await page.getAttribute(`${row('연경')} .win-toggle`, 'aria-pressed')) === 'true');
-  await page.click(`${panelSel('result')} .chip-member:has(.chip-label:text-is("연경"))`); // 결과 영역에서 바로 연경 빼기
-  await page.waitForSelector(`${row('영식')}`);
-  check('결과 영역에서 뺀 사람은 함께한 사람에서도 빠짐', (await page.getAttribute(`${panelSel('members')} .chip-member:has(.chip-label:text-is("연경"))`, 'aria-pressed')) === 'false' &&
-    !(await page.$(row('연경'))));
-  check('남은 영식이 1등', (await text(`${row('영식')} .rank-badge`)) === '1등');
-  check('영식에게 승리 표시도 옮겨감', (await page.getAttribute(`${row('영식')} .win-toggle`, 'aria-pressed')) === 'true');
-  await openPanel('tags');
-  await page.fill('.page-form input[aria-label="태그 직접 입력"]', '#인생게임');
-  await foldPanel('tags');
-  await page.click('.save-btn');
-  await page.waitForSelector('.page-detail', { timeout: 8000 });
-  const id = decodeURIComponent(page.url().split('#/record/')[1] || '');
-  const saved = await serverRecord(id);
-  check('저장된 승자: 영식', saved && saved.bg.results.length === 1 && saved.bg.results[0].memberId === ids['영식'] && saved.bg.results[0].winner === true, JSON.stringify(saved && saved.bg));
-  check('‘추가’를 안 눌러도 태그 저장', saved && saved.tags.includes('인생게임'), JSON.stringify(saved && saved.tags));
-  check('상세에 우승 도장', (await text('.dhero-stamp')).includes('우승'));
-  await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
-  await syncFromServer();
-});
-
-await step('목록: 멤버 ‘모두 보기’·태그 링크는 예전 검색·종류 필터를 비움', async () => {
+await step('목록: 멤버 ‘모두 보기’는 예전 검색·종류 필터를 비움 (태그 링크는 없음)', async () => {
   await tab('records', '.page-list');
   await page.click('.page-list .seg-type .seg-item:has-text("보드게임")');
   await page.fill('.page-list .search-input', '테라');
@@ -2027,14 +2136,13 @@ await step('목록: 멤버 ‘모두 보기’·태그 링크는 예전 검색·
   check(`민지짱 기록 ${expected}개 모두 보임`, !!got, String(await cardTitles()));
   check('검색어 비움', (await page.inputValue('.page-list .search-input')) === '');
   check('종류는 전체', (await page.$eval('.page-list .seg-type input:checked', (e) => e.value)) === 'all');
-  // 태그 링크
-  await page.click('.page-list .seg-type .seg-item:has-text("보드게임")');
+  // 태그는 더 이상 링크가 아님: 태그가 남아 있는 예전 기록 상세에도 태그 줄이 없고, 옛 ?tag= 주소는 필터 없이 전체 목록
   await go(`#/record/${encodeURIComponent(ids.er0)}`, '.page-detail');
-  await page.click('.page-detail .dtags .tag:has-text("#공포")');
-  await page.waitForSelector('.page-list');
-  const t2 = await until(async () => { const t = await cardTitles(); return t.includes('저주받은 인형의 집') && t; }, 3000);
-  check('태그 링크 → 다른 종류 필터에 안 막힘', !!t2, String(await cardTitles()));
-  await page.click('.page-list .seg-type .seg-item:has-text("전체")');
+  check('상세에 태그 줄·태그 링크 없음 (예전 기록에 태그가 있어도)', !(await page.$('.page-detail .dtags')) && !(await page.$('.page-detail a[href*="tag="]')) &&
+    (await serverRecord(ids.er0)).tags.join() === '공포');
+  await go('#/records?tag=%EA%B3%B5%ED%8F%AC', '.page-list');
+  await sleep(200);
+  check('옛 ?tag= 주소는 무시 (태그 칩·태그 필터 없음)', !(await page.$('.page-list .achips .achip:has-text("#공포")')) && !(await page.$('.page-list .filter-panel .chip-tag')), String(await texts('.page-list .achips .achip')));
 });
 
 await step('머더미스터리: 같은 작품을 이미 해 본 멤버 안내', async () => {
@@ -2134,9 +2242,10 @@ await step('첫 로딩: 빈 화면 대신 ‘불러오는 중’, 새 기록 폼
   check('새 기록 폼은 데이터 전에는 안 그림', !(await ps.$('.page-form')));
   open();
   await ps.waitForSelector('.page-form', { timeout: 8000 });
-  await ps.click('.page-form .addon[data-panel="members"]');
-  const chips = await ps.$$eval('.page-form .rec-panel[data-panel="members"] .chip-member', (els) => els.length);
-  check('데이터가 오면 멤버 칩이 보임', chips >= 3, String(chips));
+  await ps.fill('.page-form .gp-input', '테라');
+  await ps.waitForSelector('.page-form .gp-opt:not(.gp-add)', { timeout: 5000 });
+  check('데이터가 오면 게임 검색 목록이 채워짐 (테라포밍 마스)', (await ps.$$eval('.page-form .gp-opt:not(.gp-add) .gp-opt-name', (els) => els.map((e) => e.textContent.trim()))).includes('테라포밍 마스'));
+  await ps.fill('.page-form .gp-input', '');
   check('게임 검색 목록도 채워짐', (await ps.$$eval('.page-form .gp-opt:not(.gp-add)', (els) => els.length)) > 0);
   await cs.close();
 
@@ -2269,7 +2378,6 @@ await step('사진: 올리기 — JPEG·PNG 모두 다시 인코딩, EXIF(위치
   await setGame('카탄');
   await openPanel('photos');
   check('사진 칸: 빈 상태는 작은 추가 칸 · 안내 한 줄', !!(await page.$('.rec-panel[data-panel="photos"] .ph-grid.is-empty .ph-add')) && (await text('.rec-panel[data-panel="photos"] .ph-hint')).includes('최대 4장'));
-  await pickMembers(['연경', '영식']);
   // 동시에 몇 장을 올리는지 (느린 연결에서 한꺼번에 올리면 모두 시간 초과가 나므로 한 장씩)
   const upl = { now: 0, max: 0, n: 0 };
   const isUpload = (r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/images';
@@ -2331,6 +2439,8 @@ await step('사진: 큰 사진 줄이기 · 4장 제한 · 열 수 없는 형식
   check('썸네일도 40KB 이하', (await imgBytes(photoIds.noisy, 't')).buf.length <= 40 * 1024);
   await page.setInputFiles(photoInput, [P.s4]);
   check('5장째는 안내만', !!(await toastSeen(/사진은 4장까지/)) && (await page.$$('.rec-panel[data-panel="photos"] .ph-tile')).length === 4);
+  check('사진 칸 아래에 ‘첫 장’ 배지 말고 다른 글자(예: null)가 없음', JSON.stringify(await texts('.rec-panel[data-panel="photos"] .ph-cell:not(.ph-cell-add) .ph-foot')) === JSON.stringify(['첫 장', '', '', '']),
+    JSON.stringify(await texts('.rec-panel[data-panel="photos"] .ph-cell:not(.ph-cell-add) .ph-foot')));
   await noOverflow('사진 4장 폼');
 });
 
@@ -2598,8 +2708,6 @@ await step('사진: 게임 대표 이미지는 플레이 사진과 따로 (사�
 await step('사진: 올리기 실패 → 다시 시도 · 올리는 중에 저장하면 기다렸다 저장', async () => {
   await go('#/new/escaperoom', '.page-form');
   await setGame('사진 테스트 방');
-  await openPanel('result');
-  await page.click('label.stamp-choice-clear');
   let fails = 1;
   await page.route('**/api/images', async (route) => {
     if (route.request().method() === 'POST' && fails > 0) {
@@ -2643,8 +2751,6 @@ await step('사진: 올리기 실패 → 다시 시도 · 올리는 중에 저�
 await step('사진: 저장 전에 서버에서 사라진 사진 → 그 사진만 빼고 다시 저장하게', async () => {
   await go('#/new/escaperoom', '.page-form');
   await setGame('사라진 사진 방');
-  await openPanel('result');
-  await page.click('label.stamp-choice-clear');
   await page.setInputFiles(photoInput, [P.s3, P.s5]);
   await photosSettled(2);
   const [gone, kept] = await formPhotoIds();
@@ -3256,6 +3362,12 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   check('새 기록: 바로 폼 · 종류 세 칸이 한 줄', await sideBySide('.page-form .rec-type .seg-item.t-boardgame', '.page-form .rec-type .seg-item.t-murdermystery'));
   await noOverflow('1440 새 기록');
   await shot('desktop-form-new');
+  await page.click('.page-form .rec-type .seg-item:has-text("머더미스터리")');
+  await page.fill('.page-form [data-field="mm.myRole"]', '세바스찬');
+  check('새 기록(머더미스터리): 내 역할 칸이 가운데 1열 안에 · 가로 넘침 없음', await page.$eval('.page-form .rec-role', (e) => { const b = e.getBoundingClientRect(); const f = document.querySelector('.page-form .rec-sheet').getBoundingClientRect(); return b.left >= f.left && b.right <= f.right && b.width > 0; }));
+  await noOverflow('1440 새 기록 (머더미스터리)');
+  await shot('desktop-form-murdermystery');
+  await page.evaluate(() => localStorage.removeItem('ddh:draft'));
 });
 
 await step('태블릿 1024px: 왼쪽 레일 · 가로 스크롤 없음', async () => {

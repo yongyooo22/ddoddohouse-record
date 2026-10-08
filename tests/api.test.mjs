@@ -545,6 +545,7 @@ describe('기록 검증', () => {
     assert.equal(v.rating, 3.5);
     assert.equal(v.spoiler, false);
     assert.deepEqual(v.mm, {
+      myRole: '',
       publisher: '',
       format: 'store',
       store: '',
@@ -690,7 +691,7 @@ describe('게임 정보 검증', () => {
     assert.deepEqual(finalizeGame({ type: 'boardgame', title: '카탄', memo: '', brand: 'x' }),
       { type: 'boardgame', title: '카탄', memo: '', owned: true, playersMin: null, playersMax: null, timeMin: null, timeMax: null, genres: [] });
     assert.deepEqual(finalizeGame({ type: 'murdermystery', title: 'm', owned: false, genres: ['a'], cover: 'c1' }),
-      { type: 'murdermystery', title: 'm', memo: '', owned: false, cover: 'c1' });
+      { type: 'murdermystery', title: 'm', memo: '', owned: false, cover: 'c1', genres: ['a'] }); // 작품 태그는 genres 에
     assert.deepEqual(finalizeGame({ type: 'escaperoom', title: 'e', owned: true, playersMin: 2, brand: 'b' }),
       { type: 'escaperoom', title: 'e', memo: '', owned: false, brand: 'b', branch: '' });
   });
@@ -710,6 +711,17 @@ describe('게임 정보 검증', () => {
     const bg = validateRecord({ ...base, type: 'boardgame' }).value.bg;
     assert.equal(bg.playTimeMin, null);
     assert.equal(validateRecord({ ...base, type: 'murdermystery', mm: { roleSpoiler: true } }).value.mm.roleSpoiler, true);
+  });
+
+  test('머더미스터리: 내 역할(myRole) — 멤버 없이 한 줄, 공백 정리, 30자 제한', () => {
+    const base = { type: 'murdermystery', date: '2026-01-31', title: '작품' };
+    assert.equal(validateRecord(base).value.mm.myRole, '', '안 적으면 빈 글자');
+    assert.equal(validateRecord({ ...base, mm: { myRole: '  세바스찬\u0000 ' } }).value.mm.myRole, '세바스찬');
+    assert.equal(validateRecord({ ...base, mm: { myRole: '가'.repeat(30) } }).ok, true);
+    assert.deepEqual(validateRecord({ ...base, mm: { myRole: '가'.repeat(31) } }), { ok: false, field: 'mm.myRole' });
+    assert.deepEqual(validateRecord({ ...base, mm: { myRole: 7 } }), { ok: false, field: 'mm.myRole' });
+    // 참여 멤버 없이도 저장 가능
+    assert.deepEqual(validateRecord({ ...base, mm: { myRole: '탐정' } }).value.members, []);
   });
 });
 

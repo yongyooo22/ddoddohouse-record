@@ -226,8 +226,9 @@ export function photoField({ model, onChange, onBusy, onAdd }) {
         : `사진 ${n}${cover ? ' (첫 장)' : ''} — 크게 보기·순서 바꾸기`);
     it.xBtn.setAttribute('aria-label', `사진 ${n} 빼기`);
     // 첫 장은 목록 카드에 보이는 사진 (게임 정보의 대표 이미지와는 따로)
-    it.foot.replaceChildren(cover && items.length > 1 ? h('span', { class: 'ph-badge', text: '첫 장' })
-      : it.status === 'error' ? h('span', { class: 'ph-foot-note', text: '실패' }) : null);
+    const note = cover && items.length > 1 ? h('span', { class: 'ph-badge', text: '첫 장' })
+      : it.status === 'error' ? h('span', { class: 'ph-foot-note', text: '실패' }) : null;
+    it.foot.replaceChildren(...(note ? [note] : [])); // replaceChildren(null) 은 'null' 글자를 넣음
   }
   function paint() {
     if (!alive) return;
