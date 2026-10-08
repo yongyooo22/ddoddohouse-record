@@ -364,6 +364,11 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
       if (game && game.type !== type) setType(game.type);
       m.gameId = game ? game.id : null;
       m.title = title || '';
+      // 새 방탈출 기록: 테마에 등록해 둔 매장·지점을 기록에도 남김 (통계 '브랜드별'이 기록의 값을 읽음)
+      if (game && isNew && game.type === 'escaperoom') {
+        if (!m.er.brand) m.er.brand = (game.brand || '').trim();
+        if (!m.er.branch) m.er.branch = (game.branch || '').trim();
+      }
       changed();
     },
   });
