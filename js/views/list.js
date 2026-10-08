@@ -1,7 +1,7 @@
 // 기록 목록 — 종류 탭 · 검색 · 필터(접어 둔 버튼) · 정렬, 적용 중인 필터는 칩으로, 월별 그룹
 import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, OWNERSHIPS } from '../constants.js';
-import { state, recordsSorted, membersSorted, allTags, memberInfo, isFirstLoad, loadFailed, titleOf, gameOfRecord, gameById, isOwnedGame } from '../store.js';
+import { state, recordsSorted, membersSorted, memberInfo, isFirstLoad, loadFailed, titleOf, gameOfRecord, gameById, isOwnedGame } from '../store.js';
 import { norm, monthKey, fmtMonth } from '../format.js';
 import { segmented, chip, avatar, emptyState, loadingState, loadErrorState, typeName } from '../ui.js';
 import { ownershipOf, lenderOf, titleKey } from '../stats.js';
@@ -10,7 +10,7 @@ import { recordCard, bgOf, mmOf, erOf } from './bits.js';
 const PAGE = 60;
 
 // 화면을 떠났다 돌아와도 필터 유지. own: 소장('mine'|'borrowed'|''), game: 한 게임만(게임 정보 id), title: 한 이름만(예전 기록)
-const filters = { type: 'all', q: '', sort: 'new', members: [], tags: [], own: '', game: '', title: '', open: false };
+const filters = { type: 'all', q: '', sort: 'new', members: [], own: '', game: '', title: '', open: false };
 
 /** 소장 필터: '내 소장' = 게임 정보가 내 소장(없으면 예전 기록의 '내 소장'), '대여' = 예전 기록의 대여 */
 function ownOf(r) {
@@ -20,9 +20,10 @@ function ownOf(r) {
 }
 
 function haystack(r) {
-  const parts = [titleOf(r), r.title, r.oneLiner, r.review, ...(Array.isArray(r.tags) ? r.tags : [])];
+  const parts = [titleOf(r), r.title, r.oneLiner, r.review];
   const bg = bgOf(r), mm = mmOf(r), er = erOf(r);
   parts.push(bg.place, bg.expansion, mm.publisher, mm.store, mm.gm, er.brand, er.branch, er.genre, lenderOf(r));
+  parts.push(mm.myRole);
   for (const x of Array.isArray(mm.roles) ? mm.roles : []) parts.push(x && x.character);
   return norm(parts.filter(Boolean).join(' \n '));
 }
@@ -41,7 +42,6 @@ function applyFilters() {
   let list = recordsSorted().filter((r) =>
     (filters.type === 'all' || r.type === filters.type) &&
     (!filters.members.length || filters.members.every((id) => Array.isArray(r.members) && r.members.includes(id))) &&
-    (!filters.tags.length || filters.tags.every((t) => Array.isArray(r.tags) && r.tags.includes(t))) &&
     (!filters.own || ownOf(r) === filters.own) &&
     (!filters.game || (gameOfRecord(r) || {}).id === filters.game) &&
     (!tk || titleKey(r.title) === tk) &&
@@ -56,14 +56,13 @@ function applyFilters() {
 
 export function mount(root, ctx) {
   const q = ctx.query || {};
-  // 다른 화면의 링크(종류 바로가기·태그·멤버 '모두 보기')로 왔으면 예전 검색·필터를 비우고 그 조건만
+  // 다른 화면의 링크(종류 바로가기·멤버 '모두 보기')로 왔으면 예전 검색·필터를 비우고 그 조건만
   // (탭으로 돌아온 경우에는 쓰던 필터를 그대로 둠)
   const typeQ = q.type && (q.type === 'all' || TYPE_KEYS.includes(q.type)) ? q.type : null;
   const ownQ = OWNERSHIPS.some((o) => o.key === q.own) ? q.own : '';
   const gameQ = q.game && gameById(q.game) ? q.game : '';
-  if ((typeQ || q.tag || q.member || ownQ || q.title || gameQ) && !ctx.restored) {
-    Object.assign(filters, { type: typeQ || 'all', q: '', sort: 'new', members: [], tags: [], own: ownQ, game: gameQ, title: gameQ ? '' : q.title || '', open: false });
-    if (q.tag) filters.tags = [q.tag];
+  if ((typeQ || q.member || ownQ || q.title || gameQ) && !ctx.restored) {
+    Object.assign(filters, { type: typeQ || 'all', q: '', sort: 'new', members: [], own: ownQ, game: gameQ, title: gameQ ? '' : q.title || '', open: false });
     if (q.member) filters.members = [q.member];
   }
 
@@ -76,7 +75,7 @@ export function mount(root, ctx) {
   });
 
   const search = h('input', {
-    type: 'search', class: 'input search-input', placeholder: '제목, 태그, 매장, 감상 검색',
+    type: 'search', class: 'input search-input', placeholder: '제목, 매장, 역할, 감상 검색',
     'aria-label': '기록 검색', value: filters.q, enterkeyhint: 'search', autocomplete: 'off',
   });
   let t = null;
@@ -104,8 +103,6 @@ export function mount(root, ctx) {
 
   function renderPanel() {
     const mems = membersSorted();
-    const tags = allTags().slice(0, 30);
-    for (const tg of filters.tags) if (!tags.includes(tg)) tags.unshift(tg);
     panel.replaceChildren(
       h('div', { class: 'fp-group' },
         h('p', { class: 'fp-label', text: '함께한 멤버 (모두 포함)' }),
@@ -119,17 +116,6 @@ export function mount(root, ctx) {
           })))
           : h('p', { class: 'muted small', text: '등록된 멤버가 없어요' })),
       h('div', { class: 'fp-group' },
-        h('p', { class: 'fp-label', text: '태그' }),
-        tags.length
-          ? h('div', { class: 'chips' }, tags.map((tg) => chip({
-            label: `#${tg}`, pressed: filters.tags.includes(tg), cls: 'chip-tag',
-            onToggle: (on) => {
-              filters.tags = on ? [...filters.tags, tg] : filters.tags.filter((x) => x !== tg);
-              limit = PAGE; renderResults();
-            },
-          })))
-          : h('p', { class: 'muted small', text: '아직 쓴 태그가 없어요' })),
-      h('div', { class: 'fp-group' },
         h('p', { class: 'fp-label', text: '소장 (보드게임·머더미스터리)' }),
         h('div', { class: 'chips' }, ownChips())),
       h('div', { class: 'fp-actions' },
@@ -140,7 +126,7 @@ export function mount(root, ctx) {
   }
 
   function clearAll() {
-    Object.assign(filters, { members: [], tags: [], own: '', game: '', title: '' });
+    Object.assign(filters, { members: [], own: '', game: '', title: '' });
     limit = PAGE;
     renderPanel();
     renderResults();
@@ -190,12 +176,6 @@ export function mount(root, ctx) {
         onClick: () => { filters.members = filters.members.filter((x) => x !== id); renderPanel(); renderResults(); },
       }, avatar(id, 'xs'), h('span', { text: memberInfo(id).name }), icon('x')));
     }
-    for (const tg of filters.tags) {
-      items.push(h('button', {
-        type: 'button', class: 'achip', 'aria-label': `#${tg} 필터 해제`,
-        onClick: () => { filters.tags = filters.tags.filter((x) => x !== tg); renderPanel(); renderResults(); },
-      }, h('span', { text: `#${tg}` }), icon('x')));
-    }
     if (items.length > 1) {
       items.push(h('button', { type: 'button', class: 'btn btn-ghost btn-sm achips-clear', onClick: clearAll }, '모두 해제'));
     }
@@ -204,7 +184,7 @@ export function mount(root, ctx) {
 
   function renderResults() {
     const list = applyFilters();
-    const nf = filters.members.length + filters.tags.length + (filters.own ? 1 : 0) + (filters.title ? 1 : 0) + (filters.game ? 1 : 0);
+    const nf = filters.members.length + (filters.own ? 1 : 0) + (filters.title ? 1 : 0) + (filters.game ? 1 : 0);
     filterBadge.hidden = nf === 0;
     filterBadge.textContent = String(nf);
     const scoped = filters.type === 'all' ? '전체' : TYPES[filters.type].label;

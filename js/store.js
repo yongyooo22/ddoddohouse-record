@@ -412,20 +412,3 @@ export function playedBy(gameId, excludeId) {
   }
   return [...ids];
 }
-
-/** 자주 쓴 태그 (종류별) */
-export function usedTags(type) {
-  return cached(`tags:${type}`, () => {
-    const counts = new Map();
-    for (const r of state.records) {
-      if (type && r.type !== type) continue;
-      for (const t of Array.isArray(r.tags) ? r.tags : []) counts.set(t, (counts.get(t) || 0) + 1);
-    }
-    return [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t);
-  });
-}
-
-/** 모든 태그 (필터용) */
-export function allTags() {
-  return usedTags('');
-}
