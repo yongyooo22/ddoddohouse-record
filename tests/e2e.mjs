@@ -3245,7 +3245,9 @@ await step('사진: 저장 → 상세 갤러리 · 전체화면 뷰어 · 목록
   check('목록 카드: 사진 수 표시 · 링크 이름에 사진 수', (await text(`${card} .rcard-pn`)) === '4' && /사진 4장/.test(await page.getAttribute(`${card} .card-link`, 'aria-label')));
   const plain = '.page-list .rcard:has(.card-link:text-is("잊혀진 연구소"))';
   check('사진 없는 카드는 예전 모습', !!(await page.$(plain)) && !(await page.$(`${plain} .rcard-photo`)) && !(await page.$eval(plain, (e) => e.classList.contains('has-photo'))));
+  // elementFromPoint 는 화면 안의 점만 봐요 — 카드가 아래 메뉴에 가리거나 화면 밖이면(새벽 0~5시엔 기본 날짜가 어제라 순서가 바뀜) 먼저 가운데로
   check('사진 썸네일을 눌러도 기록이 열림', await page.$eval(`${card} .rcard-photo`, (el) => {
+    el.scrollIntoView({ block: 'center' });
     const b = el.getBoundingClientRect();
     const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
     return !!hit && hit.classList.contains('card-link');
