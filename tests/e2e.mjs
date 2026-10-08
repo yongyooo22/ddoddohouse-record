@@ -1453,6 +1453,219 @@ await step('나: 시험 데이터 정리', async () => {
   await go('#/', '.page-home');
 });
 
+// ═════════════════════════════════════════════════════════════
+// 아바타·멤버 이모지는 화면에서 사라짐 / 오른쪽 위 ‘나’ 버튼(.me-chip)
+const GONE_SEL = '.av, .emoji-pick, .emoji-clear, .input-emoji, .mprev';
+const goneCount = () => page.$$eval(GONE_SEL, (els) => els.length);
+/** 두 요소가 겹치지 않는지 (가로 기준) */
+const apart = (a, b) => page.evaluate(([x, y]) => {
+  const p = document.querySelector(x);
+  const q = document.querySelector(y);
+  if (!p || !q) return true;
+  const r1 = p.getBoundingClientRect();
+  const r2 = q.getBoundingClientRect();
+  return r1.right <= r2.left + 0.5 || r2.right <= r1.left + 0.5 || r1.bottom <= r2.top + 0.5 || r2.bottom <= r1.top + 0.5;
+}, [a, b]);
+const MECHIP_SCREENS = [
+  ['home', '.page-home', '.home-head', '.home-title'],
+  ['records', '.page-list', '.page-head', '.page-title'],
+  ['collection', '.page-collection', '.page-head', '.page-title'],
+  ['stats', '.page-stats', '.page-head', '.page-title'],
+  ['members', '.page-members', '.page-head', '.page-title'],
+];
+
+await step('아바타·이모지 없음: 멤버 목록 · 프로필 · 멤버 창 · 기록 폼 · 필터 · 통계 · 상세', async () => {
+  await setMeLS(null);
+  await reloadApp();
+  await tab('members', '.page-members');
+  check('멤버 목록: 이름은 보이고 아바타·이모지 없음', (await texts('.page-members .mlist-name')).length >= 4 && (await goneCount()) === 0);
+  await go(`#/member/${encodeURIComponent(ids['연경'])}`, '.page-profile');
+  check('프로필: 이름은 보이고 아바타·이모지 없음', (await text('.phero-name')).startsWith('연경') && (await goneCount()) === 0, await text('.phero'));
+  await noOverflow('390 프로필 (아바타 없음)');
+  await shot('av-profile-390');
+  // 멤버 창: 새로 · 수정 — 이름과 색만
+  await tab('members', '.page-members');
+  await page.click('.page-members .page-head button[aria-label="멤버 추가"]');
+  await page.waitForSelector(`${dlg}.dlg-member`);
+  const newLabels = await texts(`${dlg} .mform .field-label`);
+  check('새 멤버 창: 이름·색만 (이모지 입력·추천·미리보기 없음)', JSON.stringify(newLabels) === JSON.stringify(['이름', '색']) && (await goneCount()) === 0 &&
+    (await page.$$(`${dlg} .swatch`)).length >= 8, JSON.stringify(newLabels));
+  await noOverflow('390 새 멤버 창');
+  await shot('av-member-dialog-390');
+  await closeDialogs();
+  await go(`#/member/${encodeURIComponent(ids['영식'])}`, '.page-profile');
+  await page.click('.page-profile .appbar button[aria-label="수정"]');
+  await page.waitForSelector(`${dlg}.dlg-member`);
+  check('멤버 수정 창: 이름·색만 · 아바타·이모지 없음', JSON.stringify(await texts(`${dlg} .mform .field-label`)) === JSON.stringify(['이름', '색']) && (await goneCount()) === 0 &&
+    (await page.inputValue(`${dlg} input[placeholder="이름 또는 별명"]`)) === '영식');
+  await closeDialogs();
+  // 기록 폼의 함께한 사람
+  await go('#/new/boardgame', '.page-form.t-boardgame');
+  await openPanel('members');
+  check('기록 폼 함께한 사람: 이름 칩만 (아바타 없음)', (await page.$$(`${panelSel('members')} .chip-member`)).length >= 4 && (await goneCount()) === 0);
+  await noOverflow('390 기록 폼 함께한 사람');
+  await leaveForm();
+  // 목록 필터
+  await tab('records', '.page-list');
+  await page.click('.page-list .list-tools button:has-text("필터")');
+  await page.waitForSelector('.page-list .filter-panel .chip-member');
+  check('목록 필터: 멤버 칩에 아바타 없음', (await page.$$('.page-list .filter-panel .chip-member')).length >= 4 && (await goneCount()) === 0);
+  await page.click('.page-list .filter-panel .chip-member:first-of-type');
+  check('필터 적용 뒤에도 아바타 없음 (적용 칩 포함)', (await page.$$('.page-list .achips .achip')).length >= 1 && (await goneCount()) === 0);
+  await noOverflow('390 목록 필터');
+  await shot('av-list-filter-390');
+  await page.click('.page-list .filter-panel .chip-member[aria-pressed="true"]'); // 다시 눌러 필터 해제
+  await until(async () => (await page.$$('.page-list .achips .achip')).length === 0);
+  await page.click('.page-list .list-tools button:has-text("필터")');
+  // 통계
+  await tab('stats', '.page-stats');
+  check('통계: 막대·순위·으뜸 카드에 아바타 없음', (await goneCount()) === 0 && (await page.$$('.page-stats .hb-row')).length >= 1, await text('.page-stats'));
+  await noOverflow('390 통계 (아바타 없음)');
+  await shot('av-stats-390');
+  // 상세
+  await go(`#/record/${encodeURIComponent(ids.er0)}`, '.page-detail');
+  check('상세: 함께한 멤버 줄은 이름만 (아바타 없음)', (await page.$$('.page-detail .mrow')).length === 2 && (await goneCount()) === 0, await text('.page-detail .mrows'));
+  check('상세: 멤버 이름 표시', JSON.stringify(await texts('.page-detail .mrow .mrow-name')) === JSON.stringify(['연경', '영식']), JSON.stringify(await texts('.page-detail .mrow')));
+  // 멤버 목록의 ‘이번 달 멤버’ 카드(있으면)와 홈
+  await tab('members', '.page-members');
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await sleep(200);
+  await go('#/members', '.page-members');
+  check('1440 멤버 목록: 아바타·이모지 없음', (await goneCount()) === 0);
+  await noOverflow('1440 멤버 목록 (아바타 없음)');
+  await page.click('.page-members .page-head button[aria-label="멤버 추가"]');
+  await page.waitForSelector(`${dlg}.dlg-member`);
+  await noOverflow('1440 새 멤버 창');
+  await shot('av-member-dialog-1440');
+  await closeDialogs();
+  await page.setViewportSize(VIEWPORT);
+  await sleep(150);
+});
+
+await step('멤버 수정: 저장된 이모지는 화면에 없어도 그대로 남음', async () => {
+  const mk = await api('POST', '/api/members', { member: { name: '이모지시험', emoji: '🦊' } });
+  check('(준비) 이모지가 있는 멤버를 API 로 만듦', mk.status === 200 && mk.data.member.emoji === '🦊', JSON.stringify(mk.data));
+  const id = mk.data.member.id;
+  await reloadApp();
+  await go(`#/member/${encodeURIComponent(id)}`, '.page-profile');
+  check('프로필에 이모지 안 보임 (이름만)', !(await text('.phero')).includes('🦊') && (await text('.phero-name')).startsWith('이모지시험') && (await goneCount()) === 0, await text('.phero'));
+  await tab('members', '.page-members');
+  check('목록에도 이모지 안 보임', !(await texts('.page-members .mlist-name')).concat(await texts('.page-members .mlist-row')).some((t) => t.includes('🦊')));
+  await go(`#/member/${encodeURIComponent(id)}`, '.page-profile');
+  await page.click('.page-profile .appbar button[aria-label="수정"]');
+  await page.waitForSelector(`${dlg}.dlg-member`);
+  check('수정 창에 이모지 입력 없음', (await goneCount()) === 0 && !(await page.$$eval(`${dlg} input`, (els) => els.some((e) => e.value === '🦊'))));
+  await page.fill(`${dlg} input[placeholder="이름 또는 별명"]`, '이모지시험2');
+  await page.click(`${dlg} label.swatch.mc-c5`);
+  await dialogButton('저장');
+  await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
+  check('이름 갱신', (await until(async () => (await text('.phero-name')).startsWith('이모지시험2'))) === true);
+  const m = (await api('GET', '/api/data')).data.members.find((x) => x.id === id);
+  check('서버: 이름·색은 바뀌고 이모지 🦊 는 그대로', m && m.name === '이모지시험2' && m.color === 'c5' && m.emoji === '🦊', JSON.stringify(m));
+  await api('DELETE', `/api/members?id=${encodeURIComponent(id)}`);
+  await reloadApp();
+  check('(정리) 시험 멤버 삭제', !(await api('GET', '/api/data')).data.members.some((x) => x.id === id));
+});
+
+await step('나 버튼 (.me-chip): 다섯 화면 오른쪽 위 · 고르기 · 바꾸기 · 해제', async () => {
+  await setMeLS(null);
+  await reloadApp();
+  const ys = ids['영식'];
+  const chipText = () => text('.me-chip');
+  // 나가 없을 때
+  for (const [tabName, pageSel, headSel] of MECHIP_SCREENS) {
+    await tab(tabName, pageSel);
+    check(`${tabName}: 나 버튼 하나 · ‘나 고르기’ · is-empty`, (await page.$$('.me-chip')).length === 1 && (await chipText()) === '나 고르기' &&
+      (await page.$eval('.me-chip', (e) => e.classList.contains('is-empty'))) && !!(await page.$('.me-chip .ico')), `${(await page.$$('.me-chip')).length} ${await chipText()}`);
+    check(`${tabName}: 나 버튼은 화면 머리 안`, !!(await page.$(`${pageSel} ${headSel} .me-chip`)) && await page.isVisible('.me-chip'));
+  }
+  check('멤버·목록·소장: 머리 오른쪽은 head-actions(＋ 버튼 다음에 나 버튼)', await (async () => {
+    for (const [tabName, pageSel] of [['members', '.page-members'], ['collection', '.page-collection'], ['records', '.page-list']]) {
+      await tab(tabName, pageSel);
+      const order = await page.$eval(`${pageSel} .page-head .head-actions`, (e) => [...e.children].map((c) => c.classList.contains('me-chip') ? 'chip' : c.classList.contains('head-add') ? 'add' : 'other').join(','));
+      if (order !== 'add,chip') return false;
+    }
+    return true;
+  })());
+  check('설정 화면에는 나 버튼 없음', await (async () => { await tab('settings', '.page-settings'); return !(await page.$('.me-chip')); })());
+
+  // 레이아웃 (390 · 320 · 1440) — 나 버튼이 제목·＋ 버튼과 겹치지 않고 가로 넘침 없음
+  for (const [w, h2, label] of [[390, 844, '390'], [320, 640, '320'], [1440, 900, '1440']]) {
+    await page.setViewportSize({ width: w, height: h2 });
+    await sleep(150);
+    for (const [tabName, pageSel, , titleSel] of MECHIP_SCREENS) {
+      await go(tabName === 'home' ? '#/' : `#/${tabName === 'records' ? 'records' : tabName}`, pageSel);
+      await sleep(80);
+      const vis = await page.isVisible('.me-chip');
+      const box = await page.$eval('.me-chip', (e) => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, h: b.height }; });
+      check(`${label} ${tabName} (나 없음): 나 버튼 보임 · 화면 안 · 제목과 안 겹침`, vis && box.l >= 0 && box.r <= w + 0.5 && await apart('.me-chip', `${pageSel} ${titleSel}`) && await apart('.me-chip', `${pageSel} .head-add`), JSON.stringify(box));
+      await noOverflow(`${label} ${tabName} (나 버튼 · 나 없음)`);
+    }
+    await go('#/', '.page-home');
+    if (w === 390) await shot('mechip-home-empty-390');
+    if (w === 1440) await shot('mechip-home-empty-1440');
+    if (w === 390) { await go('#/records', '.page-list'); await shot('mechip-list-empty-390'); }
+  }
+  await page.setViewportSize(VIEWPORT);
+  await sleep(150);
+
+  // 누르면 나 고르기 창 → 영식 고름
+  await tab('home', '.page-home');
+  await page.click('.me-chip');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  check('나 버튼을 누르면 나 고르기 창', (await text(`${dlg}.dlg-me .dlg-title`)) === '나는 누구인가요?' && (await page.$$(`${dlg}.dlg-me .me-pick-row.is-current`)).length === 0 && (await goneCount()) === 0);
+  await noOverflow('390 나 고르기 창 (나 버튼에서)');
+  await page.click(`${dlg}.dlg-me .me-pick-row[data-member-id="${ys}"]`);
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  check('홈 나 버튼: 영식 이름으로 바뀜 · is-empty 풀림', !!(await until(async () => (await chipText()) === '영식')) && !(await page.$eval('.me-chip', (e) => e.classList.contains('is-empty'))) && !(await page.$('.me-chip .ico')), await chipText());
+  check('나 버튼 aria-label ‘나: 영식 (눌러서 바꾸기)’', (await page.getAttribute('.me-chip', 'aria-label')) === '나: 영식 (눌러서 바꾸기)');
+  check('localStorage ddh:me 에 영식 id', (await getMeLS()) === ys, String(await getMeLS()));
+  for (const [tabName, pageSel] of MECHIP_SCREENS) {
+    await tab(tabName, pageSel);
+    check(`${tabName}: 나 버튼에 ‘영식’ (하나뿐)`, (await page.$$('.me-chip')).length === 1 && (await chipText()) === '영식' && !(await page.$eval('.me-chip', (e) => e.classList.contains('is-empty'))), await chipText());
+  }
+  // 이름이 있어도 좁은 화면에 맞음
+  for (const [w, h2, label] of [[390, 844, '390'], [320, 640, '320'], [1440, 900, '1440']]) {
+    await page.setViewportSize({ width: w, height: h2 });
+    await sleep(150);
+    for (const [tabName, pageSel, , titleSel] of MECHIP_SCREENS) {
+      await go(tabName === 'home' ? '#/' : `#/${tabName}`, pageSel);
+      await sleep(80);
+      check(`${label} ${tabName} (나=영식): 나 버튼 제목·＋ 버튼과 안 겹침`, await page.isVisible('.me-chip') && await apart('.me-chip', `${pageSel} ${titleSel}`) && await apart('.me-chip', `${pageSel} .head-add`));
+      await noOverflow(`${label} ${tabName} (나 버튼 · 나=영식)`);
+    }
+    if (w === 390) { await go('#/', '.page-home'); await shot('mechip-home-set-390'); await go('#/records', '.page-list'); await shot('mechip-list-set-390'); await go('#/members', '.page-members'); await shot('mechip-members-set-390'); }
+  }
+  await page.setViewportSize(VIEWPORT);
+  await sleep(150);
+  // 다시 누르면 지금 나가 표시된 창 → 나 해제
+  await tab('stats', '.page-stats');
+  await page.click('.me-chip');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  check('다시 열면 지금 나(영식)에 is-current · aria-pressed=true', (await page.getAttribute(`${dlg}.dlg-me .me-pick-row.is-current`, 'data-member-id')) === ys &&
+    (await page.getAttribute(`${dlg}.dlg-me .me-pick-row[data-member-id="${ys}"]`, 'aria-pressed')) === 'true' && (await texts(`${dlg} .dlg-actions button`)).includes('나 해제'));
+  await dialogButton('나 해제');
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  check('나 해제 → 나 버튼 ‘나 고르기’ · localStorage 비움', !!(await until(async () => (await chipText()) === '나 고르기' && (await page.$eval('.me-chip', (e) => e.classList.contains('is-empty'))))) && (await getMeLS()) === null, await chipText());
+  for (const [tabName, pageSel] of MECHIP_SCREENS) {
+    await tab(tabName, pageSel);
+    check(`${tabName}: 해제 뒤 ‘나 고르기’`, (await chipText()) === '나 고르기');
+  }
+  // 취소하면 그대로
+  await page.click('.me-chip');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await page.keyboard.press('Escape');
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  check('창을 취소하면 그대로 ‘나 고르기’', (await chipText()) === '나 고르기' && (await getMeLS()) === null);
+  // 키보드로도 열림
+  await page.focus('.me-chip');
+  await page.keyboard.press('Enter');
+  check('키보드(Enter)로도 열림', !!(await until(() => page.$(`${dlg}.dlg-me`), 2000)));
+  await closeDialogs();
+  await setMeLS(null);
+  await go('#/', '.page-home');
+});
+
 /** 감상·별점·수정 시각만 빼고 비교 (화면에서 고친 두 값 말고는 서버 값이 그대로여야 함) */
 const withoutEdited = ({ review, rating, updatedAt, ...rest }) => canon(rest);
 
@@ -1656,7 +1869,8 @@ await step('홈 요약 · 멤버 프로필', async () => {
   const mobRows = await page.$eval('.page-home .summary', (e) => new Set([...e.querySelectorAll('.sum-item')].map((x) => Math.round(x.getBoundingClientRect().top))).size);
   check('휴대폰: 요약 띠는 한 줄 다섯 칸', mobRows === 1, String(mobRows));
   const headH = await page.$eval('.page-home .home-head', (e) => e.getBoundingClientRect().height);
-  check('휴대폰: 제목은 한 줄로 낮게', headH < 48, String(headH));
+  // 오른쪽 위 ‘나’ 버튼(높이 36px) 때문에 머리는 14+36=50px. 제목이 두 줄이면 70px 가까이 됨
+  check('휴대폰: 제목은 한 줄로 낮게 (나 버튼 포함 56px 미만)', headH < 56, String(headH));
   check('홈 제목 ‘플레이 기록’', (await text('.page-home .home-title')) === '플레이 기록');
   check('휴대폰: 최근 기록 첫 카드가 첫 화면 위쪽에', await page.$eval('.page-home .rcard', (e) => e.getBoundingClientRect().top < 260));
   check('휴대폰: 최근 기록 한 칸', await page.evaluate(() => {
