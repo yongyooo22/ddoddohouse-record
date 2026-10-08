@@ -114,6 +114,36 @@ export function bgDecided(record) {
   return arr(bg.results).some((x) => obj(x).winner === true);
 }
 
+/**
+ * 보드게임 점수 → 등수. 같은 점수는 같은 등수이고 다음 등수는 건너뜀 (1·2·2·4).
+ * 점수를 적지 않은 사람은 등수가 없음. lowWins: 낮은 점수가 이기는 게임
+ * @returns {Map<string, number>} memberId → 등수
+ */
+export function scoreRanks(entries, { lowWins = false } = {}) {
+  const scored = arr(entries).map(obj).filter((e) => typeof e.memberId === 'string' && e.memberId && num(e.score) !== null);
+  const out = new Map();
+  for (const e of scored) {
+    const s = num(e.score);
+    const better = scored.filter((o) => (lowWins ? num(o.score) < s : num(o.score) > s)).length;
+    out.set(e.memberId, better + 1);
+  }
+  return out;
+}
+
+/** 저장된 결과가 '낮은 점수가 이김'으로 매겨졌는지 (등수가 앞선 사람의 점수가 더 낮은 경우만 있으면 true) */
+export function bgLowWins(results) {
+  const xs = arr(results).map(obj).filter((x) => num(x.score) !== null && num(x.rank) !== null);
+  let low = false;
+  for (const a of xs) {
+    for (const b of xs) {
+      if (num(a.rank) >= num(b.rank)) continue;
+      if (num(a.score) > num(b.score)) return false;
+      if (num(a.score) < num(b.score)) low = true;
+    }
+  }
+  return low;
+}
+
 /** 제목 묶기용 키 — 같은 게임인지 비교할 때 (공백 정리 + 대소문자 무시) */
 export function titleKey(title) {
   return groupKey(title);
@@ -261,6 +291,44 @@ export function boardgameStats(records) {
     memberWinRates,
     topWinner,
   };
+}
+
+/**
+ * 보드게임 랭킹 — 순위(승자)가 기록된 경쟁·팀전 판만 (협력은 모두 함께 이기거나 지므로 빠짐).
+ * 1등 횟수 → 1등 비율 → 평균 등수(낮을수록 위) → 판 수 순. 셋이 모두 같으면 같은 자리.
+ * 그 판에 함께했지만 점수·등수가 없는 사람은 1등을 못 한 판으로 셈. keep(memberId) 가 false 인 사람(떠난 멤버 등)은 빼고 자리를 매김
+ * @returns {{memberId, place, games, wins, rate, avgRank}[]}
+ */
+export function bgRanking(records, { keep = () => true } = {}) {
+  const per = new Map();
+  for (const r of ofType(records, 'boardgame')) {
+    const bg = obj(r.bg);
+    if (bg.mode === 'coop' || !bgDecided(r)) continue;
+    const res = new Map();
+    for (const x of arr(bg.results).map(obj)) if (typeof x.memberId === 'string' && x.memberId) res.set(x.memberId, x);
+    for (const id of participants(r)) {
+      const t = tally(per, id, { games: 0, wins: 0, rankSum: 0, ranked: 0 });
+      t.games++;
+      const x = res.get(id);
+      if (x && x.winner === true) t.wins++;
+      const rank = x ? num(x.rank) : null;
+      if (rank !== null && rank >= 1) {
+        t.rankSum += rank;
+        t.ranked++;
+      }
+    }
+  }
+  const rows = [...per.values()].filter((t) => keep(t.memberId)).map((t) => ({
+    memberId: t.memberId, place: 0, games: t.games, wins: t.wins, rate: t.wins / t.games,
+    avgRank: t.ranked ? t.rankSum / t.ranked : null,
+  }));
+  rows.sort((a, b) => b.wins - a.wins || b.rate - a.rate || (a.avgRank ?? Infinity) - (b.avgRank ?? Infinity) ||
+    b.games - a.games || cmpStr(a.memberId, b.memberId));
+  rows.forEach((x, i) => {
+    const p = rows[i - 1];
+    x.place = p && p.wins === x.wins && p.rate === x.rate && p.avgRank === x.avgRank ? p.place : i + 1;
+  });
+  return rows;
 }
 
 // ── 머더미스터리 ─────────────────────────────────────────────
