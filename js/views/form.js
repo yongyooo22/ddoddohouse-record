@@ -1,8 +1,9 @@
-// 새 기록 / 수정 폼 — 가운데 1열. 종류 · 게임 · 날짜 · 별점 · (머더미스터리: 내 역할) · 감상만 적고,
-// 사진은 작은 버튼으로 펼쳐서. 예전 기록에 있던 결과·자세한 정보·태그·함께한 사람은 화면에서 빠졌지만
+// 새 기록 / 수정 폼 — 가운데 1열. 종류 · 게임 · 날짜 · 별점 · (머더미스터리: 내 역할) · 감상만 적어요.
+// 예전 기록에 있던 자세한 정보·태그·플레이 사진은 화면에서 빠졌지만
 // 수정해서 저장해도 그 값은 그대로 보존돼요 (모델에 실어 두었다가 다시 보냄).
 // 이 기기의 '나'가 정해져 있으면 새 기록에 나를 참여자로 넣고, 내 역할을 내 배역(mm.roles)에도 남겨요.
-// 함께한 사람은 선택 사항 (작은 버튼으로 펼침)
+// 함께한 사람은 선택 사항 (작은 버튼으로 펼침). 고른 사람마다 보드게임은 점수(등수는 점수로 자동),
+// 머더미스터리는 맡은 역할을 적어요.
 import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, LIMITS, FIELD_LABELS, MM_SCORES, ER_SCORES } from '../constants.js';
 import {
@@ -16,9 +17,10 @@ import {
   appBar, chip, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge, typeName,
 } from '../ui.js';
 import { openMemberEditor, pickMe } from './members.js';
-import { photoField, discardPhotos } from './photos.js';
+import { discardPhotos } from './photos.js';
 import { gamePicker } from './game-picker.js';
 import { existingPhotos } from '../images.js';
+import { scoreRanks, bgLowWins } from '../stats.js';
 
 /** 작은 체크 (스포일러 가리기) */
 function miniCheck(label, checked, onChange, title) {
@@ -51,7 +53,7 @@ function blankModel(type, meId = null) {
       brand: '', branch: '', genre: '', playerCount: '', timeLimitMin: '', cleared: null, hints: null,
       scores: { story: 0, interior: 0, puzzle: 0, device: 0 }, difficulty: 0, fear: 0, activity: 0, replay: false,
     },
-    ui: { rankMode: 'high', winnerManual: false, pcAuto: true, remainMM: '', remainSS: '' },
+    ui: { rankMode: 'high', pcAuto: true, remainMM: '', remainSS: '' },
   };
 }
 
@@ -139,15 +141,13 @@ function toModel(src, type) {
   }
   if (isObj(src.ui)) {
     const u = src.ui;
-    m.ui.rankMode = ['high', 'low', 'manual'].includes(u.rankMode) ? u.rankMode : 'high';
-    m.ui.winnerManual = !!u.winnerManual;
+    m.ui.rankMode = u.rankMode === 'low' ? 'low' : 'high';
     m.ui.pcAuto = u.pcAuto !== false;
     if (typeof u.remainMM === 'string') m.ui.remainMM = u.remainMM;
     if (typeof u.remainSS === 'string') m.ui.remainSS = u.remainSS;
-  } else if (src.bg && Array.isArray(src.bg.results) && src.bg.results.length) {
-    // 기존 기록 편집: 저장된 순위를 존중하도록 직접 입력 모드
-    m.ui.rankMode = 'manual';
-    m.ui.winnerManual = true;
+  } else if (isObj(src.bg)) {
+    // 저장된 기록: 등수가 앞선 사람의 점수가 더 낮았으면 '낮은 점수가 이겨요'로 열어 줌
+    m.ui.rankMode = bgLowWins(src.bg.results) ? 'low' : 'high';
   }
   if (src.id) m.ui.pcAuto = false;
   return m;
@@ -171,7 +171,9 @@ function toPayload(m, id, createdAt, meId = null) {
       place: b.place.trim(), playTimeMin: intOrNull(b.playTimeMin), mode: b.mode, expansion: b.expansion.trim(),
       coopWin: b.mode === 'coop' ? b.coopWin : null,
       ownership: ownOrNull(b.ownership), lender: b.ownership === 'borrowed' ? b.lender.trim() : '',
-      results: b.mode === 'coop' ? [] : b.results.filter((r) => m.members.includes(r.memberId)).map((r) => ({
+      // 점수·등수·승리 중 하나라도 있는 줄만 (점수를 적었다가 지운 줄은 빼고)
+      results: b.mode === 'coop' ? [] : b.results.filter((r) => m.members.includes(r.memberId) &&
+        (Number.isFinite(Number(r.score)) && r.score !== null && r.score !== '' || r.rank || r.winner)).map((r) => ({
         memberId: r.memberId,
         score: r.score === null || r.score === '' || !Number.isFinite(Number(r.score)) ? null : Number(r.score),
         rank: r.rank ? Number(r.rank) : null,
@@ -194,7 +196,9 @@ function toPayload(m, id, createdAt, meId = null) {
       myRole: b.myRole.trim(),
       publisher: b.publisher.trim(), format: b.format, store: b.format === 'store' ? b.store.trim() : '', gm: b.gm.trim(),
       playerCount: pc, playTimeMin: intOrNull(b.playTimeMin),
-      roles: roles.filter((r) => m.members.includes(r.memberId)).map((r) => ({
+      // 역할·범인·승패·MVP 중 하나라도 있는 배역만 (역할을 적었다가 지운 줄은 빼고)
+      roles: roles.filter((r) => m.members.includes(r.memberId) &&
+        ((r.character || '').trim() || r.culprit || r.outcome || r.mvp)).map((r) => ({
         memberId: r.memberId, character: r.character.trim(), culprit: !!r.culprit, outcome: r.outcome || null, mvp: !!r.mvp,
       })),
       roleSpoiler: !!b.roleSpoiler,
@@ -276,7 +280,6 @@ export function mount(root, ctx) {
 }
 
 const PANELS = [
-  { key: 'photos', label: '사진', icon: 'camera' },
   { key: 'members', label: '함께한 사람', icon: 'users' },
 ];
 
@@ -295,7 +298,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
   let recreateCreatedAt = null; // 삭제된 기록을 다시 만들 때 원래 작성 시각 유지 (N번째 순서 보존)
   let autoRetried = false;
   let alive = true;
-  let formReady = false; // 저장 버튼까지 만들어진 뒤부터 사진 상태를 버튼에 반영
   const editingId = isNew ? null : rec.id;
   // 연결한 게임의 이름이 바뀌었으면 지금 이름으로
   if (rec && m.gameId) m.title = titleOf(rec) || m.title;
@@ -420,7 +422,11 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     type: 'text', class: 'input', value: m.mm.myRole, maxlength: String(LIMITS.character), placeholder: '예) 세바스찬',
     autocomplete: 'off', id: nextId('myrole'), 'data-field': 'mm.myRole',
   });
-  roleIn.addEventListener('input', () => { m.mm.myRole = roleIn.value; changed(); });
+  roleIn.addEventListener('input', () => {
+    m.mm.myRole = roleIn.value;
+    if (meRoleIn) meRoleIn.value = roleIn.value;
+    changed();
+  });
   // 이 기기의 '나': 정해 두면 새 기록에 나를 참여자로 넣고 내 역할을 내 이름으로 남김
   const meRow = h('div', { class: 'me-row' });
   function paintMe() {
@@ -487,24 +493,11 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
   const addonBar = h('div', { class: 'rec-addons', role: 'group', 'aria-label': '더 적기' });
   const panelBox = h('div', { class: 'rec-panels' });
 
-  // 사진 칸은 올리는 중인 상태를 들고 있어서 한 번만 만들고 계속 씀
-  const photos = photoField({
-    model: () => m,
-    onChange: changed,
-    onBusy: () => { if (formReady) { paintSaveLabel(); paintAddons(); } },
-    onAdd: () => openPanel('photos'),
-  });
-
   const memberNames = () => {
     const ns = m.members.map((id) => memberInfo(id).name);
     return ns.length > 2 ? `${ns.slice(0, 2).join(', ')} 외 ${ns.length - 2}명` : ns.join(', ');
   };
   const summaries = {
-    photos: () => {
-      const n = photos.count();
-      const busy = photos.busy();
-      return n ? `${n}장${busy ? ' · 올리는 중' : ''}` : '';
-    },
     members: memberNames,
   };
 
@@ -516,6 +509,8 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     } else {
       m.members = m.members.filter((x) => x !== id);
     }
+    rerank();
+    paintExtras();
     changed();
     return true;
   }
@@ -539,7 +534,118 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
           type: 'button', class: 'chip chip-add',
           onClick: async () => { const saved = await openMemberEditor(null); if (saved && alive) { toggleMember(saved.id, true); rebuildMembers(); } },
         }, icon('plus'), h('span', { class: 'chip-label', text: '새 멤버' }))),
-      !mems.length ? h('p', { class: 'fhint', text: '아직 등록된 멤버가 없어요. ‘새 멤버’로 바로 추가할 수 있어요.' }) : null);
+      !mems.length ? h('p', { class: 'fhint', text: '아직 등록된 멤버가 없어요. ‘새 멤버’로 바로 추가할 수 있어요.' }) : null,
+      (paintExtras(), extraSlot));
+  }
+
+  // ── 함께한 사람마다: 보드게임 점수(등수는 자동) · 머더미스터리 역할 ──
+  const extraSlot = h('div', { class: 'mx' });
+  const rankEls = new Map(); // memberId → 등수 표시
+  let meRoleIn = null; // '나'의 역할 입력 (위의 '내 역할'과 같은 값)
+
+  function bgEntry(id) {
+    let e = m.bg.results.find((r) => r.memberId === id);
+    if (!e) {
+      e = { memberId: id, score: null, rank: null, winner: false };
+      m.bg.results.push(e);
+    }
+    return e;
+  }
+  /** 점수로 등수를 다시 매김 (1등 = 승리). 점수가 하나도 없으면 예전에 매겨 둔 등수를 그대로 둠 */
+  function rerank() {
+    const ents = m.bg.results.filter((r) => m.members.includes(r.memberId));
+    if (!ents.some((r) => r.score !== null)) return;
+    const ranks = scoreRanks(ents, { lowWins: m.ui.rankMode === 'low' });
+    for (const r of ents) {
+      r.rank = ranks.get(r.memberId) ?? null;
+      r.winner = r.rank === 1;
+    }
+  }
+  function paintRanks() {
+    for (const [id, el] of rankEls) {
+      const e = m.bg.results.find((r) => r.memberId === id);
+      const rank = e && e.rank ? e.rank : null;
+      el.replaceChildren(...(rank === 1 ? [icon('crown')] : []), h('span', { text: rank ? `${rank}등` : '–' }));
+      el.classList.toggle('is-first', rank === 1);
+    }
+  }
+  function memberLabel(id, forId) {
+    return h('label', { class: 'mx-name', htmlFor: forId },
+      h('span', { class: 'mx-name-text', text: memberInfo(id).name }),
+      id === getMeId() ? h('span', { class: 'me-badge', text: '나' }) : null);
+  }
+  function scoreRow(id) {
+    const e = m.bg.results.find((r) => r.memberId === id);
+    const inp = h('input', {
+      type: 'number', class: 'input mx-score', step: 'any', min: '-1000000000', max: '1000000000',
+      value: e && e.score !== null && e.score !== undefined ? String(e.score) : '', placeholder: '점수',
+      id: nextId('score'), 'data-member-id': id, 'aria-label': `${memberInfo(id).name} 점수`,
+    });
+    inp.addEventListener('input', () => {
+      const n = inp.value.trim() === '' ? NaN : Number(inp.value);
+      const ent = bgEntry(id);
+      ent.score = Number.isFinite(n) && Math.abs(n) <= 1e9 ? n : null;
+      if (ent.score === null) { ent.rank = null; ent.winner = false; }
+      rerank();
+      paintRanks();
+      changed();
+    });
+    const rank = h('span', { class: 'mx-rank' });
+    rankEls.set(id, rank);
+    return h('li', { class: 'mx-row mx-row-score', 'data-member-id': id }, rank, memberLabel(id, inp.id), inp, h('span', { class: 'mx-unit', 'aria-hidden': 'true', text: '점' }));
+  }
+  function roleRow(id) {
+    const isMe = id === getMeId();
+    const cur = isMe ? m.mm.myRole : ((m.mm.roles.find((r) => r.memberId === id) || {}).character || '');
+    const inp = h('input', {
+      type: 'text', class: 'input mx-role', value: cur, maxlength: String(LIMITS.character), placeholder: '맡은 역할',
+      autocomplete: 'off', id: nextId('role'), 'data-member-id': id,
+    });
+    inp.addEventListener('input', () => {
+      if (isMe) {
+        m.mm.myRole = inp.value;
+        roleIn.value = inp.value;
+      } else {
+        let e = m.mm.roles.find((r) => r.memberId === id);
+        if (!e) {
+          e = { memberId: id, character: '', culprit: false, outcome: null, mvp: false };
+          m.mm.roles.push(e);
+        }
+        e.character = inp.value;
+      }
+      changed();
+    });
+    if (isMe) meRoleIn = inp;
+    return h('li', { class: 'mx-row mx-row-role', 'data-member-id': id }, memberLabel(id, inp.id), inp);
+  }
+  function paintExtras() {
+    rankEls.clear();
+    meRoleIn = null;
+    const ids = m.members;
+    if (type === 'boardgame' && m.bg.mode !== 'coop') {
+      if (!ids.length) {
+        extraSlot.replaceChildren(h('p', { class: 'fhint', text: '함께한 사람을 고르면 점수를 적을 수 있어요. 점수를 적으면 순위가 자동으로 매겨져요.' }));
+        return;
+      }
+      extraSlot.replaceChildren(
+        h('div', { class: 'mx-head' },
+          h('span', { class: 'mx-title', text: '점수' }),
+          miniCheck('낮은 점수가 이겨요', m.ui.rankMode === 'low', (v) => { m.ui.rankMode = v ? 'low' : 'high'; rerank(); paintRanks(); changed(); },
+            '골프처럼 점수가 낮을수록 높은 순위')),
+        h('ul', { class: 'mx-list', 'aria-label': '점수' }, ids.map(scoreRow)),
+        h('p', { class: 'fhint', text: '점수를 적으면 순위가 자동으로 매겨져요. 같은 점수는 같은 순위예요.' }));
+      paintRanks();
+    } else if (type === 'murdermystery') {
+      if (!ids.length) {
+        extraSlot.replaceChildren(h('p', { class: 'fhint', text: '함께한 사람을 고르면 각자 맡은 역할을 적을 수 있어요.' }));
+        return;
+      }
+      extraSlot.replaceChildren(
+        h('div', { class: 'mx-head' }, h('span', { class: 'mx-title', text: '맡은 역할' })),
+        h('ul', { class: 'mx-list', 'aria-label': '맡은 역할' }, ids.map(roleRow)));
+    } else {
+      extraSlot.replaceChildren();
+    }
   }
   function rebuildMembers() {
     const pn = panels.members;
@@ -548,7 +654,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
   }
 
   const builders = {
-    photos: () => photos.el,
     members: membersBody,
   };
 
@@ -556,9 +661,10 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     const id = `panel-${p.key}`;
     const sum = h('span', { class: 'rp-sum' });
     const body = h('div', { class: 'rp-body' });
+    const titleText = h('span', { text: p.label });
     const el = h('section', { class: 'rec-panel', id, 'data-panel': p.key, hidden: true, 'aria-label': p.label },
       h('div', { class: 'rp-head' },
-        h('h2', { class: 'rp-title' }, icon(p.icon), h('span', { text: p.label })),
+        h('h2', { class: 'rp-title' }, icon(p.icon), titleText),
         sum,
         h('button', { type: 'button', class: 'btn btn-ghost btn-sm rp-fold', 'aria-controls': id, onClick: () => closePanel(p.key, true) }, '접기')),
       body);
@@ -567,13 +673,10 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     const btn = h('button', { type: 'button', class: 'addon', 'data-panel': p.key, 'aria-expanded': 'false', 'aria-controls': id },
       h('span', { class: 'addon-ico', 'aria-hidden': 'true' }), btnLabel, btnSum);
     btn.addEventListener('click', () => (panels[p.key].open ? closePanel(p.key) : openPanel(p.key, { focus: true })));
-    panels[p.key] = { ...p, el, body, sum, btn, btnSum, open: false, built: false };
+    panels[p.key] = { ...p, el, body, sum, btn, btnLabel, btnSum, titleText, open: false, built: false };
     addonBar.append(btn);
     panelBox.append(el);
   }
-  // 사진 칸은 미리 만들어 둠: 접혀 있어도 붙여넣기·파일 선택이 바로 되도록
-  buildPanel('photos');
-
   function buildPanel(name) {
     const pn = panels[name];
     pn.body.replaceChildren(builders[name]());
@@ -601,17 +704,24 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     paintAddons();
     if (fromHead) pn.btn.focus({ preventScroll: true });
   }
+  /** 함께한 사람 칸 이름: 보드게임은 점수, 머더미스터리는 역할도 적는다는 걸 버튼에서 알 수 있게 */
+  const panelLabel = (p) => (p.key !== 'members' ? p.label
+    : type === 'boardgame' ? `${p.label} · 점수` : type === 'murdermystery' ? `${p.label} · 역할` : p.label);
   function paintAddons() {
     for (const p of PANELS) {
       const pn = panels[p.key];
       if (!pn) continue;
+      const label = panelLabel(p);
+      pn.btnLabel.textContent = label;
+      pn.titleText.textContent = label;
+      pn.el.setAttribute('aria-label', label);
       const sum = summaries[p.key]();
       pn.btn.classList.toggle('has-value', !!sum);
       pn.btn.classList.toggle('is-open', pn.open);
       pn.btn.setAttribute('aria-expanded', pn.open ? 'true' : 'false');
       pn.btn.firstChild.replaceChildren(icon(sum ? 'check' : 'plus'));
       pn.btnSum.textContent = sum && !pn.open ? sum : '';
-      pn.btn.setAttribute('aria-label', `${p.label}${sum ? ` — ${sum}` : ''}${pn.open ? ' 접기' : ' 펼치기'}`);
+      pn.btn.setAttribute('aria-label', `${label}${sum ? ` — ${sum}` : ''}${pn.open ? ' 접기' : ' 펼치기'}`);
       pn.sum.textContent = sum;
     }
   }
@@ -630,13 +740,14 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     paintTypeSlot();
     paintRole();
     paintReview();
+    if (panels.members && panels.members.built) paintExtras();
     try { history.replaceState(history.state, '', `#/new/${v}`); } catch { /* 무시 */ }
     changed();
   }
 
   /** 값이 있는 영역은 펼쳐서 보여 줌 (기존 기록 수정·초안 불러오기) */
   function openFilled() {
-    for (const p of PANELS) if (summaries[p.key]() || (p.key === 'photos' && m.photos.length)) openPanel(p.key);
+    for (const p of PANELS) if (summaries[p.key]()) openPanel(p.key);
   }
 
   function buildAll() {
@@ -676,7 +787,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
             adoptDraftId();
             dirty = true;
             banner.hidden = true;
-            photos.reset(m.photos);
             const g = gameById(m.gameId);
             if (g) picker.select(g);
             buildAll();
@@ -705,7 +815,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
       draftTimer = null;
       dirty = false;
       clearMyDraft();
-      photos.discardUnsaved();
     }
     goBack(isNew ? '#/' : `#/record/${encodeURIComponent(rec.id)}`);
   });
@@ -714,14 +823,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     saveBtn.disabled = on;
     saveBtn.classList.toggle('is-busy', on);
     saveBtn.lastChild.textContent = on ? label : idleLabel;
-    if (!on) paintSaveLabel();
-  }
-  /** 사진을 올리는 동안은 저장 버튼에 알림 (누르면 다 올린 뒤 저장) */
-  function paintSaveLabel() {
-    if (saving) return;
-    const n = photos.busy();
-    saveBtn.classList.toggle('is-waiting', n > 0);
-    saveBtn.lastChild.textContent = n > 0 ? `사진 올리는 중… (${n})` : idleLabel;
   }
 
   function invalid(msg, sel, panel) {
@@ -765,24 +866,9 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
   async function save() {
     if (saving) return;
     if (!validate()) return;
-    if (photos.busy()) {
-      // 사진을 다 올린 다음에 저장 (올리는 중인 사진이 빠진 채 저장되지 않게)
-      saving = true;
-      setBusy(true, '사진 올리는 중…');
-      toast('사진을 다 올리면 바로 저장할게요', 'info');
-      await photos.whenIdle();
-      saving = false;
-      setBusy(false);
-      if (!alive) return;
-    }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       const kept = flushDraft();
       toast(`오프라인이라 저장할 수 없어요. ${keptMsg(kept)}`, 'error', 4000);
-      return;
-    }
-    if (photos.failed()) {
-      toast('올리지 못한 사진이 있어요. 사진을 눌러 다시 올리거나 ✕로 빼 주세요', 'error', 4500);
-      photos.focus();
       return;
     }
     saving = true;
@@ -815,14 +901,15 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
         setBusy(false);
         await handleDeleted();
       } else if (e.code === 'invalid' && /^photos/.test(String((e.data && e.data.field) || ''))) {
-        // 오래된 초안의 사진이 그사이 정리된 경우 → 없는 사진만 빼고 다시 저장하게
+        // 예전 기록·오래된 초안의 사진이 그사이 정리된 경우 → 없는 사진만 빼고 다시 저장하게
         // (서버가 알려 준 목록을 먼저 씀 — 메모리에 받아 둔 사진은 서버에서 지워졌어도 있는 것처럼 보이므로)
         flushDraft();
         const missing = e.data && Array.isArray(e.data.missing) ? e.data.missing : null;
         const ok = missing ? m.photos.filter((id) => !missing.includes(id)) : await existingPhotos(m.photos);
         const gone = m.photos.filter((id) => !ok.includes(id));
         if (gone.length) {
-          photos.drop(gone);
+          m.photos = m.photos.filter((id) => !gone.includes(id));
+          changed();
           toast(`사라진 사진 ${gone.length}장을 뺐어요. 다시 저장해 주세요`, 'error', 4500);
         } else {
           toast('사진 항목을 확인해 주세요', 'error', 4000);
@@ -911,7 +998,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     h('div', { class: 'rec-more' }, addonBar, panelBox));
   form.append(banner, sheet, h('div', { class: 'savebar' }, cancelBtn, saveBtn));
 
-  formReady = true;
   buildAll();
   if (!isNew || dirty) openFilled();
   const pageEl = h('div', { class: `page page-form ${t.cls}` },
@@ -935,7 +1021,6 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     alive = false;
     window.removeEventListener('pagehide', onHide);
     document.removeEventListener('visibilitychange', onHide);
-    photos.destroy();
     if (dirty && draftTimer) writeDraft();
   };
 }

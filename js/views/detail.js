@@ -95,25 +95,7 @@ function mmSection(r) {
   ]);
   if (grid) out.push(sec('그날의 정보', grid));
 
-  const roles = arr(mm.roles).filter((x) => x && x.memberId);
-  const resultStamp = mm.culpritResult === 'caught' ? stamp('범인 검거', 'caught') : mm.culpritResult === 'escaped' ? stamp('범인 도주', 'escaped') : null;
-  if (roles.length || resultStamp) {
-    const list = roles.length ? h('ul', { class: 'roles' }, roles.map((x) => {
-        const oc = MM_OUTCOMES.find((o) => o.key === x.outcome);
-        return h('li', { class: `role-row${x.culprit ? ' is-culprit' : ''}` },
-          memberLink(x.memberId),
-          h('span', { class: 'role-char', text: x.character || '캐릭터 미기록' }),
-          h('span', { class: 'role-flags' },
-            x.culprit ? stamp('범인', 'culprit', { tilt: false }) : null,
-            oc ? h('span', { class: `outcome outcome-${oc.key}`, text: oc.label }) : null,
-            x.mvp ? h('span', { class: 'mvp' }, icon('crown'), h('span', { text: 'MVP' })) : null));
-      })) : null;
-    // 누가 어떤 역할·범인이었는지는 작품 스포일러 → 스포일러 기록이거나 '역할·범인 가리기'면 가림
-    const hasSecret = roles.some((x) => x.culprit || x.character);
-    out.push(sec('역할과 결과',
-      resultStamp ? h('div', { class: 'result-big' }, resultStamp) : null,
-      list && (r.spoiler || mm.roleSpoiler) && hasSecret ? spoilerBlock(list, { label: '범인·역할 보기', key: spoilerKey(r, 'roles') }) : list));
-  }
+  // 누가 어떤 역할이었는지는 '함께한 멤버'에서 (mmMembersSec), 범인 검거·도주는 맨 위 도장으로 보여 줌
 
   const hasScores = MM_SCORES.some((s) => Number(mm.scores && mm.scores[s.key]) > 0);
   if (hasScores || Number(mm.difficulty) > 0 || mm.replay) {
@@ -123,6 +105,37 @@ function mmSection(r) {
       mm.replay ? h('p', { class: 'replay' }, icon('heart'), h('span', { text: '다시 하고 싶어요 · 추천해요' })) : null));
   }
   return out;
+}
+
+/**
+ * 머더미스터리의 함께한 멤버: 멤버마다 맡은 역할 (예전 기록의 범인·승패·MVP 표시도 함께).
+ * 누가 어떤 역할·범인이었는지는 작품 스포일러 → 스포일러 기록이거나 '역할 가리기'면 이름만 보이고 역할은 열기 전까지 가림
+ */
+function mmMembersSec(r) {
+  const mm = mmOf(r);
+  const roles = arr(mm.roles).filter((x) => x && x.memberId);
+  const ids = [...new Set([...arr(r.members), ...roles.map((x) => x.memberId)])];
+  if (!ids.length) return null;
+  const byId = new Map(roles.map((x) => [x.memberId, x]));
+  const title = `함께한 멤버 ${ids.length}명`;
+  if (!roles.length) return sec(title, h('div', { class: 'mrows' }, ids.map((id) => memberLink(id))));
+  const row = (id) => {
+    const x = byId.get(id) || {};
+    const oc = MM_OUTCOMES.find((o) => o.key === x.outcome);
+    return h('li', { class: `role-row${x.culprit ? ' is-culprit' : ''}`, 'data-member-id': id },
+      memberLink(id),
+      x.character ? h('span', { class: 'role-char', text: x.character }) : null,
+      h('span', { class: 'role-flags' },
+        x.culprit ? stamp('범인', 'culprit', { tilt: false }) : null,
+        oc ? h('span', { class: `outcome outcome-${oc.key}`, text: oc.label }) : null,
+        x.mvp ? h('span', { class: 'mvp' }, icon('crown'), h('span', { text: 'MVP' })) : null));
+  };
+  const hasSecret = roles.some((x) => x.culprit || x.character);
+  if (!((r.spoiler || mm.roleSpoiler) && hasSecret)) return sec(title, h('ul', { class: 'roles' }, ids.map(row)));
+  return sec(title,
+    h('div', { class: 'mrows' }, ids.map((id) => memberLink(id))),
+    spoilerBlock(h('ul', { class: 'roles' }, ids.filter((id) => byId.has(id)).map(row)),
+      { label: roles.some((x) => x.culprit) ? '범인·역할 보기' : '역할 보기', key: spoilerKey(r, 'roles') }));
 }
 
 function erSection(r) {
@@ -253,7 +266,8 @@ function render(root, id, ctx) {
         roleSec,
         review,
         gameCard,
-        members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null),
+        r.type === 'murdermystery' ? mmMembersSec(r)
+          : members.length ? sec(`함께한 멤버 ${members.length}명`, h('div', { class: 'mrows' }, members.map((id) => memberLink(id)))) : null),
       h('div', { class: 'detail-col detail-col-b' },
         typeSecs,
         h('p', { class: 'dmeta' },

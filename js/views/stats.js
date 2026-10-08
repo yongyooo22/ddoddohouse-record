@@ -2,7 +2,7 @@
 import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, MM_SCORES, WEEKDAYS } from '../constants.js';
 import { state, memberInfo, isFirstLoad, loadFailed, recordsForStats } from '../store.js';
-import { overview, boardgameStats, mmStats, erStats } from '../stats.js';
+import { overview, boardgameStats, bgRanking, mmStats, erStats } from '../stats.js';
 import { fmtAvg, fmtPct, fmtRemaining } from '../format.js';
 import { segmented, emptyState, scoreBars, loadingState, loadErrorState, typeName } from '../ui.js';
 import { meChip } from './members.js';
@@ -141,6 +141,20 @@ function overviewView(records) {
   ];
 }
 
+/** 보드게임 랭킹: 1등 횟수 순 (같으면 1등 비율 → 평균 등수). 1~3위는 메달 색 */
+function bgRankCard(records) {
+  const rows = bgRanking(records, { keep: (id) => !memberInfo(id).missing });
+  const body = rows.length
+    ? h('ol', { class: 'brank' }, rows.map((x) => h('li', { class: `brank-row${x.place <= 3 ? ` is-top is-p${x.place}` : ''}` },
+      h('span', { class: 'brank-place', text: String(x.place), 'aria-label': `${x.place}위` }),
+      h('span', { class: 'brank-who' },
+        h('span', { class: 'brank-name', text: mName(x.memberId) }),
+        h('span', { class: 'brank-sub', text: `${x.games}판${x.avgRank !== null ? ` · 평균 ${fmtAvg(x.avgRank)}등` : ''}` })),
+      h('span', { class: 'brank-wins' }, h('span', { class: 'brank-n', text: `1등 ${x.wins}번` }), h('span', { class: 'brank-rate', text: fmtPct(x.rate) })))))
+    : h('p', { class: 'muted small', text: '아직 점수를 적은 판이 없어요. 기록할 때 함께한 사람마다 점수를 적으면 랭킹이 생겨요.' });
+  return span(card('보드게임 랭킹', '1등 횟수 순 · 점수·순위를 적은 판 기준', body), 'span-7');
+}
+
 function bgView(records) {
   const s = boardgameStats(records);
   if (!s.plays) return emptyState({ icon: 'dice', title: '보드게임 기록이 없어요', text: '보드게임을 기록하면 승률과 인기 게임을 보여 드려요.' });
@@ -168,15 +182,16 @@ function bgView(records) {
         h('span', { class: 'champ-label', text: '최다 우승자' }),
         h('span', { class: 'champ-name', text: mName(tw.memberId) }),
         h('span', { class: 'champ-sub', text: `${tw.wins}번 우승` }))) : null,
-    card('많이 한 게임', 'TOP 10',
-      hbars((s.topGames || []).slice(0, 10).map((g) => ({ label: g.title, value: g.count, text: `${g.count}판`, cls: 'fill-boardgame' })))),
-    card('멤버별 승률', '결과가 기록된 판 대비 승리',
+    bgRankCard(records),
+    span(card('많이 한 게임', 'TOP 10',
+      hbars((s.topGames || []).slice(0, 10).map((g) => ({ label: g.title, value: g.count, text: `${g.count}판`, cls: 'fill-boardgame' })))), 'span-5'),
+    span(card('멤버별 승률', '결과가 기록된 판 대비 승리',
       minSel,
       hbars(eligible.map((x) => ({
         label: mName(x.memberId), value: Math.round((x.rate || 0) * 100), text: fmtPct(x.rate), sub: `${x.wins}승/${x.decided}판`,
         cls: `mc-${memberInfo(x.memberId).color} fill-member`,
       })), { max: 100, emptyText: '조건에 맞는 멤버가 없어요' }),
-      hidden > 0 ? h('p', { class: 'chart-note', text: `결과가 기록된 판이 ${ui.minPlays}판 미만인 ${hidden}명은 빠져 있어요` }) : null),
+      hidden > 0 ? h('p', { class: 'chart-note', text: `결과가 기록된 판이 ${ui.minPlays}판 미만인 ${hidden}명은 빠져 있어요` }) : null), 'span-12'),
   ];
 }
 

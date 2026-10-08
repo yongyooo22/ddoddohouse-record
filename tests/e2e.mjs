@@ -270,10 +270,14 @@ const visibleLabels = () => page.$$eval(
   '.page-form .rec-main > .rec-field > .field-label, .page-form .rec-main .rec-row .field-label, .page-form .rec-review-field .field-head > .field-label',
   (els) => els.filter((e) => e.getClientRects().length > 0).map((e) => e.textContent.replace(/\s+/g, ' ').trim()),
 );
-/** 화면에서는 더 이상 입력받지 않는 예전 항목 — 폼에 버튼·영역이 없어야 함 */
-const REMOVED_PANELS = ['result', 'details', 'tags'];
-/** 폼의 추가 입력 버튼: 사진 · 함께한 사람(선택) */
-const ADDONS = JSON.stringify(['사진', '함께한 사람']);
+/** 화면에서는 더 이상 입력받지 않는 예전 항목 — 폼에 버튼·영역이 없어야 함 (플레이 사진도 받지 않음) */
+const REMOVED_PANELS = ['result', 'details', 'tags', 'photos'];
+/** 폼의 추가 입력 버튼: 함께한 사람(선택) 하나 — 보드게임은 점수, 머더미스터리는 역할도 그 안에서 */
+const ADDONS = {
+  boardgame: JSON.stringify(['함께한 사람 · 점수']),
+  murdermystery: JSON.stringify(['함께한 사람 · 역할']),
+  escaperoom: JSON.stringify(['함께한 사람']),
+};
 /** 키 순서와 상관없이 같은 내용인지 비교하기 위한 문자열 */
 const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x)
   ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, x[k]])) : x));
@@ -477,8 +481,9 @@ await step('보드게임 기록 (새 간단 폼: 소장 게임 검색·선택 ·
   const mainLabels = await visibleLabels();
   check('처음 보이는 항목: 종류·게임·날짜·별점·감상 (내 역할 칸은 숨김)', JSON.stringify(mainLabels) === JSON.stringify(['종류', '게임', '날짜', '별점', '감상']) &&
     await page.isHidden('.page-form [data-field="mm.myRole"]'), JSON.stringify(mainLabels));
-  check('추가 입력은 ‘사진’·‘함께한 사람’ 버튼 둘뿐 (영역은 접힘)', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS &&
-    (await page.$$eval('.page-form .rec-panel', (els) => els.length === 2 && els.every((e) => e.hidden))), JSON.stringify(await texts('.page-form .addon')));
+  check('추가 입력은 ‘함께한 사람 · 점수’ 버튼 하나뿐 · 사진 칸·파일 고르기 없음 (영역은 접힘)', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS.boardgame &&
+    (await page.$$eval('.page-form .rec-panel', (els) => els.length === 1 && els.every((e) => e.hidden))) && !(await page.$('.page-form input[type="file"]')) && await noRemovedPanels(),
+    JSON.stringify(await texts('.page-form .addon')));
   check('결과·자세한 정보·태그 버튼·영역 없음 (함께한 사람 칩은 펼치기 전엔 없음)', await noRemovedPanels() && !(await page.$('.page-form .chip-member, .page-form .chip-tag, .page-form .result-row, .page-form .score-row, .page-form .stamp-choice-clear')));
   const formText = await text('.page-form');
   check('폼 글자에도 예전 항목 이름 없음', ['자세한 정보', '태그', '순위', '승자', '플레이 시간'].every((w) => !formText.includes(w)), formText);
@@ -598,7 +603,7 @@ await step('머더미스터리 기록 (팝업 등록 · 작품 태그 · 내 역
   // 종류 · 작품 · 날짜 · 별점 · 내 역할 · 감상 — 사진 버튼 하나, 예전 입력 영역은 없음
   const labels = await visibleLabels();
   check('머더미스터리 폼 항목: 종류·작품·날짜·별점·내 역할·감상', JSON.stringify(labels) === JSON.stringify(['종류', '작품', '날짜', '별점', '내 역할', '감상']), JSON.stringify(labels));
-  check('사진·함께한 사람 버튼뿐 · 결과·자세한 정보·태그 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS && await noRemovedPanels() &&
+  check('함께한 사람 · 역할 버튼뿐 · 사진·결과·자세한 정보·태그 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS.murdermystery && await noRemovedPanels() &&
     !(await page.$('.page-form .role-card, .page-form .chip-culprit, .page-form .seg-item:has-text("범인 검거"), .page-form [aria-label="범인 검거 결과"]')));
   const roleIn = '.page-form [data-field="mm.myRole"]';
   check('내 역할: 글칸 하나 (예시 · 30자)', (await text('.page-form .rec-role .field-label')) === '내 역할' && (await page.getAttribute(roleIn, 'placeholder')) === '예) 세바스찬' &&
@@ -705,11 +710,14 @@ await step('예전 기록 준비 (API) — 머더미스터리: 멤버·역할·�
   await page.waitForSelector('#tabbar:not([hidden])');
   await go(`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail');
   const reviewSec = '.page-detail .dsec:has(.dsec-title:text-is("감상"))';
-  const rolesSec = '.page-detail .dsec:has(.dsec-title:text-is("역할과 결과"))';
+  // 누가 어떤 역할이었는지는 '함께한 멤버'에서: 스포일러면 이름은 보이고 역할·범인만 가림
+  const rolesSec = '.page-detail .dsec:has(.dsec-title:text-is("함께한 멤버 3명"))';
   const blurred = await page.$$eval('.page-detail .spoiler .spoiler-content', (els) => els.map((e) => getComputedStyle(e).filter));
   check('상세: 감상·내 역할·범인/역할 모두 가림', blurred.length === 3 && blurred.every((f) => f.includes('blur')), JSON.stringify(blurred));
+  check('상세: 역할이 가려져도 함께한 멤버 이름은 보임', canon((await texts(`${rolesSec} .mrows .mrow-name`)).sort()) === canon(['도윤', '연경', '영식'].sort()), await text(rolesSec));
   check('상세: 가린 역할의 멤버 링크는 키보드로도 못 감(inert)', await page.$eval(`${rolesSec} .spoiler-content`, (e) => e.inert === true && e.getAttribute('aria-hidden') === 'true'));
-  check('상세: 범인 도주 결과 도장은 그대로 보임', (await text(`${rolesSec} .result-big`)).includes('범인 도주'));
+  check('상세: 범인 도주 결과는 맨 위 도장으로 · ‘역할과 결과’ 칸은 따로 없음', (await text('.page-detail .dhero-stamp')).includes('범인 도주') &&
+    !(await page.$('.page-detail .dsec:has(.dsec-title:text-is("역할과 결과"))')));
   check('상세: 역할 가림 버튼', (await text(`${rolesSec} .spoiler-btn`)) === '범인·역할 보기', await text(`${rolesSec} .spoiler-btn`));
   await page.click(`${reviewSec} .spoiler .spoiler-btn`);
   check('감상을 열어도 범인/역할은 계속 가림', !!(await page.$(`${rolesSec} .spoiler:not(.is-revealed) .spoiler-btn`)));
@@ -757,7 +765,7 @@ await step('방탈출 기록 (새 간단 폼: 테마 등록 · 별점 · 감상)
   check('테마 요약에 매장·지점', (await text('.page-form .gp-picked-meta')) === '키이스케이프 홍대점', await text('.page-form .gp-picked-meta'));
   const labels = await visibleLabels();
   check('방탈출 폼 항목: 종류·테마·날짜·별점·감상 (내 역할 칸 없음)', JSON.stringify(labels) === JSON.stringify(['종류', '테마', '날짜', '별점', '감상']) && await page.isHidden('.page-form [data-field="mm.myRole"]'), JSON.stringify(labels));
-  check('사진·함께한 사람 버튼뿐 · 성공 여부·남은 시간·힌트·세부 평가·누적 번호 입력 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS && await noRemovedPanels() &&
+  check('함께한 사람 버튼뿐 · 사진·성공 여부·남은 시간·힌트·세부 평가·누적 번호 입력 없음', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS.escaperoom && await noRemovedPanels() &&
     !(await page.$('.page-form .stamp-choice-clear, .page-form .stepper-input, .page-form .ordinal-note, .page-form .score-row')));
   await setRating(RATING, ['5']);
   await page.fill(REVIEW, '장치가 끝내준다');
@@ -1138,7 +1146,7 @@ await step('나 고르기 (기록 폼): 고르기 · 바꾸기 · 나 해제 · 
     const y = (s) => document.querySelector(s).getBoundingClientRect().top;
     return y('.page-form [data-field="mm.myRole"]') < y('.page-form .me-row') && y('.page-form .me-row') < y('.page-form .rec-review-field');
   }));
-  check('추가 입력 버튼 둘: 사진 · 함께한 사람', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS);
+  check('추가 입력 버튼 하나: 함께한 사람 · 역할', JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS.murdermystery);
   const memberN = (await api('GET', '/api/data')).data.members.length;
   await page.click('.page-form .me-row-btn');
   await page.waitForSelector(`${dlg}.dlg-me`);
@@ -1397,7 +1405,7 @@ await step('나: 레이아웃 (폼 · 나 고르기 창 · 프로필) 390 · 320
   await go('#/new/murdermystery', '.page-form.t-murdermystery');
   await page.fill('[data-field="mm.myRole"]', '해리엇 부인');
   await openPanel('members');
-  check('폼: 나 줄 · 버튼 둘', (await text('.page-form .me-row')).includes('나: 임시나') && JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS);
+  check('폼: 나 줄 · 함께한 사람 · 역할 버튼', (await text('.page-form .me-row')).includes('나: 임시나') && JSON.stringify(await texts('.page-form .addon .addon-label')) === ADDONS.murdermystery);
   check('나 줄 ‘바꾸기’ 버튼은 터치 크기(높이 36px 이상)', await page.$eval('.page-form .me-row-btn', (e) => e.getBoundingClientRect().height >= 36), String(await page.$eval('.page-form .me-row-btn', (e) => e.getBoundingClientRect().height)));
   await noOverflow('390 나가 있는 머더미스터리 폼');
   await shot('me-form-mm-390');
@@ -2922,6 +2930,184 @@ await step('첫 로딩: 빈 화면 대신 ‘불러오는 중’, 새 기록 폼
 await c3.close();
 
 // ═════════════════════════════════════════════════════════════
+// 보드게임 점수 → 순위 자동 · 보드게임 랭킹 · 머더미스터리 함께한 사람마다 역할 (새 브라우저 컨텍스트에서. 만든 멤버·기록은 끝에 지움)
+const cs = await newContext();
+page = await cs.newPage();
+watch(page, '[score] ');
+await page.goto(`${BASE}/#k=${encodeURIComponent(SECRET)}`);
+await page.waitForSelector('.page-home');
+const sc = {};
+const scRow = (n) => `.page-form .mx-row-score[data-member-id="${sc[n]}"]`;
+const rankOf = (n) => text(`${scRow(n)} .mx-rank`);
+const fillScore = (n, v) => page.fill(`.page-form .mx-score[data-member-id="${sc[n]}"]`, v);
+const pickChip = (n) => page.click(`.page-form .chip-member[data-member-id="${sc[n]}"]`);
+const byMember = (list) => [...list].sort((a, b) => (a.memberId < b.memberId ? -1 : 1));
+
+await step('보드게임: 함께한 사람마다 점수 → 순위 자동 (같은 점수는 같은 순위 · 빼면 다시 매김)', async () => {
+  for (const n of ['점수가', '점수나', '점수다']) {
+    const r = await api('POST', '/api/members', { member: { name: n } });
+    sc[n] = r.data.member.id;
+  }
+  check('시험용 멤버 셋', Object.values(sc).every(Boolean));
+  await page.evaluate(([k, v]) => localStorage.setItem(k, v), [ME_KEY, sc['점수가']]);
+  await syncFromServer();
+  await go('#/new/boardgame', '.page-form');
+  await setGame('점수 게임');
+  check('버튼 이름: 함께한 사람 · 점수', (await text('.page-form .addon[data-panel="members"] .addon-label')) === '함께한 사람 · 점수');
+  await openPanel('members');
+  check('나는 미리 골라져 있어 점수 칸 하나 (나 표시)', (await page.$$('.page-form .mx-row-score')).length === 1 && !!(await page.$(`${scRow('점수가')} .me-badge`)));
+  await pickChip('점수나');
+  await pickChip('점수다');
+  check('고른 사람마다 점수 칸 · 아직 순위 없음 (–)', (await page.$$('.page-form .mx-row-score')).length === 3 &&
+    [await rankOf('점수가'), await rankOf('점수나'), await rankOf('점수다')].join() === '–,–,–');
+  check('점수 칸은 숫자 입력 · 이름표 연결', await page.$eval(`.page-form .mx-score[data-member-id="${sc['점수나']}"]`, (e) => e.type === 'number' && !!document.querySelector(`label[for="${e.id}"]`)));
+  await fillScore('점수가', '52');
+  check('한 사람만 적으면 그 사람이 1등', (await rankOf('점수가')) === '1등' && (await rankOf('점수나')) === '–');
+  await fillScore('점수나', '61');
+  await fillScore('점수다', '52');
+  check('높은 점수가 1등 · 같은 점수는 같은 순위 (1등·2등·2등)', [await rankOf('점수나'), await rankOf('점수가'), await rankOf('점수다')].join() === '1등,2등,2등',
+    [await rankOf('점수나'), await rankOf('점수가'), await rankOf('점수다')].join());
+  check('1등에만 왕관', !!(await page.$(`${scRow('점수나')} .mx-rank.is-first .ico`)) && (await page.$$('.page-form .mx-rank.is-first')).length === 1);
+  await page.click('.page-form .mx-head .mini-check');
+  check('‘낮은 점수가 이겨요’ → 순위가 바로 뒤집힘 (3등·1등·1등)', [await rankOf('점수나'), await rankOf('점수가'), await rankOf('점수다')].join() === '3등,1등,1등');
+  await page.click('.page-form .mx-head .mini-check');
+  await fillScore('점수다', '');
+  check('점수를 지우면 그 사람은 순위 없음', (await rankOf('점수다')) === '–' && (await rankOf('점수가')) === '2등');
+  await fillScore('점수다', '40');
+  await pickChip('점수나');
+  check('1등을 빼면 그 칸이 사라지고 남은 사람끼리 다시 순위', (await page.$$('.page-form .mx-row-score')).length === 2 && (await rankOf('점수가')) === '1등' && (await rankOf('점수다')) === '2등');
+  await pickChip('점수나');
+  check('다시 넣으면 적었던 점수·순위 그대로', (await page.inputValue(`.page-form .mx-score[data-member-id="${sc['점수나']}"]`)) === '61' && (await rankOf('점수나')) === '1등');
+  await noOverflow('점수 칸');
+  await shot('score-form');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  sc.bg1 = STAMP_ID(page.url());
+  const rec = await serverRecord(sc.bg1);
+  check('서버: 점수 · 순위 · 1등만 승리', !!rec && canon(byMember(rec.bg.results)) === canon(byMember([
+    { memberId: sc['점수가'], score: 52, rank: 2, winner: false },
+    { memberId: sc['점수나'], score: 61, rank: 1, winner: true },
+    { memberId: sc['점수다'], score: 40, rank: 3, winner: false },
+  ])), JSON.stringify(rec && rec.bg.results));
+  check('상세: 순위 1·2·3 · 점수 · 우승 도장', (await texts('.page-detail .rank-row .rank-no')).join() === '1,2,3' &&
+    (await texts('.page-detail .rank-row .rank-score')).join() === '61점,52점,40점' && (await texts('.page-detail .rank-row.is-winner .mrow-name')).join() === '점수나' &&
+    (await text('.page-detail .dhero-stamp')).includes('우승'), (await texts('.page-detail .rank-row')).join(' | '));
+  // 다시 열면 적은 점수·순위 그대로
+  await go(`#/edit/${encodeURIComponent(sc.bg1)}`, '.page-form');
+  check('수정 폼: 함께한 사람 칸이 펼쳐져 있고 점수·순위 그대로', !(await page.$eval('.page-form .rec-panel[data-panel="members"]', (e) => e.hidden)) &&
+    (await page.inputValue(`.page-form .mx-score[data-member-id="${sc['점수다']}"]`)) === '40' && (await rankOf('점수나')) === '1등' && (await rankOf('점수다')) === '3등' &&
+    !(await page.isChecked('.page-form .mx-head .mini-check-input')));
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.waitForSelector('.page-detail', { timeout: 5000 });
+});
+
+await step('보드게임: 낮은 점수가 이기는 게임 → 저장 · 다시 열어도 그대로 · 예전에 매긴 순위는 점수를 적기 전까지 그대로', async () => {
+  await go('#/new/boardgame', '.page-form');
+  await setGame('골프 카드');
+  await openPanel('members');
+  await pickChip('점수나');
+  await pickChip('점수다');
+  await page.click('.page-form .mx-head .mini-check');
+  await fillScore('점수가', '3');
+  await fillScore('점수나', '9');
+  await fillScore('점수다', '5');
+  check('낮은 점수 순 (1등·3등·2등)', [await rankOf('점수가'), await rankOf('점수나'), await rankOf('점수다')].join() === '1등,3등,2등');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  sc.bg2 = STAMP_ID(page.url());
+  const rec = await serverRecord(sc.bg2);
+  check('서버: 가장 낮은 점수가 1등·승리', !!rec && rec.bg.results.find((x) => x.memberId === sc['점수가']).winner === true &&
+    rec.bg.results.find((x) => x.memberId === sc['점수나']).rank === 3, JSON.stringify(rec && rec.bg.results));
+  await go(`#/edit/${encodeURIComponent(sc.bg2)}`, '.page-form');
+  check('다시 열면 ‘낮은 점수가 이겨요’ 켜져 있음', await page.isChecked('.page-form .mx-head .mini-check-input'));
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.waitForSelector('.page-detail', { timeout: 5000 });
+  // 점수 없이 순위만 매긴 예전 기록: 고쳐 저장해도 순위·승리 그대로
+  const legacy = await api('POST', '/api/records', { record: { type: 'boardgame', date: TODAY, title: '예전 순위', members: [sc['점수가'], sc['점수다']], bg: { mode: 'competitive', results: [
+    { memberId: sc['점수다'], score: null, rank: 1, winner: true }, { memberId: sc['점수가'], score: null, rank: 2, winner: false }] } } });
+  sc.bg3 = legacy.data.record.id;
+  await syncFromServer();
+  await go(`#/edit/${encodeURIComponent(sc.bg3)}`, '.page-form');
+  check('예전 순위가 칸에 보임 (점수는 빈칸)', (await rankOf('점수다')) === '1등' && (await rankOf('점수가')) === '2등' &&
+    (await page.inputValue(`.page-form .mx-score[data-member-id="${sc['점수다']}"]`)) === '');
+  await page.fill(REVIEW, '순위만 적었던 판');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  check('점수를 안 적고 저장하면 예전 순위·승리 그대로', canon(byMember((await serverRecord(sc.bg3)).bg.results)) === canon(byMember(legacy.data.record.bg.results)));
+});
+
+await step('통계: 보드게임 랭킹 (1등 횟수 → 1등 비율 → 평균 순위)', async () => {
+  await tab('stats', '.page-stats');
+  await page.click('.page-stats .seg-type .seg-item:has-text("보드게임")');
+  await page.waitForSelector('.page-stats .brank');
+  check('랭킹 카드 제목', (await text('.page-stats .chart-card:has(.brank) .chart-title')) === '보드게임 랭킹');
+  const rows = await page.$$eval('.page-stats .brank-row', (els) => els.map((e) => ({
+    place: e.querySelector('.brank-place').textContent, name: e.querySelector('.brank-name').textContent,
+    sub: e.querySelector('.brank-sub').textContent, wins: e.querySelector('.brank-n').textContent, rate: e.querySelector('.brank-rate').textContent,
+  })));
+  const row = (n) => rows.find((x) => x.name === n) || {};
+  const idx = (n) => rows.findIndex((x) => x.name === n);
+  // 점수가: 골프 1등 · 점수 게임 2등 · 예전 순위 2등 / 점수나: 점수 게임 1등 · 골프 3등 / 점수다: 예전 순위 1등 · 점수 게임 3등 · 골프 2등
+  check('점수가: 1등 1번 · 3판 · 평균 1.7등 · 33%', row('점수가').wins === '1등 1번' && row('점수가').sub === '3판 · 평균 1.7등' && row('점수가').rate === '33%', JSON.stringify(row('점수가')));
+  check('점수나: 1등 1번 · 2판 · 평균 2.0등 · 50%', row('점수나').wins === '1등 1번' && row('점수나').sub === '2판 · 평균 2.0등' && row('점수나').rate === '50%', JSON.stringify(row('점수나')));
+  check('점수다: 1등 1번 · 3판 · 평균 2.0등', row('점수다').wins === '1등 1번' && row('점수다').sub === '3판 · 평균 2.0등', JSON.stringify(row('점수다')));
+  check('같은 1등 횟수면 1등 비율 높은 쪽이 위 (점수나 50% > 점수가 33%) · 비율도 같으면 평균 순위 (점수가 1.7 > 점수다 2.0)',
+    idx('점수나') >= 0 && idx('점수나') < idx('점수가') && idx('점수가') < idx('점수다'), rows.map((x) => `${x.place}.${x.name}`).join(' '));
+  check('자리 번호는 1부터 차례로 (같은 성적이면 같은 자리)', rows.every((x, i) => Number(x.place) <= i + 1) && rows[0].place === '1');
+  await noOverflow('통계 보드게임 랭킹');
+  await shot('stats-bg-ranking');
+});
+
+await step('머더미스터리: 함께한 사람마다 맡은 역할 → 상세의 함께한 멤버에 역할 (나는 ‘내 역할’과 같은 값)', async () => {
+  await go('#/new/murdermystery', '.page-form');
+  await setGame('역할 작품');
+  check('버튼 이름: 함께한 사람 · 역할', (await text('.page-form .addon[data-panel="members"] .addon-label')) === '함께한 사람 · 역할');
+  await openPanel('members');
+  await pickChip('점수나');
+  await pickChip('점수다');
+  const roleIn = (n) => `.page-form .mx-role[data-member-id="${sc[n]}"]`;
+  check('고른 사람마다 역할 칸 (나 포함 3칸)', (await page.$$('.page-form .mx-row-role')).length === 3);
+  await page.fill('[data-field="mm.myRole"]', '집사');
+  check('위의 ‘내 역할’ → 함께한 사람 칸의 나도 같은 값', (await page.inputValue(roleIn('점수가'))) === '집사');
+  await page.fill(roleIn('점수가'), '집사 세바스찬');
+  check('함께한 사람 칸의 나 → 위의 ‘내 역할’도 같은 값', (await page.inputValue('[data-field="mm.myRole"]')) === '집사 세바스찬');
+  await page.fill(roleIn('점수나'), '탐정 조수');
+  await page.fill(roleIn('점수다'), '정원사');
+  await page.fill(roleIn('점수다'), ''); // 적었다가 지운 역할은 저장하지 않음
+  await noOverflow('역할 칸');
+  await shot('role-form');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  sc.mm1 = STAMP_ID(page.url());
+  const rec = await serverRecord(sc.mm1);
+  check('서버: 역할은 적은 사람만 · 내 역할도 같은 값', !!rec && rec.mm.myRole === '집사 세바스찬' &&
+    canon(byMember(rec.mm.roles)) === canon(byMember([mkRole(sc['점수가'], '집사 세바스찬'), mkRole(sc['점수나'], '탐정 조수')])), JSON.stringify(rec && rec.mm.roles));
+  const memSec = '.page-detail .dsec:has(.dsec-title:text-is("함께한 멤버 3명"))';
+  const rows = await page.$$eval(`${memSec} .role-row`, (els) => els.map((e) => [e.querySelector('.mrow-name').textContent, (e.querySelector('.role-char') || { textContent: '' }).textContent]));
+  check('상세: 함께한 멤버마다 맡은 역할', canon(rows) === canon([['점수가', '집사 세바스찬'], ['점수나', '탐정 조수'], ['점수다', '']]), JSON.stringify(rows));
+  check('상세: 따로 ‘역할과 결과’ 칸은 없음', !(await page.$('.page-detail .dsec:has(.dsec-title:text-is("역할과 결과"))')));
+  await noOverflow('머더미스터리 상세 (역할)');
+  await shot('role-detail');
+  // 다시 열면 역할 그대로 · 스포일러로 저장하면 이름은 보이고 역할만 가림
+  await go(`#/edit/${encodeURIComponent(sc.mm1)}`, '.page-form');
+  check('수정 폼: 역할 그대로', (await page.inputValue(roleIn('점수나'))) === '탐정 조수' && (await page.inputValue(roleIn('점수가'))) === '집사 세바스찬' && (await page.inputValue(roleIn('점수다'))) === '');
+  await page.click('.page-form .rec-spoiler .mini-check');
+  await page.click('.save-btn');
+  await page.waitForSelector('.page-detail', { timeout: 8000 });
+  check('스포일러: 이름은 보이고 역할은 ‘역할 보기’로 가림', (await texts(`${memSec} .mrows .mrow-name`)).length === 3 &&
+    (await text(`${memSec} .spoiler-btn`)) === '역할 보기' && await page.$eval(`${memSec} .spoiler-content`, (e) => e.inert === true));
+  await page.click(`${memSec} .spoiler-btn`);
+  check('역할 보기 → 역할이 보임', (await texts(`${memSec} .spoiler.is-revealed .role-char`)).join() === '집사 세바스찬,탐정 조수');
+});
+
+await step('점수·역할 시험 정리 (기록·멤버 지움)', async () => {
+  for (const k of ['bg1', 'bg2', 'bg3', 'mm1']) if (sc[k]) check(`기록 삭제 ${k}`, (await api('DELETE', `/api/records?id=${encodeURIComponent(sc[k])}`)).status === 200);
+  for (const n of ['점수가', '점수나', '점수다']) check(`멤버 삭제 ${n}`, (await api('DELETE', `/api/members?id=${encodeURIComponent(sc[n])}`)).status === 200);
+  await page.evaluate((k) => localStorage.removeItem(k), ME_KEY);
+});
+await cs.close();
+
+// ═════════════════════════════════════════════════════════════
 // 사진 — 올리기(압축·EXIF 제거) · 대표/순서 · 갤러리/뷰어 · 이전 대표 사진 · 정리(gc) · 백업 (새 브라우저 컨텍스트에서)
 const PHOTO_DIR = path.join(SHOTS, '..', 'photos');
 mkdirSync(PHOTO_DIR, { recursive: true });
@@ -2945,14 +3131,13 @@ const imgDims = (id, size = 'f') => page.evaluate(async ([i, s]) => {
   const bmp = await createImageBitmap(await res.blob());
   return { w: bmp.width, h: bmp.height };
 }, [id, size]);
-/** 폼 사진 칸의 사진 id 순서 (올리기 끝난 것만) */
-const formPhotoIds = () => page.$$eval('.rec-panel[data-panel="photos"] .ph-cell:not(.ph-cell-add)', (els) => els.map((e) => (e.querySelector('.pimg[data-photo]') || { dataset: {} }).dataset.photo || null));
-const photoInput = '.rec-panel[data-panel="photos"] input[type="file"]';
-async function photosSettled(n, timeout = 20000) {
-  return until(async () => {
-    const st = await page.$$eval('.rec-panel[data-panel="photos"] .ph-tile', (els) => els.map((e) => (e.classList.contains('is-busy') ? 'busy' : e.classList.contains('is-error') ? 'error' : 'ok')));
-    return st.length === n && st.every((x) => x !== 'busy') && st;
-  }, timeout);
+/**
+ * 사진을 API 로 바로 올림 → 사진 id. 기록 폼은 더 이상 플레이 사진을 받지 않으므로,
+ * 예전 앱·다른 기기가 올려 둔 사진이 붙은 기록을 흉내 낼 때 씀
+ */
+async function uploadViaApi(b64) {
+  const res = await api('POST', '/api/images', { full: b64, thumb: b64 });
+  return res.status === 200 && res.data && res.data.image ? res.data.image.id : null;
 }
 
 // 테스트용 사진을 브라우저 canvas 로 만듦: EXIF(회전 6 + 가짜 GPS 문구)를 끼운 JPEG, 투명 PNG, 잡음 가득한 큰 JPEG, 작은 JPEG 들
@@ -3001,6 +3186,7 @@ const made = await page.evaluate(async () => {
     s3: toB64(await draw(640, 480, 'image/jpeg', 120)),
     s4: toB64(await draw(480, 640, 'image/jpeg', 280)),
     s5: toB64(await draw(800, 600, 'image/jpeg', 330)),
+    s6: toB64(await draw(560, 560, 'image/jpeg', 60)),
   };
 });
 const P = {};
@@ -3014,37 +3200,36 @@ P.heic2 = path.join(PHOTO_DIR, 'IMG_0002.heic');
 writeFileSync(P.heic2, Buffer.from('000000186674797068656963000000006d696631686569630000', 'hex'));
 const photoIds = {};
 
-await step('사진: 올리기 — JPEG·PNG 모두 다시 인코딩, EXIF(위치 정보) 제거, 회전 반영', async () => {
+await step('사진: 기록 폼에는 사진 칸이 없음 · 사진 처리는 게임 대표 이미지로 — 다시 인코딩, EXIF(위치 정보) 제거, 회전 반영, 큰 사진 줄이기, HEIC 안내', async () => {
   check('테스트 사진: EXIF 넣은 JPEG', readFileSync(P.exif).includes(Buffer.from('GPS-SECRET')) && readFileSync(P.noisy).length > 1_500_000, String(readFileSync(P.noisy).length));
   const before = await imgStats();
   await go('#/new/boardgame', '.page-form');
   await setGame('카탄');
-  await openPanel('photos');
-  check('사진 칸: 빈 상태는 작은 추가 칸 · 안내 한 줄', !!(await page.$('.rec-panel[data-panel="photos"] .ph-grid.is-empty .ph-add')) && (await text('.rec-panel[data-panel="photos"] .ph-hint')).includes('최대 4장'));
-  // 동시에 몇 장을 올리는지 (느린 연결에서 한꺼번에 올리면 모두 시간 초과가 나므로 한 장씩)
-  const upl = { now: 0, max: 0, n: 0 };
-  const isUpload = (r) => r.method() === 'POST' && new URL(r.url()).pathname === '/api/images';
-  const onReq = (r) => { if (isUpload(r)) { upl.n++; upl.now++; upl.max = Math.max(upl.max, upl.now); } };
-  const onDone = (r) => { if (isUpload(r)) upl.now--; };
-  page.on('request', onReq);
-  page.on('requestfinished', onDone);
-  page.on('requestfailed', onDone);
-  await page.setInputFiles(photoInput, [P.exif, P.png]);
-  check('고르자마자 칸 2개 (줄이는 중/대기 표시)', (await page.$$('.rec-panel[data-panel="photos"] .ph-tile')).length === 2);
-  const st = await photosSettled(2);
-  page.off('request', onReq);
-  page.off('requestfinished', onDone);
-  page.off('requestfailed', onDone);
-  check('두 장 모두 올라감', st && st.every((x) => x === 'ok'), JSON.stringify(st));
-  check('여러 장을 골라도 한 장씩 차례로 올림 (동시에 1장)', upl.n === 2 && upl.max === 1, JSON.stringify(upl));
-  check('첫 장에 ‘첫 장’ 표시 (게임 대표 이미지와 다른 말)', (await text('.rec-panel[data-panel="photos"] .ph-cell:nth-child(1) .ph-badge')) === '첫 장' &&
-    !(await page.$('.rec-panel[data-panel="photos"] .ph-cell:nth-child(2) .ph-badge')));
-  check('접은 사진 버튼에 사진 수', await (async () => { await foldPanel('photos'); const t = await text('.page-form .addon[data-panel="photos"] .addon-sum'); await openPanel('photos'); return t === '2장'; })());
-  check('썸네일이 blob: 주소로 보임', await page.$$eval('.rec-panel[data-panel="photos"] .ph-cell:not(.ph-cell-add) img', (els) => els.length === 2 && els.every((e) => e.src.startsWith('blob:') && e.complete && e.naturalWidth > 0)));
-  const ids = await formPhotoIds();
-  photoIds.exif = ids[0];
-  photoIds.png = ids[1];
-  check('서버에 2장 추가', (await imgStats()).count === before.count + 2);
+  check('기록 폼: 사진 버튼·사진 칸·파일 고르기 없음', !(await page.$('.page-form .addon[data-panel="photos"]')) &&
+    !(await page.$('.page-form .rec-panel[data-panel="photos"]')) && !(await page.$('.page-form input[type="file"]')));
+  // 예전에는 화면 어디에 붙여넣어도 사진 칸으로 올렸음 → 이제는 가로채지 않고 올리지도 않음
+  const hijacked = await page.evaluate((b64) => {
+    const bin = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+    const dt = new DataTransfer();
+    dt.items.add(new File([bin], 'clip.png', { type: 'image/png' }));
+    const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
+    document.body.dispatchEvent(ev);
+    return ev.defaultPrevented;
+  }, readFileSync(P.png).toString('base64'));
+  await sleep(400);
+  check('그림을 붙여넣어도 가로채지 않고 올리지 않음', hijacked === false && (await imgStats()).count === before.count);
+
+  // 게임 정보의 대표 이미지 칸: 같은 사진 처리(줄이기·다시 인코딩·EXIF 제거)를 거쳐 올라감
+  await page.click('.page-form .gp-edit');
+  await page.waitForSelector(`${dlg}.dlg-game-form`);
+  const coverIn = `${dlg} .cv-field input[type="file"]`;
+  const nextCover = (prev) => until(async () => {
+    const id = await page.$eval(`${dlg} .cv-tile:not(.is-busy) .pimg[data-photo]`, (e) => e.dataset.photo);
+    return id && id !== prev ? id : null;
+  }, 20000);
+  await page.setInputFiles(coverIn, [P.exif]);
+  photoIds.exif = await nextCover(null);
+  check('대표 이미지 올라감 (서버에 1장)', !!photoIds.exif && (await imgStats()).count === before.count + 1, JSON.stringify(await imgStats()));
   const full = await imgBytes(photoIds.exif, 'f');
   const thumb = await imgBytes(photoIds.exif, 't');
   check('원본: WebP/JPEG 로 다시 인코딩 (350KB 이하)', /image\/(webp|jpeg)/.test(full.type) && full.buf.length <= 350 * 1024, `${full.type} ${full.buf.length}`);
@@ -3054,121 +3239,48 @@ await step('사진: 올리기 — JPEG·PNG 모두 다시 인코딩, EXIF(위치
   check('EXIF 회전(6) 반영 → 세로 사진, 긴 변 1280px 이하', d.h > d.w && Math.max(d.w, d.h) <= 1280, JSON.stringify(d));
   const dt = await imgDims(photoIds.exif, 't');
   check('썸네일 긴 변 360px 이하', Math.max(dt.w, dt.h) <= 360, JSON.stringify(dt));
-  const png = await imgBytes(photoIds.png, 'f');
-  check('PNG 도 WebP/JPEG 로 바꿔 올림', /image\/(webp|jpeg)/.test(png.type) && png.buf[0] !== 0x89, png.type);
   check('사진 응답 헤더 (nosniff·private 캐시·CSP)', full.headers.get('x-content-type-options') === 'nosniff' && /private/.test(full.headers.get('cache-control') || '') &&
     /img-src 'self' data: blob:/.test(full.headers.get('content-security-policy') || ''), `${full.headers.get('cache-control')} | ${full.headers.get('content-security-policy')}`);
-});
-
-await step('사진: 큰 사진 줄이기 · 4장 제한 · 열 수 없는 형식(HEIC)', async () => {
-  await page.setInputFiles(photoInput, [P.heic]);
-  check('열 수 없는 형식(HEIC) 안내 + 해결 방법', !!(await toastSeen(/이 사진 형식\(HEIC 등\)은 열 수 없어요\. 카메라 설정의 ‘고효율’ 사진을 끄거나 JPG로 저장해서 올려 주세요/, 10000)), String(await texts('.toast')));
-  check('열지 못한 사진은 칸에서 빠짐', !!(await until(async () => (await page.$$('.rec-panel[data-panel="photos"] .ph-tile')).length === 2, 3000)));
-  await page.evaluate(() => document.querySelectorAll('#toasts .toast').forEach((t) => t.remove()));
-  await page.setInputFiles(photoInput, [P.heic, P.heic2]);
-  check('여러 장이 같은 이유로 실패하면 알림은 하나 (몇 장인지)', !!(await toastSeen(/사진 2장은 열 수 없는 형식\(HEIC 등\)이라 뺐어요/, 10000)) &&
-    (await texts('.toast')).filter((t) => t.includes('HEIC')).length === 1, String(await texts('.toast')));
-  check('두 장 모두 칸에서 빠짐', !!(await until(async () => (await page.$$('.rec-panel[data-panel="photos"] .ph-tile')).length === 2, 3000)));
-  await page.setInputFiles(photoInput, [P.noisy, P.s3]);
-  const st = await photosSettled(4, 30000);
-  check('큰 사진 포함 4장', st && st.length === 4 && st.every((x) => x === 'ok'), JSON.stringify(st));
-  check('4장이면 추가 칸 사라짐 · 4/4', !(await page.$('.rec-panel[data-panel="photos"] .ph-cell-add')) && (await text('.rec-panel[data-panel="photos"] .ph-hint')).startsWith('4/4장'));
-  const ids = await formPhotoIds();
-  photoIds.noisy = ids[2];
-  photoIds.s3 = ids[3];
-  const big = await imgBytes(photoIds.noisy, 'f');
-  const dims = await imgDims(photoIds.noisy, 'f');
+  await page.setInputFiles(coverIn, [P.png]);
+  photoIds.png = await nextCover(photoIds.exif);
+  const png = photoIds.png ? await imgBytes(photoIds.png, 'f') : { type: '', buf: Buffer.from([0x89]) };
+  check('PNG 도 WebP/JPEG 로 바꿔 올림', /image\/(webp|jpeg)/.test(png.type) && png.buf[0] !== 0x89, png.type);
+  await page.setInputFiles(coverIn, [P.noisy]);
+  photoIds.noisy = await nextCover(photoIds.png);
+  const big = photoIds.noisy ? await imgBytes(photoIds.noisy, 'f') : { buf: Buffer.alloc(1e7) };
+  const dims = photoIds.noisy ? await imgDims(photoIds.noisy, 'f') : { w: 9999, h: 9999 };
   check('잡음 가득한 큰 사진도 350KB·1280px 안으로', big.buf.length <= 350 * 1024 && Math.max(dims.w, dims.h) <= 1280, `${big.buf.length} ${JSON.stringify(dims)}`);
-  check('썸네일도 40KB 이하', (await imgBytes(photoIds.noisy, 't')).buf.length <= 40 * 1024);
-  await page.setInputFiles(photoInput, [P.s4]);
-  check('5장째는 안내만', !!(await toastSeen(/사진은 4장까지/)) && (await page.$$('.rec-panel[data-panel="photos"] .ph-tile')).length === 4);
-  check('사진 칸 아래에 ‘첫 장’ 배지 말고 다른 글자(예: null)가 없음', JSON.stringify(await texts('.rec-panel[data-panel="photos"] .ph-cell:not(.ph-cell-add) .ph-foot')) === JSON.stringify(['첫 장', '', '', '']),
-    JSON.stringify(await texts('.rec-panel[data-panel="photos"] .ph-cell:not(.ph-cell-add) .ph-foot')));
-  await noOverflow('사진 4장 폼');
+  check('썸네일도 40KB 이하', !!photoIds.noisy && (await imgBytes(photoIds.noisy, 't')).buf.length <= 40 * 1024);
+  await page.setInputFiles(coverIn, [P.heic]);
+  check('열 수 없는 형식(HEIC) 안내 + 해결 방법', !!(await toastSeen(/이 사진 형식\(HEIC 등\)은 열 수 없어요\. 카메라 설정의 ‘고효율’ 사진을 끄거나 JPG로 저장해서 올려 주세요/, 10000)), String(await texts('.toast')));
+  check('HEIC 를 골라도 대표 이미지는 그대로', (await page.$eval(`${dlg} .cv-tile .pimg[data-photo]`, (e) => e.dataset.photo).catch(() => null)) === photoIds.noisy);
+  await dialogButton('취소');
+  await page.waitForSelector(`${dlg}.dlg-game-form`, { state: 'detached', timeout: 5000 });
+  check('저장하지 않고 닫으면 이 창에서 올린 대표 이미지는 모두 지움', !!(await until(async () => {
+    for (const id of [photoIds.exif, photoIds.png, photoIds.noisy]) if ((await imgBytes(id, 't')).status !== 404) return false;
+    return true;
+  }, 5000)));
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.waitForSelector(dlg);
+  await dialogButton('그만 쓰기');
+  await page.waitForSelector('.page-form', { state: 'detached', timeout: 5000 });
 });
 
-await step('사진: 첫 장 바꾸기 · 순서 · 빼기 · 붙여넣기', async () => {
-  const [a, b, c, d] = await formPhotoIds();
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(2) .ph-open');
-  await page.waitForSelector(`${dlg}.dlg-photo`);
-  check('첫 장으로 버튼 이름: ‘2번 사진을 첫 장으로’', (await page.getAttribute(`${dlg} .ph-sheet-actions .btn:has-text("첫 장으로")`, 'aria-label')) === '2번 사진을 첫 장으로');
-  await page.click(`${dlg} .ph-sheet-actions .btn:has-text("첫 장으로")`);
-  await page.waitForSelector(dlg, { state: 'detached' });
-  check('‘첫 장으로’ → 둘째 장이 맨 앞', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, a, c, d]), JSON.stringify(await formPhotoIds()));
-  check('새 첫 장에 배지', !!(await page.$(`.rec-panel[data-panel="photos"] .ph-cell:nth-child(1).is-cover .pimg[data-photo="${b}"]`)));
-  // 사진을 누르면 순서 바꾸기 시트
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(3) .ph-open');
-  await page.waitForSelector(`${dlg}.dlg-photo`);
-  check('시트: 크게 보기·첫 장으로·앞 순서로·뒤 순서로·빼기', JSON.stringify(await texts(`${dlg} .ph-sheet-actions .btn`)) === JSON.stringify(['크게 보기', '첫 장으로', '앞 순서로', '뒤 순서로', '사진 빼기']), JSON.stringify(await texts(`${dlg} .ph-sheet-actions .btn`)));
-  check('순서 버튼 이름에 몇 번 사진인지 (앱의 ‘뒤로’와 다름)', (await page.getAttribute(`${dlg} .ph-sheet-actions .btn:has-text("뒤 순서로")`, 'aria-label')) === '3번 사진을 뒤 순서로');
-  await shot('31-photo-sheet');
-  await page.click(`${dlg} .ph-sheet-actions .btn:has-text("앞 순서로")`);
-  await page.waitForSelector(dlg, { state: 'detached' });
-  check('‘앞 순서로’ → 3번째가 2번째로', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, c, a, d]), JSON.stringify(await formPhotoIds()));
-  // ✕ 로 빼기: 잠깐 되돌릴 수 있고, 그 뒤 이 폼에서 올린 사진이라 서버에서도 지움
-  const before = (await imgStats()).count;
-  // ✕ 누르는 영역이 사진을 크게 덮지 않음 (사진 모서리만)
-  const xCover = await page.$eval('.rec-panel[data-panel="photos"] .ph-cell:nth-child(2) .ph-tile', (tile) => {
-    tile.scrollIntoView({ block: 'center' });
-    const b = tile.getBoundingClientRect();
-    let hit = 0, all = 0;
-    for (let x = b.left + 1; x < b.right; x += 2) for (let y = b.top + 1; y < b.bottom; y += 2) {
-      all++;
-      const el = document.elementFromPoint(x, y);
-      if (el && el.closest('.ph-x')) hit++;
-    }
-    return hit / all;
-  });
-  check('✕ 누르는 영역은 사진의 13% 이하', xCover > 0 && xCover <= 0.13, String(xCover));
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(4) .ph-x');
-  check('✕ → 3장', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, c, a]));
-  check('빼고 나면 초점이 남은 칸으로', await page.evaluate(() => !!document.activeElement.closest('.rec-panel[data-panel="photos"]')));
-  check('‘되돌리기’ 알림', !!(await toastSeen(/4번 사진을 뺐어요/)) && !!(await page.$('.toast .toast-btn:text-is("되돌리기")')));
-  await page.click('.toast .toast-btn:text-is("되돌리기")');
-  check('되돌리기 → 같은 자리로', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, c, a, d]), JSON.stringify(await formPhotoIds()));
-  check('되돌리는 동안 서버 사진 그대로', (await imgStats()).count === before);
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(4) .ph-x');
-  check('다시 ✕ → 3장', JSON.stringify(await formPhotoIds()) === JSON.stringify([b, c, a]));
-  check('되돌릴 시간이 지나면 서버에서도 지움', !!(await until(async () => (await imgStats()).count === before - 1, 10000)), JSON.stringify(await imgStats()));
-  // 클립보드 붙여넣기: 실제 클립보드에 그림을 넣고 Ctrl+V (클립보드를 못 쓰는 환경이면 paste 이벤트로 대신)
-  const clip = await page.evaluate(async (b64) => {
-    const bin = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
-    try {
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bin], { type: 'image/png' }) })]);
-      if (document.activeElement) document.activeElement.blur();
-      return 'clipboard';
-    } catch {
-      const dt = new DataTransfer();
-      dt.items.add(new File([bin], 'clip.png', { type: 'image/png' }));
-      document.body.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-      return 'event';
-    }
-  }, readFileSync(P.png).toString('base64'));
-  if (clip === 'clipboard') await page.keyboard.press('Control+V');
-  const st = await photosSettled(4);
-  check(`붙여넣은 사진이 4번째로 (${clip === 'clipboard' ? '실제 클립보드 + Ctrl+V' : 'paste 이벤트'})`, st && st.length === 4 && st.every((x) => x === 'ok'), JSON.stringify(st));
-  const pasted = (await formPhotoIds())[3];
-  check('붙여넣은 PNG 도 WebP/JPEG 로 올라감', !!pasted && /image\/(webp|jpeg)/.test((await imgBytes(pasted, 'f')).type));
-  // 글 칸에 글자를 붙여넣을 때는 가로채지 않음
-  const hijacked = await page.evaluate(() => {
-    const dt = new DataTransfer();
-    dt.setData('text/plain', '글자');
-    dt.items.add(new File([new Uint8Array([1, 2, 3])], 'x.png', { type: 'image/png' }));
-    const input = document.querySelector('.page-form [data-field="review"]');
-    const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true });
-    input.dispatchEvent(ev);
-    return ev.defaultPrevented;
-  });
-  check('글 칸에 글자+그림 붙여넣기는 방해 안 함', hijacked === false && (await page.$$('.rec-panel[data-panel="photos"] .ph-tile')).length === 4);
-  photoIds.order = await formPhotoIds();
-  await noOverflow('사진 폼');
-  await shot('32-form-photos');
+await step('사진: 예전에 사진을 붙여 둔 기록 준비 (API) — 카탄 · 사진 4장', async () => {
+  const order = [];
+  for (const k of ['s5', 's3', 's4', 's6']) order.push(await uploadViaApi(made[k])); // 서버는 JPEG·WebP 만 받음
+  check('사진 4장 올림', order.every(Boolean), JSON.stringify(order));
+  photoIds.order = order;
+  const game = (await api('GET', '/api/data')).data.games.find((g) => g.title === '카탄' && g.type === 'boardgame');
+  check('게임 ‘카탄’ (앞 단계에서 등록)', !!game);
+  const res = await api('POST', '/api/records', { record: { type: 'boardgame', date: DEFAULT_DATE, title: '카탄', gameId: game && game.id, members: [], rating: 4, photos: order } });
+  check('사진 4장이 붙은 기록 저장', res.status === 200 && JSON.stringify(res.data.record.photos) === JSON.stringify(order), JSON.stringify(res.data));
+  ids.catan = res.data.record.id;
+  await syncFromServer();
 });
 
-await step('사진: 저장 → 상세 갤러리 · 전체화면 뷰어 · 목록 카드 썸네일', async () => {
-  await page.click('.save-btn');
-  await page.waitForSelector('.page-detail', { timeout: 10000 });
-  ids.catan = decodeURIComponent(page.url().split('#/record/')[1] || '');
+await step('사진: 예전 기록의 사진 — 상세 갤러리 · 전체화면 뷰어 · 목록 카드 썸네일', async () => {
+  await go(`#/record/${encodeURIComponent(ids.catan)}`, '.page-detail');
   const saved = await serverRecord(ids.catan);
   check('서버 기록에 사진 순서 그대로 (첫 장 = 대표)', saved && JSON.stringify(saved.photos) === JSON.stringify(photoIds.order), JSON.stringify(saved && saved.photos));
   check('갤러리 4장', (await page.$$('.page-detail .dg-slide')).length === 4 && (await page.$$('.page-detail .dg-thumb')).length === 4);
@@ -3259,53 +3371,6 @@ await step('사진: 저장 → 상세 갤러리 · 전체화면 뷰어 · 목록
   await shot('36-home-photo');
 });
 
-await step('사진: 저장 공간 80% 넘으면 알림 · 가득 차면 더 넣지 않음', async () => {
-  const real = await imgStats();
-  // 서버 한도(150MB)를 실제로 채우는 대신 사용량 응답만 바꿔서 확인 (사진은 진짜 서버로 올림)
-  let fake = { count: 600, bytes: Math.floor(real.limitBytes * 0.8) - 1000, limitCount: real.limitCount, limitBytes: real.limitBytes };
-  const statsUrl = '**/api/images?stats=1';
-  await page.route(statsUrl, (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fake) }));
-  try {
-    await go('#/new/boardgame', '.page-form');
-    await sleep(300);
-    check('80% 전에는 사진 칸 안내 없음', await page.$eval('.rec-panel[data-panel="photos"] .ph-store', (e) => e.hidden));
-    await page.setInputFiles(photoInput, [P.s5]);
-    const st = await photosSettled(1);
-    check('사진 올라감', st && st[0] === 'ok', JSON.stringify(st));
-    check('80%를 막 넘으면 알림', !!(await toastSeen(/사진 저장 공간이 80%를 넘었어요/)), String(await texts('.toast')));
-    const note = await text('.rec-panel[data-panel="photos"] .ph-store');
-    check('사진 칸에 찬 정도 · 대략 남은 장수', /^사진 저장 공간이 80% 찼어요 · 약 [\d,]+장 더 넣을 수 있어요/.test(note) &&
-      !(await page.$eval('.rec-panel[data-panel="photos"] .ph-add', (e) => e.disabled)), note);
-    await page.click('.page-form .savebar button:has-text("취소")');
-    await page.waitForSelector(dlg);
-    await dialogButton('그만 쓰기');
-    await page.waitForSelector('.page-form', { state: 'detached', timeout: 5000 });
-
-    // 가득 참: 사진 추가가 막히고 정리 방법 안내, 골라도 올리지 않음
-    fake = { ...fake, bytes: real.limitBytes };
-    await go('#/new/boardgame', '.page-form');
-    const fullNote = await until(async () => { const tt = await text('.rec-panel[data-panel="photos"] .ph-store'); return tt.includes('가득 찼어요') && tt; }, 3000);
-    check('가득 차면 사진 추가 막힘 · 정리 방법 안내', !!fullNote && fullNote.includes('정리') && (await page.$eval('.rec-panel[data-panel="photos"] .ph-add', (e) => e.disabled)), String(fullNote));
-    const posts = [];
-    const onReq = (r) => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/images') posts.push(r.url()); };
-    page.on('request', onReq);
-    await page.setInputFiles(photoInput, [P.s4]); // 붙여넣기·끌어 놓기와 같은 길
-    const warned = await toastSeen(/사진 저장 공간이 가득 찼어요/);
-    await sleep(200);
-    page.off('request', onReq);
-    check('가득 차면 골라도 올리지 않고 안내만', !!warned && posts.length === 0 && (await page.$$('.rec-panel[data-panel="photos"] .ph-tile')).length === 0, `${posts.length} ${String(await texts('.toast'))}`);
-    await noOverflow('사진 저장 공간 가득 참 폼');
-    await shot('37-photo-storage-full');
-    await page.click('.page-form .savebar button:has-text("취소")');
-    await page.waitForSelector('.page-form', { state: 'detached', timeout: 5000 });
-    await go('#/settings', '.page-settings');
-    const sw = await until(async () => { const tt = await text('.page-settings .store-warn'); return tt && tt; }, 3000);
-    check('설정에도 가득 참 안내 (기록은 계속 저장됨)', !!sw && sw.includes('가득 찼어요') && sw.includes('기록은 계속 저장돼요'), String(sw));
-  } finally {
-    await page.unroute(statsUrl);
-  }
-});
-
 await step('사진: 게임 대표 이미지는 플레이 사진과 따로 (사진 없는 기록 카드에 대표 이미지)', async () => {
   // 같은 사진을 다른 기록이 함께 가리키는 경우 (예전 앱의 '이전 대표 사진 쓰기') — 뒤 단계의 정리 규칙 확인용
   const shared = await api('POST', '/api/records', { record: { type: 'boardgame', date: TODAY, title: '카탄', members: [ids['민지짱']], photos: [photoIds.order[0]] } });
@@ -3329,8 +3394,7 @@ await step('사진: 게임 대표 이미지는 플레이 사진과 따로 (사�
   check('서버: 게임에 대표 이미지', game && typeof game.cover === 'string' && (await imgBytes(game.cover, 't')).status === 200, JSON.stringify(game));
   ids.catanCover = game && game.cover;
   check('기록 폼의 게임 요약에 대표 이미지', (await page.getAttribute('.page-form .gp-picked .gthumb .pimg', 'data-photo')) === ids.catanCover);
-  await openPanel('photos');
-  check('플레이 사진 칸은 비어 있음 (대표 이미지는 기록 사진이 아님)', JSON.stringify(await formPhotoIds()) === '[]');
+  check('기록 폼에는 플레이 사진 칸이 없음 (대표 이미지는 게임 정보에만)', !(await page.$('.page-form .rec-panel[data-panel="photos"]')) && !(await page.$('.page-form input[type="file"]')));
   await page.click('.save-btn');
   await page.waitForSelector('.page-detail', { timeout: 8000 });
   const bareId = decodeURIComponent(page.url().split('#/record/')[1] || '');
@@ -3350,108 +3414,24 @@ await step('사진: 게임 대표 이미지는 플레이 사진과 따로 (사�
   await syncFromServer();
 });
 
-await step('사진: 올리기 실패 → 다시 시도 · 올리는 중에 저장하면 기다렸다 저장', async () => {
-  await go('#/new/escaperoom', '.page-form');
-  await setGame('사진 테스트 방');
-  let fails = 1;
-  await page.route('**/api/images', async (route) => {
-    if (route.request().method() === 'POST' && fails > 0) {
-      fails--;
-      await route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"server_error"}' });
-    } else await route.continue();
-  });
-  await allowing([/status of 500/], async () => {
-    await page.setInputFiles(photoInput, [P.s4]);
-    const st = await photosSettled(1);
-    check('실패하면 그 칸에 다시 시도', st && st[0] === 'error' && (await text('.rec-panel[data-panel="photos"] .ph-state')).includes('다시'), JSON.stringify(st));
-    check('실패 안내', !!(await toastSeen(/업로드하지 못했어요/)), String(await texts('.toast')));
-  });
-  await page.click('.save-btn');
-  check('실패한 사진이 있으면 저장 안 하고 안내', !!(await toastSeen(/올리지 못한 사진이 있어요/)) && !!(await page.$('.page-form')));
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(1) .ph-open');
-  const st2 = await photosSettled(1);
-  check('다시 시도 → 올라감', st2 && st2[0] === 'ok', JSON.stringify(st2));
-  // 느린 업로드: 올리는 중에 저장 → 다 올라간 뒤 자동 저장
-  await page.unroute('**/api/images');
-  let release;
-  const gate = new Promise((r) => { release = r; });
-  await page.route('**/api/images', async (route) => {
-    if (route.request().method() === 'POST') await gate;
-    await route.continue();
-  });
-  await page.setInputFiles(photoInput, [P.s5]);
-  await page.waitForSelector('.rec-panel[data-panel="photos"] .ph-tile.is-busy');
-  check('올리는 중: 저장 버튼에 표시', /사진 올리는 중/.test(await text('.save-btn')), await text('.save-btn'));
-  await page.click('.save-btn');
-  check('눌러도 바로 저장하지 않고 안내', !!(await toastSeen(/사진을 다 올리면 바로 저장할게요/)) && !!(await page.$('.page-form')));
-  release();
-  await page.waitForSelector('.page-detail', { timeout: 10000 });
-  await page.unroute('**/api/images');
-  ids.erPhoto = decodeURIComponent(page.url().split('#/record/')[1] || '');
-  const rec = await serverRecord(ids.erPhoto);
-  check('다 올린 뒤 두 장과 함께 저장', rec && rec.photos.length === 2, JSON.stringify(rec && rec.photos));
-  photoIds.er = rec.photos;
-});
-
-await step('사진: 저장 전에 서버에서 사라진 사진 → 그 사진만 빼고 다시 저장하게', async () => {
-  await go('#/new/escaperoom', '.page-form');
-  await setGame('사라진 사진 방');
-  await page.setInputFiles(photoInput, [P.s3, P.s5]);
-  await photosSettled(2);
-  const [gone, kept] = await formPhotoIds();
-  // 다른 기기에서 정리된 경우처럼 서버에서만 지움 (이 기기 메모리에는 받아 둔 사진이 그대로 있음)
-  check('서버에서 사진 하나 지움', (await api('DELETE', `/api/images?id=${encodeURIComponent(gone)}`)).status === 200);
-  await allowing([/status of 400/], async () => {
-    await page.click('.save-btn');
-    check('없는 사진만 빼고 다시 저장하라는 안내', !!(await toastSeen(/사라진 사진 1장을 뺐어요/, 5000)) && !!(await page.$('.page-form')), String(await texts('.toast')));
-  });
-  check('폼에 남은 사진은 그대로', JSON.stringify(await formPhotoIds()) === JSON.stringify([kept]), JSON.stringify(await formPhotoIds()));
+await step('사진: 예전에 사진을 붙여 둔 방탈출 기록 준비 (API) — 사진 2장', async () => {
+  const g = await api('POST', '/api/games', { game: { type: 'escaperoom', title: '사진 테스트 방' } });
+  check('테마 등록', g.status === 200, JSON.stringify(g.data));
+  const er = [await uploadViaApi(made.s4), await uploadViaApi(made.s5)];
+  const res = await api('POST', '/api/records', { record: { type: 'escaperoom', date: DEFAULT_DATE, title: '사진 테스트 방', gameId: g.data.game.id, members: [], photos: er } });
+  check('사진 2장이 붙은 방탈출 기록', res.status === 200 && JSON.stringify(res.data.record.photos) === JSON.stringify(er), JSON.stringify(res.data));
+  ids.erPhoto = res.data.record.id;
+  photoIds.er = er;
+  await syncFromServer();
+  // 수정 폼에는 사진 칸이 없지만, 고쳐 저장해도 붙어 있던 사진은 그대로
+  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
+  check('수정 폼: 사진 칸·파일 고르기 없음', !(await page.$('.page-form .rec-panel[data-panel="photos"]')) && !(await page.$('.page-form input[type="file"]')));
+  await page.fill(REVIEW, '사진은 예전에 붙여 둔 그대로');
   await page.click('.save-btn');
   await page.waitForSelector('.page-detail', { timeout: 8000 });
-  const id = decodeURIComponent(page.url().split('#/record/')[1] || '');
-  check('다시 저장하면 남은 사진과 함께 저장', JSON.stringify((await serverRecord(id)).photos) === JSON.stringify([kept]));
-});
-
-await step('사진: 초안에 올린 사진이 남음', async () => {
-  await go('#/new/murdermystery', '.page-form');
-  await setGame('사진 초안');
-  await page.setInputFiles(photoInput, [P.s3]);
-  await photosSettled(1);
-  const [pid] = await formPhotoIds();
-  const draft = await until(() => page.evaluate(() => {
-    const d = JSON.parse(localStorage.getItem('ddh:draft') || 'null');
-    return d && d.model && Array.isArray(d.model.photos) && d.model.photos.length ? d : null;
-  }), 3000);
-  check('초안에 사진 id', draft && draft.model && JSON.stringify(draft.model.photos) === JSON.stringify([pid]), JSON.stringify(draft && draft.model && draft.model.photos));
-  await page.click('.page-form .appbar button[aria-label="뒤로"]');
-  await page.waitForSelector('.page-home, .page-detail, .page-list', { timeout: 5000 });
-  await page.click('#tabbar .tab-add');
-  await page.waitForSelector('.page-form .draft-banner:not([hidden])');
-  await page.click('.page-form .draft-banner button:has-text("불러오기")');
-  await page.waitForSelector('.page-form .gp-picked');
-  check('이어 쓰면 사진도 그대로', JSON.stringify(await formPhotoIds()) === JSON.stringify([pid]) &&
-    !!(await until(() => page.$eval('.rec-panel[data-panel="photos"] .ph-cell:nth-child(1) img', (e) => e.complete && e.naturalWidth > 0), 5000)));
-  await page.click('.page-form .savebar button:has-text("취소")');
-  await page.waitForSelector(dlg);
-  await dialogButton('그만 쓰기');
-  await sleep(200);
-  check('그만 쓰면 초안 삭제', (await draftNow()) === null);
-  check('초안에만 있던 사진도 서버에서 지움', !!(await until(async () => (await imgBytes(pid, 't')).status === 404, 4000)));
-
-  // 초안 배너의 ‘버리기’도 초안에만 있던 사진을 지움
-  await go('#/new/murdermystery', '.page-form');
-  await setGame('버릴 초안');
-  await page.setInputFiles(photoInput, [P.s4]);
-  await photosSettled(1);
-  const [pid2] = await formPhotoIds();
-  await until(async () => JSON.stringify(((await draftNow()) || { model: {} }).model.photos) === JSON.stringify([pid2]), 3000);
-  await page.click('.page-form .appbar button[aria-label="뒤로"]');
-  await page.waitForSelector('.page-home, .page-detail, .page-list', { timeout: 5000 });
-  await go('#/new/murdermystery', '.page-form');
-  await page.click('.draft-banner button:has-text("버리기")');
-  check('초안 버리기 → 그 사진도 지움', !!(await until(async () => (await imgBytes(pid2, 't')).status === 404, 4000)) && (await draftNow()) === null);
-  await page.click('.page-form .appbar button[aria-label="뒤로"]');
-  await page.waitForSelector('.page-home, .page-detail, .page-list', { timeout: 5000 });
+  const after = await serverRecord(ids.erPhoto);
+  check('수정 저장해도 사진 순서 그대로', after.review === '사진은 예전에 붙여 둔 그대로' && JSON.stringify(after.photos) === JSON.stringify(er), JSON.stringify(after.photos));
+  check('상세 갤러리 2장', (await page.$$('.page-detail .dg-slide')).length === 2);
 });
 
 /** 기록에서 빠진 사진의 하루 유예가 지난 것처럼: 빠진 시각(imgtouch)과 올린 시각을 이틀 전으로 */
@@ -3464,18 +3444,19 @@ async function ageReleased(ids) {
   }
 }
 
-await step('사진: 기록 수정으로 뺀 사진 → 저장하면 빠진 것으로 표시, 하루 뒤 정리 (다른 기록이 쓰는 사진은 남김)', async () => {
+await step('사진: 다른 기기(예전 앱)에서 사진을 빼고 저장 → 빠진 것으로 표시, 하루 뒤 정리 (다른 기록이 쓰는 사진은 남김)', async () => {
+  // 이 앱의 수정 폼은 사진을 그대로 보내므로, 사진을 빼는 건 예전 앱·다른 기기의 저장으로 흉내
   await go(`#/edit/${encodeURIComponent(ids.catan)}`, '.page-form');
-  check('수정 폼에 저장된 사진 순서 그대로', JSON.stringify(await formPhotoIds()) === JSON.stringify(photoIds.order), JSON.stringify(await formPhotoIds()));
-  const dropped = photoIds.order[3];
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(4) .ph-x');
-  // 대표(0번)는 ‘카탄’ 두 번째 기록도 쓰므로 빼도 남아야 함 → 대표를 빼고 원래 둘째 장이 대표가 되게
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(1) .ph-x');
-  check('폼에서 2장 뺌', JSON.stringify(await formPhotoIds()) === JSON.stringify(photoIds.order.slice(1, 3)), JSON.stringify(await formPhotoIds()));
-  await sleep(300);
-  check('저장 전에는 서버 사진 그대로 (저장된 기록이 아직 씀)', (await imgBytes(dropped, 't')).status === 200 && (await imgBytes(photoIds.order[0], 't')).status === 200);
   await page.click('.save-btn');
   await page.waitForSelector('.page-detail', { timeout: 8000 });
+  check('이 앱의 수정 폼으로 저장하면 사진 4장 그대로', JSON.stringify((await serverRecord(ids.catan)).photos) === JSON.stringify(photoIds.order));
+  const dropped = photoIds.order[3];
+  // 대표(0번)는 ‘카탄’ 두 번째 기록도 쓰므로 빼도 남아야 함 → 대표를 빼고 원래 둘째 장이 대표가 되게
+  const cur = await serverRecord(ids.catan);
+  const res = await api('POST', '/api/records', { record: { ...cur, photos: photoIds.order.slice(1, 3) }, baseUpdatedAt: cur.updatedAt });
+  check('사진 2장을 뺀 저장', res.status === 200, JSON.stringify(res.data));
+  await syncFromServer();
+  await go(`#/record/${encodeURIComponent(ids.catan)}`, '.page-detail');
   check('서버 기록: 남은 2장, 둘째 장이 대표', JSON.stringify((await serverRecord(ids.catan)).photos) === JSON.stringify(photoIds.order.slice(1, 3)));
   // 바로 지우지 않음: 다른 기기의 저장 안 한 폼(되살리기·가져다 쓴 대표 사진)이 아직 가리킬 수 있어서
   check('뺀 사진은 하루 동안 남고 빠진 시각이 적힘', (await imgBytes(dropped, 't')).status === 200 && !!(await srv.redis.hget('ddh:imgtouch', dropped)));
@@ -3603,7 +3584,7 @@ await step('사진: 코드 없이는 사진을 볼 수 없음 (401)', async () =
   check('그래도 앱은 잠기지 않음', !(await page.$('section.lock')) && !!(await page.$('#tabbar:not([hidden])')));
 });
 
-await step('사진: 코드가 바뀌어 잠기면 뷰어·사진 시트도 닫히고 받아 둔 사진 캐시도 비움', async () => {
+await step('사진: 코드가 바뀌어 잠기면 뷰어도 닫히고 받아 둔 사진 캐시도 비움', async () => {
   const lockBy401 = async () => {
     const cleared = page.waitForResponse((r) => new URL(r.url()).pathname === '/clear-cache.txt', { timeout: 5000 }).catch(() => null);
     await page.route('**/api/data', (route) => route.fulfill({ status: 401, contentType: 'application/json', body: '{"error":"unauthorized"}' }));
@@ -3638,22 +3619,6 @@ await step('사진: 코드가 바뀌어 잠기면 뷰어·사진 시트도 닫�
   check('뷰어 상태도 되돌림 (스크롤 잠금·상태 표시줄 색)', !(await page.evaluate(() => document.documentElement.classList.contains('vw-open'))) &&
     !(await page.$$eval('meta[name="theme-color"]', (els) => els.map((e) => e.content))).includes('#0B0A0D'));
   check('브라우저 캐시의 사진도 비움 (Clear-Site-Data: "cache")', !!cr && cr.status() === 200 && !(await httpCached(probeId)), cr ? String(cr.status()) : '요청 없음');
-  await unlockAgain();
-  // 2) 폼의 사진 시트가 열린 채로
-  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(1) .ph-open');
-  await page.waitForSelector(`${dlg}.dlg-photo`);
-  await page.click(`${dlg} .ph-sheet-actions .btn:has-text("크게 보기")`);
-  await page.waitForSelector('dialog.viewer[open]');
-  await lockBy401();
-  check('잠금 화면 위에 폼의 뷰어·사진 시트가 남지 않음', !(await page.$('dialog')) && !(await photoVisible()));
-  await unlockAgain();
-  // 사진 시트만 열린 채로
-  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
-  await page.click('.rec-panel[data-panel="photos"] .ph-cell:nth-child(1) .ph-open');
-  await page.waitForSelector(`${dlg}.dlg-photo`);
-  await lockBy401();
-  check('사진 시트만 열려 있어도 닫힘', !(await page.$('dialog')) && !(await photoVisible()));
   await unlockAgain();
 });
 
@@ -3803,7 +3768,6 @@ await step('사진: 다크 모드 · 320px · 가로 스크롤 없음', async ()
   const screens = [
     [`#/record/${encodeURIComponent(ids.erPhoto)}`, '.page-detail', 'photo-detail'],
     ['#/records', '.page-list', 'photo-list'],
-    [`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form', 'photo-form'],
     ['#/settings', '.page-settings', 'photo-settings'],
   ];
   for (const [hash, sel, name] of screens) {
@@ -3829,19 +3793,14 @@ await step('사진: 다크 모드 · 320px · 가로 스크롤 없음', async ()
     await go(hash, sel);
     await sleep(150);
     await noOverflow(`320px 사진 ${hash}`);
-    if (sel === '.page-form') await shot('320-photo-form');
     if (sel === '.page-list') await shot('320-photo-list');
   }
-  // 320px 에서도 사진 칸 버튼들이 44px 이상 누를 수 있음
-  await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
-  const targets = await page.$$eval('.rec-panel[data-panel="photos"] .ph-x, .rec-panel[data-panel="photos"] .ph-cover-btn, .rec-panel[data-panel="photos"] .ph-open, .rec-panel[data-panel="photos"] .ph-add', (els) => els.map((el) => {
-    const b = el.getBoundingClientRect();
-    const after = getComputedStyle(el, '::after');
-    const extra = after.content !== 'none' ? { t: -parseFloat(after.top) || 0, l: -parseFloat(after.left) || 0 } : { t: 0, l: 0 };
-    return { cls: el.className, w: Math.round(b.width + 2 * Math.max(0, extra.l)), h: Math.round(b.height + 2 * Math.max(0, extra.t)) };
-  }));
-  check('320px: 사진 칸 버튼 누르는 영역 44px 이상', targets.length > 0 && targets.every((t) => t.w >= 44 && t.h >= 44), JSON.stringify(targets));
-  await page.click('.page-form .savebar button:has-text("취소")');
+  check('320px: 사진이 붙은 기록의 수정 폼에도 사진 칸 없음', await (async () => {
+    await go(`#/edit/${encodeURIComponent(ids.erPhoto)}`, '.page-form');
+    const none = !(await page.$('.page-form .rec-panel[data-panel="photos"]')) && !(await page.$('.page-form input[type="file"]'));
+    await page.click('.page-form .savebar button:has-text("취소")');
+    return none;
+  })());
   await page.setViewportSize(VIEWPORT);
 });
 

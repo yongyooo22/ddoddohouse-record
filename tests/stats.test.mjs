@@ -4,6 +4,9 @@ import assert from 'node:assert/strict';
 import {
   overview,
   boardgameStats,
+  bgRanking,
+  scoreRanks,
+  bgLowWins,
   mmStats,
   erStats,
   escapeRoomOrdinals,
@@ -245,6 +248,69 @@ describe('boardgameStats', () => {
     assert.deepEqual(r3.memberWinRates.at(-1), { memberId: 'z', plays: 1, decided: 0, wins: 0, rate: null });
     // 협력 패배는 결과 있는 판
     assert.equal(boardgameStats([{ ...coopUnknown, bg: { mode: 'coop', coopWin: false } }]).memberWinRates[0].decided, 1);
+  });
+});
+
+describe('보드게임 점수 → 등수 (scoreRanks)', () => {
+  const ranks = (entries, opts) => Object.fromEntries(scoreRanks(entries, opts));
+
+  test('높은 점수가 1등, 같은 점수는 같은 등수이고 다음 등수는 건너뜀 (1·2·2·4)', () => {
+    assert.deepEqual(ranks([
+      { memberId: 'a', score: 61 }, { memberId: 'b', score: 52 }, { memberId: 'c', score: 52 }, { memberId: 'd', score: 40 },
+    ]), { a: 1, b: 2, c: 2, d: 4 });
+  });
+
+  test('낮은 점수가 이기는 게임', () => {
+    assert.deepEqual(ranks([{ memberId: 'a', score: 3 }, { memberId: 'b', score: -2 }, { memberId: 'c', score: 3 }], { lowWins: true }), { b: 1, a: 2, c: 2 });
+  });
+
+  test('점수를 적지 않은 사람은 등수 없음 · 소수·문자열 숫자도 비교', () => {
+    assert.deepEqual(ranks([
+      { memberId: 'a', score: null }, { memberId: 'b', score: '' }, { memberId: 'c', score: '7.5' }, { memberId: 'd', score: 7 }, { score: 99 },
+    ]), { c: 1, d: 2 });
+    assert.deepEqual(ranks([]), {});
+    assert.deepEqual(ranks(null), {});
+  });
+
+  test('저장된 결과가 낮은 점수 우선이었는지 (bgLowWins)', () => {
+    assert.equal(bgLowWins([{ rank: 1, score: 3 }, { rank: 2, score: 9 }]), true);
+    assert.equal(bgLowWins([{ rank: 1, score: 9 }, { rank: 2, score: 3 }]), false);
+    assert.equal(bgLowWins([{ rank: 1, score: 5 }, { rank: 1, score: 5 }]), false); // 동점뿐이면 알 수 없음 → 높은 점수
+    assert.equal(bgLowWins([{ rank: 1, winner: true }, { rank: 2 }]), false); // 점수 없이 매긴 등수
+    assert.equal(bgLowWins(undefined), false);
+  });
+});
+
+describe('보드게임 랭킹 (bgRanking)', () => {
+  test('1등 횟수 → 1등 비율 → 평균 등수 순 · 협력 판과 결과 없는 판은 빠짐', () => {
+    // b1: m1 1등(10점) · m2 2등 · m3 3등 / b2: m2 승 / b5: m2 승 · m5(떠난 멤버) / b6: m1 혼자 승 / b3·b4 협력은 제외
+    const rows = bgRanking(records);
+    assert.deepEqual(rows.map((x) => [x.memberId, x.place, x.games, x.wins]), [
+      ['m1', 1, 3, 2], ['m2', 2, 3, 2], ['m3', 3, 1, 0], ['m5', 4, 1, 0],
+    ]);
+    close(rows[0].rate, 2 / 3);
+    assert.equal(rows[0].avgRank, 1); // 등수를 적은 판(b1)만으로 평균
+    assert.equal(rows[1].avgRank, 2);
+    assert.equal(rows[3].avgRank, null);
+  });
+
+  test('keep 으로 떠난 멤버를 빼고 자리를 매김', () => {
+    assert.deepEqual(bgRanking(records, { keep: (id) => id !== 'm5' }).map((x) => x.memberId), ['m1', 'm2', 'm3']);
+  });
+
+  test('승수·비율·평균 등수가 모두 같으면 같은 자리, 다음 자리는 건너뜀', () => {
+    const g = (id, results) => ({ id, type: 'boardgame', date: '2026-01-01', title: 'X', members: results.map((x) => x.memberId), bg: { mode: 'competitive', results } });
+    const rows = bgRanking([
+      g('1', [{ memberId: 'a', score: 9, rank: 1, winner: true }, { memberId: 'b', score: 9, rank: 1, winner: true }, { memberId: 'c', score: 1, rank: 3, winner: false }]),
+    ]);
+    assert.deepEqual(rows.map((x) => [x.memberId, x.place]), [['a', 1], ['b', 1], ['c', 3]]);
+  });
+
+  test('함께했지만 점수가 없는 사람은 1등을 못 한 판으로 셈 · 기록이 없으면 빈 목록', () => {
+    const r = { id: 'z', type: 'boardgame', date: '2026-01-01', title: 'Y', members: ['a', 'b'], bg: { mode: 'competitive', results: [{ memberId: 'a', score: 5, rank: 1, winner: true }] } };
+    assert.deepEqual(bgRanking([r]).map((x) => [x.memberId, x.games, x.wins, x.avgRank]), [['a', 1, 1, 1], ['b', 1, 0, null]]);
+    assert.deepEqual(bgRanking([]), []);
+    assert.deepEqual(bgRanking([b3, b4]), []);
   });
 });
 
