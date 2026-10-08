@@ -1038,7 +1038,9 @@ const getMeLS = () => page.evaluate((k) => localStorage.getItem(k), ME_KEY);
 const setMeLS = (id) => page.evaluate(([k, v]) => { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); }, [ME_KEY, id]);
 const meT = { recs: [], members: [], base: null };
 const mkRole = (memberId, character) => ({ memberId, character, culprit: false, outcome: null, mvp: false });
-const addonSum = (key) => text(`.page-form .addon[data-panel="${key}"] .addon-sum`);
+/** 추가 입력 버튼의 요약 (펼쳐 놓은 동안에는 영역 머리의 요약) */
+const addonSum = async (key) => text((await page.$(`${panelSel(key)}:not([hidden])`)) ? `${panelSel(key)} .rp-sum` : `.page-form .addon[data-panel="${key}"] .addon-sum`);
+const pressedMembers = () => page.$$eval(`${panelSel('members')} .chip-member[aria-pressed="true"]`, (els) => els.map((e) => e.dataset.memberId).sort());
 const chipPressed = (id) => page.getAttribute(`${panelSel('members')} .chip-member[data-member-id="${id}"]`, 'aria-pressed');
 /** 폼의 ‘나 줄’ 버튼으로 나 고르기 창을 열고 멤버를 고름 */
 async function pickMeIn(id) {
@@ -1300,9 +1302,10 @@ await step('프로필: 맡았던 역할 (내가 맡았던 역할 · 가려진 �
   await setMeLS(na);
   await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
   const prole = '.page-profile .prole';
-  check('내 프로필: ‘내가 맡았던 역할’ 구역 · 4개', (await text(`${prole} .sec-title`)) === '내가 맡았던 역할' && (await text(`${prole} .sec-sub`)) === '4개', await text(prole));
+  // 앞 단계의 ‘붉은 저택의 초대’ 스포일러 기록(ids.mm)은 내 역할(mm.myRole)만 있고 배역이 없어서, 나로 정한 사람이면 누구에게나 ‘가려진 역할’ 한 줄로 이어짐
+  check('내 프로필: ‘내가 맡았던 역할’ 구역 · 5개 (시험 기록 4개 + 앞서 만든 내 역할 기록 1개)', (await text(`${prole} .sec-title`)) === '내가 맡았던 역할' && (await text(`${prole} .sec-sub`)) === '5개', await text(prole));
   const roleTexts = (await texts(`${prole} .prole-role`)).sort();
-  check('역할: 공작부인 · 예전 기록의 내 역할 · 스포일러/가림 기록은 ‘가려진 역할’ 둘', JSON.stringify(roleTexts) === JSON.stringify(['가려진 역할', '가려진 역할', '공작부인', '레거시역할'].sort()), JSON.stringify(roleTexts));
+  check('역할: 공작부인 · 예전 기록의 내 역할 · 스포일러/가림 기록은 ‘가려진 역할’ 셋', JSON.stringify(roleTexts) === JSON.stringify(['가려진 역할', '가려진 역할', '가려진 역할', '공작부인', '레거시역할'].sort()), JSON.stringify(roleTexts));
   const row1 = `${prole} .prole-row:has(.prole-link[href="#/record/${encodeURIComponent(meT.r1)}"])`;
   check('일반 기록 행: 역할 · 제목 · 날짜 · 별점 4.0', (await text(`${row1} .prole-role`)) === '공작부인' && (await text(`${row1} .prole-title`)) === 'RP-일반' &&
     (await text(`${row1} .prole-meta`)).includes(d1.replace(/-/g, '.')) && (await text(`${row1} .prole-meta .stars-num`)) === '4.0', await text(`${row1} .prole-meta`));
@@ -1311,7 +1314,7 @@ await step('프로필: 맡았던 역할 (내가 맡았던 역할 · 가려진 �
   check('가린 역할의 이름은 프로필 어디에도 없음 (비밀 범인 · 가린 역할2)', !whole.includes('비밀 범인') && !whole.includes('가린 역할2'), whole);
   check('역할 이름이 빈 배역은 구역에 없음 (내 역할 ‘무시됨’ 도 안 나옴)', !proleText.includes('무시됨') && !proleText.includes('RP-빈배역'), proleText);
   const hidden = await page.$$eval(`${prole} .prole-row`, (els) => els.filter((e) => e.querySelector('.prole-role').textContent === '가려진 역할').map((e) => e.querySelector('.prole-title').textContent).sort());
-  check('가려진 역할 행은 제목으로만 기록에 이어 줌 (스포일러 · 역할가림)', JSON.stringify(hidden) === JSON.stringify(['RP-스포일러', 'RP-역할가림']), JSON.stringify(hidden));
+  check('가려진 역할 행은 제목으로만 기록에 이어 줌 (스포일러 · 역할가림 · 앞서 만든 스포일러 기록)', JSON.stringify(hidden) === JSON.stringify(['RP-스포일러', 'RP-역할가림', '붉은 저택의 초대'].sort()), JSON.stringify(hidden));
   await noOverflow('프로필 (맡았던 역할)');
   // 제목 링크 → 그 기록 상세
   await page.click(`${row1} .prole-link`);
@@ -1341,14 +1344,14 @@ await step('프로필: 맡았던 역할 (내가 맡았던 역할 · 가려진 �
   const manyIds = await Promise.all(many);
   await reloadApp();
   await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
-  check('16개 중 10개만 보임 + ‘최근 10개만 보여요 (전체 16개)’', (await page.$$(`${prole} .prole-row`)).length === 10 && (await text(`${prole} > p`)) === '최근 10개만 보여요 (전체 16개)' && (await text(`${prole} .sec-sub`)) === '16개', await text(prole));
-  check('최근 것부터: 다수역0(어제)이 맨 위', (await texts(`${prole} .prole-role`))[0] === '다수역0', JSON.stringify((await texts(`${prole} .prole-role`)).slice(0, 3)));
+  check('17개 중 10개만 보임 + ‘최근 10개만 보여요 (전체 17개)’', (await page.$$(`${prole} .prole-row`)).length === 10 && (await text(`${prole} > p`)) === '최근 10개만 보여요 (전체 17개)' && (await text(`${prole} .sec-sub`)) === '17개', await text(prole));
+  check('최근 것부터: 오늘 기록(가려진 역할) 다음이 다수역0(어제), 1 …', JSON.stringify((await texts(`${prole} .prole-role`)).slice(0, 3)) === JSON.stringify(['가려진 역할', '다수역0', '다수역1']), JSON.stringify((await texts(`${prole} .prole-role`)).slice(0, 3)));
   await noOverflow('프로필 (역할 10개)');
   for (const id of manyIds) await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
   meT.recs = meT.recs.filter((x) => !manyIds.includes(x));
   await reloadApp();
   await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
-  check('(정리) 다시 4개 · 안내 없음', (await text(`${prole} .sec-sub`)) === '4개' && !(await page.$(`${prole} > p`)));
+  check('(정리) 다시 5개 · 안내 없음', (await text(`${prole} .sec-sub`)) === '5개' && !(await page.$(`${prole} > p`)));
 });
 
 await step('나: 수정 폼에서 배역 이름을 내 역할로 채워 줌 (저장해도 배역은 그대로)', async () => {
@@ -1463,8 +1466,9 @@ await step('기록 수정 (예전 멤버·순위·태그는 화면에 없어도 
   check('수정 폼에 기존 별점', (await ratingOf(RATING)) === '4.5');
   check('수정 폼: 종류는 고정 표시', !!(await page.$('.page-form .rec-type .badge')) && !(await page.$('.page-form .rec-type .seg')));
   const open = await page.$$eval('.page-form .rec-panel:not([hidden])', (els) => els.map((e) => e.dataset.panel));
-  check('수정 폼: 사진이 없으면 펼쳐진 영역 없음', JSON.stringify(open) === JSON.stringify([]), JSON.stringify(open));
-  check('수정 폼에도 멤버·순위·자세한 정보·태그 입력은 없음 (보이는 항목: 종류·게임·날짜·별점·감상)', await noRemovedPanels() && !(await page.$('.page-form .result-row, .page-form .chip-member, .page-form .chip-tag')) &&
+  check('수정 폼: 사진은 없고 함께한 사람이 있으면 그 영역만 펼쳐짐', JSON.stringify(open) === JSON.stringify(before.members.length ? ['members'] : []), JSON.stringify(open));
+  check('수정 폼: 함께한 사람 칩은 기록의 멤버만 눌려 있음 (순위·자세한 정보·태그 입력은 없음 · 보이는 항목: 종류·게임·날짜·별점·감상)', await noRemovedPanels() && !(await page.$('.page-form .result-row, .page-form .chip-tag')) &&
+    canon(await pressedMembers()) === canon([...before.members].sort()) &&
     JSON.stringify(await visibleLabels()) === JSON.stringify(['종류', '게임', '날짜', '별점', '감상']), JSON.stringify(await visibleLabels()));
   await page.fill(REVIEW, '화성 개척은 언제나 옳다\n영식이 막판 도시 타일로 역전했다.');
   await setRating(RATING, ['ArrowRight']);
@@ -1564,8 +1568,9 @@ await step('멤버 삭제 → (떠난 멤버)', async () => {
   // 수정 폼에는 멤버·역할 칸이 없지만, 떠난 멤버가 들어 있는 예전 기록을 고쳐 저장해도 멤버·역할·범인·점수는 그대로
   const beforeMm = await serverRecord(ids.mm);
   await go(`#/edit/${encodeURIComponent(ids.mm)}`, '.page-form');
-  check('수정 폼: 저장된 내 역할이 채워져 있음 · 떠난 멤버 칩 같은 건 없음', (await page.inputValue('[data-field="mm.myRole"]')) === '마르타' && await noRemovedPanels() &&
-    !(await page.$('.page-form .chip-member, .page-form .role-card')));
+  check('수정 폼: 저장된 내 역할이 채워져 있음 · 함께한 사람에 떠난 멤버 칩(눌림)이 하나 · 역할 카드는 없음', (await page.inputValue('[data-field="mm.myRole"]')) === '마르타' && await noRemovedPanels() &&
+    (await page.$$('.page-form .chip-member.is-gone[aria-pressed="true"]')).length === 1 && canon(await pressedMembers()) === canon([...beforeMm.members].sort()) &&
+    !(await page.$('.page-form .role-card')));
   check('수정 폼: 보이는 항목은 종류·작품·날짜·별점·내 역할·감상', JSON.stringify(await visibleLabels()) === JSON.stringify(['종류', '작품', '날짜', '별점', '내 역할', '감상']), JSON.stringify(await visibleLabels()));
   await page.fill(REVIEW, `${beforeMm.review} (다시 읽고 고침)`);
   await page.click('.save-btn');
