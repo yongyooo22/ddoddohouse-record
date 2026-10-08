@@ -3,7 +3,8 @@ import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, OWNERSHIPS } from '../constants.js';
 import { state, recordsSorted, membersSorted, memberInfo, isFirstLoad, loadFailed, titleOf, gameOfRecord, gameById, isOwnedGame } from '../store.js';
 import { norm, monthKey, fmtMonth } from '../format.js';
-import { segmented, chip, avatar, emptyState, loadingState, loadErrorState, typeName } from '../ui.js';
+import { segmented, chip, emptyState, loadingState, loadErrorState, typeName } from '../ui.js';
+import { meChip } from './members.js';
 import { ownershipOf, lenderOf, titleKey } from '../stats.js';
 import { recordCard, bgOf, mmOf, erOf } from './bits.js';
 
@@ -108,7 +109,7 @@ export function mount(root, ctx) {
         h('p', { class: 'fp-label', text: '함께한 멤버 (모두 포함)' }),
         mems.length
           ? h('div', { class: 'chips' }, mems.map((m) => chip({
-            label: m.name, pressed: filters.members.includes(m.id), cls: 'chip-member', lead: avatar(m.id, 'xs'),
+            label: m.name, pressed: filters.members.includes(m.id), cls: 'chip-member',
             onToggle: (on) => {
               filters.members = on ? [...filters.members, m.id] : filters.members.filter((x) => x !== m.id);
               limit = PAGE; renderResults();
@@ -174,7 +175,7 @@ export function mount(root, ctx) {
       items.push(h('button', {
         type: 'button', class: 'achip', 'aria-label': `${memberInfo(id).name} 필터 해제`,
         onClick: () => { filters.members = filters.members.filter((x) => x !== id); renderPanel(); renderResults(); },
-      }, avatar(id, 'xs'), h('span', { text: memberInfo(id).name }), icon('x')));
+      }, h('span', { text: memberInfo(id).name }), icon('x')));
     }
     if (items.length > 1) {
       items.push(h('button', { type: 'button', class: 'btn btn-ghost btn-sm achips-clear', onClick: clearAll }, '모두 해제'));
@@ -244,7 +245,9 @@ export function mount(root, ctx) {
   const view = h('div', { class: 'page page-list' },
     h('header', { class: 'page-head' },
       h('h1', { class: 'page-title', text: '기록' }),
-      h('a', { class: 'icon-btn icon-btn-soft head-add', href: '#/new', 'aria-label': '새 기록' }, icon('plus'), h('span', { class: 'head-label', text: '새 기록' }))),
+      h('div', { class: 'head-actions' },
+        h('a', { class: 'icon-btn icon-btn-soft head-add', href: '#/new', 'aria-label': '새 기록' }, icon('plus'), h('span', { class: 'head-label', text: '새 기록' })),
+        meChip())),
     seg,
     h('div', { class: 'list-tools' },
       h('div', { class: 'search-wrap' }, icon('search', 'search-ico'), search),

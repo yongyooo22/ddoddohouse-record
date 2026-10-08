@@ -13,7 +13,7 @@ import { todayStr, yesterdayStr, defaultRecordDate, fmtDate, relTime, parseDate,
 import * as api from '../api.js';
 import { navigate, goBack } from '../nav.js';
 import {
-  appBar, chip, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge, typeName, avatar,
+  appBar, chip, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge, typeName,
 } from '../ui.js';
 import { openMemberEditor, pickMe } from './members.js';
 import { photoField, discardPhotos } from './photos.js';
@@ -426,7 +426,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
   function paintMe() {
     const id = getMeId();
     meRow.replaceChildren(id
-      ? h('span', { class: 'me-row-text' }, avatar(id, 'xs'), h('span', { text: `나: ${memberInfo(id).name}` }))
+      ? h('span', { class: 'me-row-text' }, h('span', { text: `나: ${memberInfo(id).name}` }))
       : h('span', { class: 'me-row-text muted', text: '내가 누구인지 아직 안 골랐어요' }),
     h('button', { type: 'button', class: 'btn btn-ghost btn-sm me-row-btn', onClick: chooseMe }, id ? '바꾸기' : '나 고르기'));
   }
@@ -525,7 +525,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     const gone = m.members.filter((id) => !known.has(id));
     const one = (id, name, isGone) => {
       const c = chip({
-        label: name, pressed: m.members.includes(id), cls: `chip-member${isGone ? ' is-gone' : ''}`, lead: avatar(id, 'xs'),
+        label: name, pressed: m.members.includes(id), cls: `chip-member${isGone ? ' is-gone' : ''}`,
         onToggle: (on) => toggleMember(id, on),
       });
       c.dataset.memberId = id;

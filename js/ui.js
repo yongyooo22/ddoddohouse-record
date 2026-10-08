@@ -161,17 +161,6 @@ export function stamp(text, kind = 'ink', { tilt = true } = {}) {
   return h('span', { class: `stamp stamp-${kind}${tilt ? '' : ' stamp-flat'}` }, text);
 }
 
-// ── 아바타 ──
-function initial(name) {
-  const cp = Array.from(String(name || '?').trim());
-  return cp[0] || '?';
-}
-
-export function avatar(id, size = 'md') {
-  const m = typeof id === 'string' ? memberInfo(id) : id;
-  return h('span', { class: `av av-${size} mc-${m.color}`, 'aria-hidden': 'true' }, m.missing ? '?' : (m.emoji || initial(m.name)));
-}
-
 // ── 별점 (읽기 전용) ──
 function glyphFor(kind) {
   return kind === 'dot' ? dotShape : starShape;

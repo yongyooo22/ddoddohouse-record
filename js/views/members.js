@@ -1,12 +1,12 @@
 // 멤버 목록 · 프로필 · 추가/수정 다이얼로그
 import { h, icon } from '../dom.js';
-import { PALETTE, EMOJI_SUGGESTIONS, LIMITS, TYPES, TYPE_KEYS } from '../constants.js';
-import { state, membersSorted, memberInfo, upsertMember, removeMember, isFirstLoad, loadFailed, getMeId, setMeId } from '../store.js';
+import { PALETTE, LIMITS, TYPES, TYPE_KEYS } from '../constants.js';
+import { state, membersSorted, memberInfo, upsertMember, removeMember, isFirstLoad, loadFailed, getMeId, setMeId, subscribe } from '../store.js';
 import { memberProfile, memberRoles } from '../stats.js';
 import { fmtDate, fmtPct, norm, codePoints, fmtDateDot } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
-import { appBar, avatar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState, typeName, starsView } from '../ui.js';
+import { appBar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState, typeName, starsView } from '../ui.js';
 import { recordCard } from './bits.js';
 
 // ── 추가/수정 다이얼로그 ──
@@ -18,41 +18,23 @@ export async function openMemberEditor(member) {
   let saved = null;
 
   const nameIn = h('input', { type: 'text', class: 'input', maxlength: String(LIMITS.memberName), value: member ? member.name : '', placeholder: '이름 또는 별명', autocomplete: 'off', id: nextId('mname') });
-  const emojiIn = h('input', { type: 'text', class: 'input input-emoji', value: member ? member.emoji || '' : '', placeholder: '🙂', autocomplete: 'off', 'aria-label': '이모지 (선택)', id: nextId('memoji') });
   const err = h('p', { class: 'form-err', role: 'alert' });
-  const preview = h('span', { class: 'mprev' });
 
-  function paintPreview() {
-    const name = nameIn.value.trim() || '?';
-    const em = emojiIn.value.trim();
-    preview.replaceChildren(avatar({ name, emoji: em, color, missing: false }, 'xl'),
-      h('span', { class: 'mprev-name', text: nameIn.value.trim() || '새 멤버' }));
-  }
-  nameIn.addEventListener('input', () => { err.textContent = ''; paintPreview(); });
-  emojiIn.addEventListener('input', () => { err.textContent = ''; paintPreview(); });
-
-  const emojiPicks = h('div', { class: 'emoji-picks', role: 'group', 'aria-label': '이모지 추천' },
-    EMOJI_SUGGESTIONS.map((e) => h('button', { type: 'button', class: 'emoji-pick', 'aria-label': `${e} 고르기`, onClick: () => { emojiIn.value = e; paintPreview(); } }, e)),
-    h('button', { type: 'button', class: 'emoji-pick emoji-clear', 'aria-label': '이모지 없애기', onClick: () => { emojiIn.value = ''; paintPreview(); } }, icon('x')));
+  nameIn.addEventListener('input', () => { err.textContent = ''; });
 
   const gname = nextId('mcolor');
   const swatches = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': '색' },
     PALETTE.map((p) => {
       const id = `${gname}-${p.key}`;
       const input = h('input', { type: 'radio', class: 'seg-input', name: gname, id, value: p.key, checked: p.key === color });
-      input.addEventListener('change', () => { if (input.checked) { color = p.key; paintPreview(); } });
+      input.addEventListener('change', () => { if (input.checked) color = p.key; });
       return [input, h('label', { class: `swatch mc-${p.key}`, htmlFor: id, title: p.label },
         h('span', { class: 'sr-only', text: p.label }), icon('check', 'swatch-check'))];
     }).flat());
 
-  paintPreview();
-
-  // 색을 이모지 목록보다 위에 둬서 시트 아래쪽 버튼 줄과 겹치지 않게
   const body = h('div', { class: 'mform' },
-    preview,
     h('div', { class: 'field' }, h('label', { class: 'field-label', htmlFor: nameIn.id, text: '이름' }), nameIn),
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: '색' }), swatches),
-    h('div', { class: 'field' }, h('label', { class: 'field-label', htmlFor: emojiIn.id, text: '이모지 (선택)' }), h('div', { class: 'emoji-row' }, emojiIn), emojiPicks),
     err);
 
   const v = await openDialog({
@@ -66,10 +48,9 @@ export async function openMemberEditor(member) {
         label: '저장', value: 'ok', kind: 'primary',
         handler: async () => {
           const name = nameIn.value.trim().replace(/\s+/g, ' ');
-          const emoji = emojiIn.value.trim();
+          const emoji = member ? (member.emoji || '') : ''; // 화면에는 쓰지 않지만 예전 값은 그대로 둠
           if (!name) { err.textContent = '이름을 적어 주세요'; nameIn.focus(); return false; }
           if (codePoints(name).length > LIMITS.memberName) { err.textContent = `이름은 ${LIMITS.memberName}자까지예요`; return false; }
-          if (codePoints(emoji).length > 4) { err.textContent = '이모지는 하나만 넣어 주세요'; emojiIn.focus(); return false; }
           if (state.members.some((m) => m.id !== (member && member.id) && norm(m.name) === norm(name))) {
             err.textContent = '같은 이름의 멤버가 이미 있어요'; nameIn.focus(); return false;
           }
@@ -81,7 +62,6 @@ export async function openMemberEditor(member) {
             return true;
           } catch (e) {
             if (e.code === 'invalid' && e.data && e.data.field === 'name') err.textContent = e.data.reason === 'duplicate' ? '같은 이름의 멤버가 이미 있어요' : '이름을 확인해 주세요';
-            else if (e.code === 'invalid' && e.data && e.data.field === 'emoji') err.textContent = '이모지를 확인해 주세요 (최대 4글자)';
             else err.textContent = api.errorMessage(e);
             return false;
           }
@@ -106,7 +86,7 @@ export async function pickMe() {
   const list = mems.length
     ? h('ul', { class: 'me-pick' }, mems.map((m) => h('li', {},
       h('button', { type: 'button', class: `me-pick-row${m.id === cur ? ' is-current' : ''}`, 'aria-pressed': m.id === cur ? 'true' : 'false', 'data-member-id': m.id, onClick: () => choose(m.id) },
-        avatar(m.id, 'md'), h('span', { class: 'me-pick-name', text: m.name }), m.id === cur ? icon('check') : null))))
+        h('span', { class: 'me-pick-name', text: m.name }), m.id === cur ? icon('check') : null))))
     : h('p', { class: 'muted small', text: '아직 멤버가 없어요. 아래에서 나를 먼저 등록해 주세요.' });
   const body = h('div', { class: 'me-pick-body' },
     h('p', { class: 'fhint', text: '이 기기에서 기록하는 사람이에요. 기록할 때 나로 자동 표시되고, 내 역할이 내 이름으로 저장돼요. 기기마다 한 번씩 정해요.' }),
@@ -127,6 +107,23 @@ export async function pickMe() {
     if (saved) { setMeId(saved.id); picked = saved.id; }
   }
   return picked;
+}
+
+/**
+ * 화면 오른쪽 위의 '나' 버튼 — 지금 이 기기의 나를 보여 주고, 누르면 나를 고르거나 바꿈.
+ * 정해 두지 않았으면 '나 고르기'로 눈에 띄게. 나가 바뀌면 스스로 다시 그림
+ */
+export function meChip() {
+  const btn = h('button', { type: 'button', class: 'me-chip', onClick: () => { pickMe(); } });
+  const paint = () => {
+    const id = getMeId();
+    btn.classList.toggle('is-empty', !id);
+    btn.setAttribute('aria-label', id ? `나: ${memberInfo(id).name} (눌러서 바꾸기)` : '나 고르기 (이 기기에서 기록하는 사람)');
+    btn.replaceChildren(...(id ? [] : [icon('users')]), h('span', { class: 'me-chip-name', text: id ? memberInfo(id).name : '나 고르기' }));
+  };
+  const off = subscribe(() => { if (!btn.isConnected) { off(); return; } paint(); });
+  paint();
+  return btn;
 }
 
 // ── 목록 ──
@@ -158,13 +155,12 @@ function monthMateCard() {
   return h('section', { class: 'card mate' }, label,
     h('div', { class: 'mate-row' },
       h('a', { class: 'mate-main', href: `#/member/${encodeURIComponent(best.memberId)}` },
-        avatar(info, 'lg'),
         h('span', { class: 'mate-text' },
           h('span', { class: 'mate-name', text: ties.length > 1 ? `${info.name} 외 ${ties.length - 1}명` : info.name }),
           h('span', { class: 'mate-count', text: `${best.count}번 함께했어요` }))),
       tops.length > 1
         ? h('ol', { class: 'mate-others', 'aria-label': '다음 순위' }, tops.slice(1, 4).map((t) =>
-          h('li', { class: 'mate-other' }, avatar(t.memberId, 'xs'),
+          h('li', { class: 'mate-other' },
             h('span', { class: 'mate-other-name', text: memberInfo(t.memberId).name }),
             h('span', { class: 'mate-other-n', text: `${t.count}` }))))
         : null));
@@ -194,7 +190,7 @@ function renderList(root, ctx) {
     onClick: () => openMemberEditor(null),
   }, icon('plus'), h('span', { class: 'head-label', text: '멤버 추가' }));
   root.replaceChildren(h('div', { class: 'page page-members' },
-    h('header', { class: 'page-head' }, h('h1', { class: 'page-title', text: '멤버' }), addBtn),
+    h('header', { class: 'page-head' }, h('h1', { class: 'page-title', text: '멤버' }), h('div', { class: 'head-actions' }, addBtn, meChip())),
     mems.length
       ? h('p', { class: 'page-sub', text: `함께하는 사람 ${mems.length}명` })
       : null,
@@ -204,7 +200,6 @@ function renderList(root, ctx) {
         const c = counts.get(m.id);
         return h('li', {},
           h('a', { class: 'mlist-row', href: `#/member/${encodeURIComponent(m.id)}` },
-            avatar(m.id, 'md'),
             h('span', { class: 'mlist-text' },
               h('span', { class: 'mlist-name' }, h('span', { text: m.name }), m.id === getMeId() ? h('span', { class: 'me-badge', text: '나' }) : null),
               h('span', { class: 'mlist-sub', text: c ? `기록 ${c.n}개 · 최근 ${fmtDate(c.last, { weekday: false, year: false })}` : '아직 함께한 기록이 없어요' })),
@@ -300,7 +295,6 @@ function renderProfile(root, id, ctx) {
       ],
     }),
     h('section', { class: 'phero card' },
-      avatar(memberInfo(m.id), 'xl'),
       h('h1', { class: 'phero-name' }, h('span', { text: m.name }), isMe ? h('span', { class: 'me-badge', text: '나' }) : null),
       h('p', { class: 'phero-sub', text: total ? `함께한 기록 ${total}개` : '아직 함께한 기록이 없어요' }),
       total ? ratio : null,

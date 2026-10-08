@@ -5,7 +5,7 @@ import { state, recordById, removeRecord, memberInfo, isFirstLoad, loadFailed, t
 import { fmtDate, fmtMinutes, fmtRemaining, fmtDateTime, gameInfoText } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
-import { appBar, typeBadge, starsView, stamp, avatar, scoreBars, spoilerBlock, confirmDialog, toast, emptyState, loadingState, loadErrorState } from '../ui.js';
+import { appBar, typeBadge, starsView, stamp, scoreBars, spoilerBlock, confirmDialog, toast, emptyState, loadingState, loadErrorState } from '../ui.js';
 import { recordStamp, ordinalLabel, bgOf, mmOf, erOf, spoilerKey, ownershipText, gamePageHref } from './bits.js';
 import { gallery, closeViewer } from './photos.js';
 import { gameThumb, openGameEditor } from './game-form.js';
@@ -36,7 +36,7 @@ function sec(title, ...children) {
 
 function memberLink(id, extra) {
   const m = memberInfo(id);
-  const inner = [avatar(m, 'sm'), h('span', { class: 'mrow-name', text: m.name })];
+  const inner = [h('span', { class: 'mrow-name', text: m.name })];
   return m.missing
     ? h('span', { class: 'mrow is-gone' }, inner, extra || null)
     : h('a', { class: 'mrow', href: `#/member/${encodeURIComponent(id)}` }, inner, extra || null);

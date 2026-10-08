@@ -6,6 +6,7 @@ import { state, isFirstLoad, loadFailed, gameById, gameSummaries } from '../stor
 import { fmtDateDot, todayStr, gameInfoText } from '../format.js';
 import { navigate } from '../nav.js';
 import { segmented, typeBadge, typeName, emptyState, loadingState, loadErrorState, openDialog } from '../ui.js';
+import { meChip } from './members.js';
 import { cardPhoto } from './photos.js';
 import { openGameEditor, canDeleteGame, setOwned, deleteGameInfo } from './game-form.js';
 import { gamePageHref, gameWriteHref } from './bits.js';
@@ -140,7 +141,7 @@ export function mount(root, ctx) {
   const addBtn = h('button', { type: 'button', class: 'icon-btn icon-btn-soft head-add', 'aria-label': '게임 등록', onClick: register },
     icon('plus'), h('span', { class: 'head-label', text: '게임 등록' }));
   const page = h('div', { class: 'page page-collection' },
-    h('header', { class: 'page-head' }, h('h1', { class: 'page-title', text: '소장' }), addBtn),
+    h('header', { class: 'page-head' }, h('h1', { class: 'page-title', text: '소장' }), h('div', { class: 'head-actions' }, addBtn, meChip())),
     seg, tools, results);
 
   // 종류·정렬을 바꿔도 고르던 칸에 초점이 남도록 아래 결과만 다시 그림
