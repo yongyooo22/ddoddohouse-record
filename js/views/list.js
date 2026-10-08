@@ -5,7 +5,7 @@ import { state, recordsSorted, membersSorted, memberInfo, isFirstLoad, loadFaile
 import { norm, monthKey, fmtMonth } from '../format.js';
 import { segmented, chip, emptyState, loadingState, loadErrorState, typeName } from '../ui.js';
 import { meChip } from './members.js';
-import { ownershipOf, lenderOf, titleKey } from '../stats.js';
+import { ownershipOf, lenderOf, titleKey, participants } from '../stats.js';
 import { recordCard, bgOf, mmOf, erOf } from './bits.js';
 
 const PAGE = 60;
@@ -42,7 +42,8 @@ function applyFilters() {
   const tk = titleKey(filters.title);
   let list = recordsSorted().filter((r) =>
     (filters.type === 'all' || r.type === filters.type) &&
-    (!filters.members.length || filters.members.every((id) => Array.isArray(r.members) && r.members.includes(id))) &&
+    // 함께한 멤버: 멤버 목록의 '함께한 플레이'와 같은 기준 (함께한 사람 ∪ 예전 기록의 결과·배역에만 남은 사람)
+    (!filters.members.length || filters.members.every((id) => participants(r).has(id))) &&
     (!filters.own || ownOf(r) === filters.own) &&
     (!filters.game || (gameOfRecord(r) || {}).id === filters.game) &&
     (!tk || titleKey(r.title) === tk) &&

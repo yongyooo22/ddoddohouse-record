@@ -25,6 +25,15 @@ import {
   resolveGameIds,
   isOwnedGame,
   storageUsage,
+  bgResultRows,
+  myBgResult,
+  bgMemberTable,
+  inPeriod,
+  filterPeriod,
+  memberActivity,
+  mateRanking,
+  topTies,
+  monthlyOf,
 } from '../js/stats.js';
 
 const close = (actual, expected, msg) => assert.ok(Math.abs(actual - expected) < 1e-9, `${msg ?? ''} ${actual} ≠ ${expected}`);
@@ -324,7 +333,14 @@ describe('mmStats', () => {
   });
 
   test('범인 검거율', () => {
-    assert.deepEqual(s.culprit, { caught: 1, escaped: 1, rate: 0.5 });
+    assert.deepEqual(s.culprit, { caught: 1, escaped: 1, decided: 2, rate: 0.5 });
+  });
+
+  test('검거·도주를 적지 않은 판만 있으면 \'결과 기록 없음\'(rate null), 0%와 구분', () => {
+    assert.deepEqual(mmStats([mm3, mm4]).culprit, { caught: 0, escaped: 0, decided: 0, rate: null });
+    const failOnly = mmStats([{ ...mm3, id: 'x', mm: { culpritResult: 'escaped' } }]).culprit;
+    assert.equal(failOnly.rate, 0);
+    assert.equal(failOnly.decided, 1);
   });
 
   test('제작사별 횟수 (빈 제작사 제외)', () => {
@@ -352,7 +368,7 @@ describe('mmStats', () => {
     assert.equal(a.culpritDecided, 1);
     assert.equal(a.culpritEscaped, 1);
     assert.equal(a.culpritEscapeRate, 1); // 1/1, 1/2 아님
-    assert.deepEqual(r.culprit, { caught: 0, escaped: 1, rate: 0 });
+    assert.deepEqual(r.culprit, { caught: 0, escaped: 1, decided: 1, rate: 0 });
     // 결과가 하나도 없으면 null (화면에는 '–')
     assert.equal(mmStats([mk('z', null)]).memberStats[0].culpritEscapeRate, null);
   });
@@ -375,7 +391,7 @@ describe('mmStats', () => {
       plays: 0,
       scenarios: 0,
       avgRating: null,
-      culprit: { caught: 0, escaped: 0, rate: null },
+      culprit: { caught: 0, escaped: 0, decided: 0, rate: null },
       byPublisher: [],
       memberStats: [],
       avgScores: { story: null, deduction: null, roleplay: null, balance: null, production: null },
@@ -410,9 +426,21 @@ describe('erStats', () => {
 
   test('멤버별 성공률', () => {
     assert.equal(s.memberStats.length, 3);
-    assert.deepEqual(s.memberStats[0], { memberId: 'm1', plays: 3, cleared: 2, rate: 2 / 3 });
-    assert.deepEqual(s.memberStats[1], { memberId: 'm2', plays: 2, cleared: 2, rate: 1 });
-    assert.deepEqual(s.memberStats[2], { memberId: 'm3', plays: 1, cleared: 1, rate: 1 });
+    assert.deepEqual(s.memberStats[0], { memberId: 'm1', plays: 3, decided: 3, cleared: 2, rate: 2 / 3 });
+    assert.deepEqual(s.memberStats[1], { memberId: 'm2', plays: 2, decided: 2, cleared: 2, rate: 1 });
+    assert.deepEqual(s.memberStats[2], { memberId: 'm3', plays: 1, decided: 1, cleared: 1, rate: 1 });
+  });
+
+  test('성공·실패를 적지 않은 테마는 성공률 분모에서 빠짐 (미기록 ≠ 실패)', () => {
+    const open = { id: 'e9', type: 'escaperoom', date: '2026-09-27', title: '미기록', members: ['m1', 'm4'], er: { cleared: null } };
+    const x = erStats([...records, open]);
+    assert.equal(x.plays, 5);
+    assert.equal(x.decided, 4);
+    assert.equal(x.clearRate, 0.75);
+    const m4 = x.memberStats.find((t) => t.memberId === 'm4');
+    assert.deepEqual(m4, { memberId: 'm4', plays: 1, decided: 0, cleared: 0, rate: null });
+    const onlyOpen = erStats([open]);
+    assert.equal(onlyOpen.clearRate, null, '결과 기록이 하나도 없으면 0%가 아니라 null');
   });
 
   test('난이도·공포도 분포 (반올림, 0=미평가 포함)', () => {
@@ -454,7 +482,7 @@ describe('memberProfile', () => {
     assert.deepEqual(p.byType, { boardgame: 5, murdermystery: 2, escaperoom: 3 });
     assert.deepEqual(p.bg, { plays: 5, decided: 5, wins: 3 });
     assert.deepEqual(p.mm, { plays: 2, culpritCount: 1, mvpCount: 0 });
-    assert.deepEqual(p.er, { plays: 3, cleared: 2 });
+    assert.deepEqual(p.er, { plays: 3, decided: 3, cleared: 2 });
     assert.deepEqual(
       p.recent.map((r) => r.id),
       ['e2', 'e1', 'mm1', 'b2', 'b1'],
@@ -652,5 +680,124 @@ describe('멤버가 맡았던 역할', () => {
   test('잘못된 입력은 비어 있음', () => {
     assert.deepEqual(memberRoles(null, 'm1'), []);
     assert.deepEqual(memberRoles([null, {}, { type: 'murdermystery' }], 'm1'), []);
+  });
+});
+
+describe('기록 상세: 플레이 결과 줄 · 내 결과', () => {
+  const tie = {
+    id: 't1', type: 'boardgame', date: '2026-09-28', title: '공동', members: ['m1', 'm2', 'm3', 'm4'],
+    bg: { mode: 'competitive', results: [
+      { memberId: 'm3', score: 40, rank: 3, winner: false },
+      { memberId: 'm1', score: 61, rank: 1, winner: true },
+      { memberId: 'm2', score: 61, rank: 1, winner: true },
+    ] }, // m4 는 함께했지만 점수 없음
+  };
+
+  test('bgResultRows: 함께한 사람 모두 · 등수 순 · 같은 등수는 tied · 결과 없는 사람은 맨 아래', () => {
+    const rows = bgResultRows(tie);
+    assert.deepEqual(rows.map((x) => [x.memberId, x.rank, x.tied, x.winner, x.hasResult]), [
+      ['m1', 1, true, true, true],
+      ['m2', 1, true, true, true],
+      ['m3', 3, false, false, true],
+      ['m4', null, false, false, false],
+    ]);
+  });
+
+  test('bgResultRows: 등수 없이 승리만 표시된 예전 기록 · 협력은 결과 줄 없이 참여자만', () => {
+    assert.deepEqual(bgResultRows(b2).map((x) => [x.memberId, x.winner, x.hasResult]), [['m2', true, true], ['m1', false, false]]);
+    assert.deepEqual(bgResultRows(b3).map((x) => [x.memberId, x.hasResult]), [['m1', false], ['m2', false], ['m4', false]]);
+    assert.deepEqual(bgResultRows({ type: 'boardgame', members: [] }), []);
+  });
+
+  test('myBgResult: 등수 · 공동 순위 · 몇 명 중', () => {
+    assert.deepEqual(myBgResult(b1, 'm2'), { kind: 'rank', rank: 2, of: 3, tied: false, winner: false });
+    assert.deepEqual(myBgResult(tie, 'm2'), { kind: 'rank', rank: 1, of: 4, tied: true, winner: true });
+  });
+
+  test('myBgResult: 나를 모르거나 · 함께하지 않았거나 · 내 결과가 없으면 null', () => {
+    assert.equal(myBgResult(b1, null), null);
+    assert.equal(myBgResult(b1, 'm4'), null, '함께하지 않음');
+    assert.equal(myBgResult(tie, 'm4'), null, '함께했지만 점수·등수 없음');
+    assert.equal(myBgResult(b2, 'm1'), null, '예전 기록: 등수 없고 승리 표시도 없음 → 짐작하지 않음');
+    assert.equal(myBgResult(mm1, 'm1'), null, '보드게임만');
+    assert.equal(myBgResult({ ...b3, bg: { mode: 'coop', coopWin: null } }, 'm1'), null, '협력 결과 미기록');
+  });
+
+  test('myBgResult: 등수 없이 승리만 · 협력 승패', () => {
+    assert.deepEqual(myBgResult(b2, 'm2'), { kind: 'win', of: 2, shared: false });
+    assert.deepEqual(myBgResult(b3, 'm4'), { kind: 'coop', win: true, of: 3 });
+    assert.deepEqual(myBgResult(b4, 'm3'), { kind: 'coop', win: false, of: 2 });
+  });
+});
+
+describe('보드게임 멤버별 순위와 승률 (bgMemberTable)', () => {
+  test('승리(협력 승리 포함) → 승률 순 · 결과 미입력 판은 분모에서 빠짐 · 평균 등수는 보조', () => {
+    const open = { id: 'o1', type: 'boardgame', date: '2026-09-28', title: '미기록', members: ['m1', 'm3'], bg: { mode: 'competitive', results: [] } };
+    const rows = bgMemberTable([b1, b2, b3, b4, open]);
+    const by = Object.fromEntries(rows.map((x) => [x.memberId, x]));
+    // m1: b1 승 · b2 패 · b3 협력 승 · b4 협력 패 → 2승 / 4판 (open 은 미입력이라 빠짐)
+    assert.deepEqual([by.m1.wins, by.m1.decided, by.m1.plays], [2, 4, 5]);
+    assert.equal(by.m1.rate, 0.5);
+    assert.equal(by.m1.avgRank, 1);
+    // m4: 협력 판만 → 평균 등수 없음
+    assert.equal(by.m4.avgRank, null);
+    // m2: 2승/3판(67%) · m1: 2승/4판(50%) · m4: 1승/1판 · m3: 0승/2판
+    assert.deepEqual(rows.map((x) => [x.memberId, x.place]), [['m2', 1], ['m1', 2], ['m4', 3], ['m3', 4]]);
+  });
+
+  test('결과 기록 판이 없는 사람은 맨 아래 (자리 없음) · keep 으로 떠난 멤버 빼기', () => {
+    const open = { id: 'o2', type: 'boardgame', date: '2026-09-28', title: '미기록', members: ['m6'], bg: { mode: 'coop', coopWin: null } };
+    const rows = bgMemberTable([b5, open], { keep: (id) => id !== 'm5' });
+    assert.deepEqual(rows.map((x) => [x.memberId, x.place, x.rate]), [['m2', 1, 1], ['m6', null, null]]);
+  });
+});
+
+describe('기간 · 함께한 멤버', () => {
+  test('inPeriod · filterPeriod: 플레이 날짜 기준 전체 / 올해 / 이번 달', () => {
+    assert.equal(inPeriod(b1, 'all', NOW), true);
+    assert.equal(inPeriod(b1, 'month', NOW), true);
+    assert.equal(inPeriod(b3, 'month', NOW), false);
+    assert.equal(inPeriod(b3, 'year', NOW), true);
+    assert.equal(inPeriod(b5, 'year', NOW), false);
+    assert.equal(inPeriod({ date: '' }, 'year', NOW), false);
+    assert.deepEqual(filterPeriod(records, 'month', NOW).map((r) => r.id).sort(), ['b1', 'b2', 'e1', 'e2', 'mm1', 'mm4'].sort());
+    assert.equal(filterPeriod(records, 'all', NOW).length, 14, '이상한 값은 빼고 전부');
+  });
+
+  test('memberActivity: 기록 하나는 한 번 (같은 기록에 두 번 나와도) · 최근 날짜 · 종류별', () => {
+    const dup = { id: 'd1', type: 'boardgame', date: '2026-10-01', title: 'x', members: ['m1', 'm1', 'm2'], bg: { results: [{ memberId: 'm1', winner: true }] } };
+    const a = memberActivity([dup, b1]);
+    assert.deepEqual(a.get('m1'), { n: 2, last: '2026-10-01', byType: { boardgame: 2, murdermystery: 0, escaperoom: 0 } });
+    assert.equal(a.get('m3').n, 1);
+  });
+
+  test('mateRanking: 나는 빼고 많은 순 · topTies 는 공동 1위 모두', () => {
+    const month = filterPeriod(records, 'month', NOW);
+    const list = mateRanking(month, { exclude: 'm1' });
+    assert.ok(!list.some((x) => x.memberId === 'm1'));
+    assert.deepEqual(list.map((x) => [x.memberId, x.count]), [['m2', 4], ['m3', 3]]);
+    const tied = mateRanking([b1, mm1], { exclude: 'm1' });
+    assert.deepEqual(topTies(tied).map((x) => x.memberId).sort(), ['m2', 'm3']);
+    assert.deepEqual(topTies([]), []);
+    assert.deepEqual(mateRanking(month, { keep: (id) => id !== 'm2' }).map((x) => x.memberId), ['m1', 'm3']);
+  });
+});
+
+describe('달별 · 게임별 별점 수', () => {
+  test('monthlyOf: 주어진 달 순서대로 종류별 수', () => {
+    const m = monthlyOf(records, ['2026-07', '2026-08', '2026-09', '2026-10']);
+    assert.deepEqual(m.map((x) => x.count), [3, 2, 6, 0]); // 7월 b4·e3·e4 · 8월 b3·mm2 · 9월 b1·b2·mm1·mm4·e1·e2
+    assert.deepEqual(m[1].byType, { boardgame: 1, murdermystery: 1, escaperoom: 0 });
+    assert.deepEqual(monthlyOf(null, ['2026-01']), [{ ym: '2026-01', count: 0, byType: { boardgame: 0, murdermystery: 0, escaperoom: 0 } }]);
+  });
+
+  test('gameEntries: 평균 별점은 별점 있는 판만, rated 는 그 판 수 (0점·미평가는 0점으로 세지 않음)', () => {
+    const e = gameEntries([b1, b2]).find((x) => x.title === '카탄');
+    assert.equal(e.plays, 2);
+    assert.equal(e.rated, 1);
+    assert.equal(e.avgRating, 4);
+    const none = gameEntries([b3]).find((x) => x.title === '팬데믹');
+    assert.equal(none.rated, 0);
+    assert.equal(none.avgRating, null);
   });
 });

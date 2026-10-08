@@ -2,11 +2,11 @@
 import { h, icon } from '../dom.js';
 import { PALETTE, LIMITS, TYPES, TYPE_KEYS } from '../constants.js';
 import { state, membersSorted, memberInfo, upsertMember, removeMember, isFirstLoad, loadFailed, getMeId, setMeId, subscribe } from '../store.js';
-import { memberProfile, memberRoles } from '../stats.js';
+import { memberProfile, memberRoles, memberActivity, mateRanking, topTies, filterPeriod } from '../stats.js';
 import { fmtDate, fmtPct, norm, codePoints, fmtDateDot } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
-import { appBar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState, typeName, starsView } from '../ui.js';
+import { appBar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState, typeName, starsView, spoilerBlock } from '../ui.js';
 import { recordCard } from './bits.js';
 
 // ── 추가/수정 다이얼로그 ──
@@ -127,85 +127,70 @@ export function meChip() {
 }
 
 // ── 목록 ──
-/** 이번 달 기록에서 멤버별로 함께한 횟수 (떠난 멤버 제외, 많은 순) */
-function monthTopMembers(records, now = new Date()) {
-  const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  const counts = new Map();
-  for (const r of records) {
-    if (!r || String(r.date || '').slice(0, 7) !== ym) continue;
-    for (const id of Array.isArray(r.members) ? r.members : []) counts.set(id, (counts.get(id) || 0) + 1);
-  }
-  return [...counts.entries()]
-    .filter(([id]) => !memberInfo(id).missing)
-    .sort((a, b) => b[1] - a[1])
-    .map(([memberId, count]) => ({ memberId, count }));
+/** 이름 옆 작은 원형 이니셜 (멤버 색) — 멤버 목록에서만 */
+export function memberAvatar(m) {
+  const first = Array.from(String((m && m.name) || '?').trim())[0] || '?';
+  return h('span', { class: `mavatar mc-${(m && m.color) || 'c10'}`, 'aria-hidden': 'true', text: first.toUpperCase() });
 }
 
-/** 이번 달 가장 많이 함께한 멤버 (홈에서 옮겨 옴) */
-function monthMateCard() {
-  const tops = monthTopMembers(state.records);
+/**
+ * 이번 달 가장 많이 함께한 멤버 — 낮은 가로 띠. 나는 빼고(나의 멤버 줄은 목록에 그대로), 같은 횟수면 모두 공동으로.
+ * 기록 하나 = 한 번 (같은 기록에 두 번 나와도 한 번)
+ */
+function monthMateStrip() {
+  const month = filterPeriod(state.records, 'month', new Date());
   const label = h('p', { class: 'mate-label', text: '이번 달 가장 많이 함께한 멤버' });
-  if (!tops.length) {
-    return h('section', { class: 'card mate mate-empty' }, label,
-      h('p', { class: 'muted', text: '이번 달 기록이 아직 없어요. 첫 기록을 남겨 볼까요?' }));
+  if (!month.length) {
+    return h('section', { class: 'mate mate-empty' }, label, h('p', { class: 'mate-none', text: '이번 달 기록이 아직 없어요' }));
   }
-  const best = tops[0];
-  const ties = tops.filter((t) => t.count === best.count);
-  const info = memberInfo(best.memberId);
-  return h('section', { class: 'card mate' }, label,
+  const list = mateRanking(month, { exclude: getMeId(), keep: (id) => !memberInfo(id).missing });
+  const tops = topTies(list);
+  if (!tops.length) {
+    return h('section', { class: 'mate mate-empty' }, label, h('p', { class: 'mate-none', text: '이번 달 기록에 함께한 멤버가 없어요' }));
+  }
+  const others = list.slice(tops.length, tops.length + 3);
+  return h('section', { class: 'mate' }, label,
     h('div', { class: 'mate-row' },
-      h('a', { class: 'mate-main', href: `#/member/${encodeURIComponent(best.memberId)}` },
-        h('span', { class: 'mate-text' },
-          h('span', { class: 'mate-name', text: ties.length > 1 ? `${info.name} 외 ${ties.length - 1}명` : info.name }),
-          h('span', { class: 'mate-count', text: `${best.count}번 함께했어요` }))),
-      tops.length > 1
-        ? h('ol', { class: 'mate-others', 'aria-label': '다음 순위' }, tops.slice(1, 4).map((t) =>
+      h('p', { class: 'mate-main' },
+        h('span', { class: 'mate-names' }, tops.map((t, i) => [i ? h('span', { class: 'mate-sep', 'aria-hidden': 'true', text: '·' }) : null,
+          h('a', { class: 'mate-name', href: `#/member/${encodeURIComponent(t.memberId)}`, text: memberInfo(t.memberId).name })])),
+        tops.length > 1 ? h('span', { class: 'mate-tie', text: '공동' }) : null,
+        h('span', { class: 'mate-count', text: `${tops[0].count}번 함께했어요` })),
+      others.length
+        ? h('ol', { class: 'mate-others', 'aria-label': '다음으로 많이 함께한 멤버' }, others.map((t) =>
           h('li', { class: 'mate-other' },
             h('span', { class: 'mate-other-name', text: memberInfo(t.memberId).name }),
-            h('span', { class: 'mate-other-n', text: `${t.count}` }))))
+            h('span', { class: 'mate-other-n', text: `${t.count}번` }))))
         : null));
-}
-
-/** 멤버별 함께한 기록 수 · 종류별 수 · 최근 날짜 */
-function memberCounts() {
-  const counts = new Map();
-  for (const r of state.records) {
-    for (const id of Array.isArray(r.members) ? r.members : []) {
-      const c = counts.get(id) || { n: 0, last: '', byType: {} };
-      c.n += 1;
-      if (TYPES[r.type]) c.byType[r.type] = (c.byType[r.type] || 0) + 1;
-      if (String(r.date || '') > c.last) c.last = String(r.date || '');
-      counts.set(id, c);
-    }
-  }
-  return counts;
 }
 
 /**
  * 멤버 한 줄. 휴대폰은 이름 아래 한 줄 요약, 넓은 화면은 표처럼 칸을 나눠
- * 함께한 기록 · 종류별 · 최근을 보여 줌 (CSS가 둘 중 하나만 보이게 함)
+ * 함께한 플레이 · 종류별 · 최근 함께한 날을 보여 줌 (CSS가 둘 중 하나만 보이게 함)
  */
 function memberRow(m, c) {
-  const last = c ? fmtDate(c.last, { weekday: false, year: false }) : '';
+  const last = c && c.last ? fmtDate(c.last, { weekday: false, year: false }) : '';
   const sr = (t) => h('span', { class: 'sr-only', text: t });
   const cols = [
-    h('span', { class: `mlist-col mlist-n${c ? '' : ' is-zero'}` }, sr('함께한 기록 '), `${c ? c.n : 0}개`),
+    h('span', { class: `mlist-col mlist-n${c ? '' : ' is-zero'}` }, sr('함께한 플레이 '), `${c ? c.n : 0}회`),
     h('span', { class: 'mlist-col mlist-types' }, c ? [sr('종류별 '),
       TYPE_KEYS.filter((k) => c.byType[k]).map((k) => h('span', { class: `mlist-type ${TYPES[k].cls}`, text: `${TYPES[k].label} ${c.byType[k]}` }))] : null),
-    h('span', { class: 'mlist-col mlist-last' }, c ? [sr('최근 '), last] : h('span', { 'aria-hidden': 'true', text: '–' })),
+    h('span', { class: 'mlist-col mlist-last' }, c ? [sr('최근 함께한 날 '), last] : h('span', { 'aria-hidden': 'true', text: '–' })),
   ];
   return h('li', {},
     h('a', { class: 'mlist-row', href: `#/member/${encodeURIComponent(m.id)}` },
-      h('span', { class: 'mlist-text' },
-        h('span', { class: 'mlist-name' }, h('span', { text: m.name }), m.id === getMeId() ? h('span', { class: 'me-badge', text: '나' }) : null),
-        h('span', { class: 'mlist-sub', text: c ? `기록 ${c.n}개 · 최근 ${last}` : '아직 함께한 기록이 없어요' })),
+      h('span', { class: 'mlist-who' },
+        memberAvatar(m),
+        h('span', { class: 'mlist-text' },
+          h('span', { class: 'mlist-name' }, h('span', { text: m.name }), m.id === getMeId() ? h('span', { class: 'me-badge', text: '나' }) : null),
+          h('span', { class: 'mlist-sub', text: c ? `함께한 플레이 ${c.n}회 · 최근 함께한 날 ${last}` : '아직 함께한 플레이가 없어요' }))),
       cols,
       icon('chevron', 'mlist-go')));
 }
 
 function renderList(root, ctx) {
   const mems = membersSorted();
-  const counts = memberCounts();
+  const counts = memberActivity(state.records);
   // 아직 못 받았거나 못 받은 경우를 "멤버 없음"으로 보이지 않게
   const pending = !mems.length && isFirstLoad();
   const failed = !mems.length && loadFailed();
@@ -218,12 +203,12 @@ function renderList(root, ctx) {
     mems.length
       ? h('p', { class: 'page-sub', text: `함께하는 사람 ${mems.length}명` })
       : null,
-    mems.length ? monthMateCard() : null,
+    mems.length ? monthMateStrip() : null,
     mems.length
       ? h('section', { class: 'mroster card', 'aria-label': '멤버 목록' },
         // 표 머리 (넓은 화면에서만 보임 — 칸마다 읽어 주는 이름이 따로 있어서 화면 읽기에서는 숨김)
         h('div', { class: 'mlist-head', 'aria-hidden': 'true' },
-          h('span', { text: '이름' }), h('span', { text: '함께한 기록' }), h('span', { text: '종류별' }), h('span', { text: '최근' })),
+          h('span', { text: '이름' }), h('span', { text: '함께한 플레이' }), h('span', { text: '종류별' }), h('span', { text: '최근 함께한 날' })),
         h('ul', { class: 'mlist' }, mems.map((m) => memberRow(m, counts.get(m.id)))))
       : pending ? loadingState('멤버를 불러오는 중…')
       : failed ? loadErrorState(ctx && ctx.refresh)
@@ -259,7 +244,7 @@ function renderProfile(root, id, ctx) {
   const total = TYPE_KEYS.reduce((a, k) => a + (byType[k] || 0), 0);
   const bg = (p && p.bg) || { plays: 0, decided: 0, wins: 0 };
   const mm = (p && p.mm) || { plays: 0, culpritCount: 0 };
-  const er = (p && p.er) || { plays: 0, cleared: 0 };
+  const er = (p && p.er) || { plays: 0, decided: 0, cleared: 0 };
 
   async function onDelete() {
     const ok = await confirmDialog(`${m.name} 님을 삭제할까요?`, '멤버 목록에서만 사라지고, 지난 기록에는 ‘(떠난 멤버)’로 남아요.', { ok: '삭제', danger: true });
@@ -287,19 +272,21 @@ function renderProfile(root, id, ctx) {
 
   const recent = (p && Array.isArray(p.recent)) ? p.recent : [];
   const isMe = getMeId() === m.id;
-  // 맡았던 역할 (머더미스터리): 스포일러로 가린 기록은 역할을 보이지 않고 기록으로만 이어 줌
+  // 맡았던 역할 (머더미스터리): 역할 이름은 작품 스포일러라 목록 전체를 접어 두고 ‘역할 보기’를 눌렀을 때만 펼침.
+  // 펼쳐도 스포일러로 가린 기록은 역할을 보이지 않고 기록으로만 이어 줌
   let roles = [];
   try { roles = memberRoles(state.records, m.id, { includeMyRole: isMe }); } catch { roles = []; }
   const roleList = roles.length
     ? h('section', { class: 'card prole' },
       h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title', text: isMe ? '내가 맡았던 역할' : '맡았던 역할' }), h('span', { class: 'sec-sub', text: `${roles.length}개` })),
-      h('ul', { class: 'prole-list' }, roles.slice(0, 10).map((x) => h('li', { class: 'prole-row' },
+      spoilerBlock(h('ul', { class: 'prole-list' }, roles.slice(0, 10).map((x) => h('li', { class: 'prole-row' },
         h('a', { class: 'prole-link', href: `#/record/${encodeURIComponent(x.record.id)}` },
           h('span', { class: 'prole-role', text: x.hidden ? '가려진 역할' : x.character }),
           h('span', { class: 'prole-title', text: x.record.title || '(제목 없음)' }),
           h('span', { class: 'prole-meta' },
             h('span', { text: fmtDateDot(x.record.date) }),
             Number(x.record.rating) > 0 ? starsView(x.record.rating, { size: 'xs' }) : null))))),
+      { label: '역할 보기', key: `profile-roles:${m.id}:${roles.map((x) => `${x.record.id}@${x.record.updatedAt || ''}`).join(',')}` }),
       roles.length > 10 ? h('p', { class: 'muted small', text: `최근 10개만 보여요 (전체 ${roles.length}개)` }) : null)
     : null;
   const meBtn = h('button', {
@@ -316,7 +303,7 @@ function renderProfile(root, id, ctx) {
     }),
     h('section', { class: 'phero card' },
       h('h1', { class: 'phero-name' }, h('span', { text: m.name }), isMe ? h('span', { class: 'me-badge', text: '나' }) : null),
-      h('p', { class: 'phero-sub', text: total ? `함께한 기록 ${total}개` : '아직 함께한 기록이 없어요' }),
+      h('p', { class: 'phero-sub', text: total ? `함께한 플레이 ${total}회` : '아직 함께한 플레이가 없어요' }),
       total ? ratio : null,
       meBtn),
     h('div', { class: 'ptiles' },
@@ -324,7 +311,7 @@ function renderProfile(root, id, ctx) {
         bg.decided ? `${bg.wins}승 · 승률 ${fmtPct(bg.wins / bg.decided)}` : bg.plays ? '결과 기록 없음' : '기록 없음'),
       tile('murdermystery', `${byType.murdermystery || 0}회`,
         mm.plays ? `범인 ${mm.culpritCount}번${mm.mvpCount ? ` · MVP ${mm.mvpCount}번` : ''}` : '기록 없음'),
-      tile('escaperoom', `${byType.escaperoom || 0}회`, er.plays ? `성공률 ${fmtPct(er.cleared / er.plays)}` : '기록 없음')),
+      tile('escaperoom', `${byType.escaperoom || 0}회`, er.decided ? `성공률 ${fmtPct(er.cleared / er.decided)}` : er.plays ? '결과 기록 없음' : '기록 없음')),
     roleList,
     h('section', { class: 'home-recent' },
       h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title', text: '최근 함께한 기록' }),

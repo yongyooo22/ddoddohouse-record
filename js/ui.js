@@ -132,6 +132,58 @@ export function appBar({ title, back, actions = [], cls = '' }) {
     h('div', { class: 'appbar-actions' }, actions));
 }
 
+// ── 더보기 메뉴 (⋯ 버튼 아래로 펼치는 작은 목록) ──
+/**
+ * items: [{ label, icon, onSelect, danger }] — 항목을 누르면 메뉴를 닫고 onSelect.
+ * 밖을 누르거나 Esc·Tab 이면 닫힘, ↑↓ 로 항목 이동
+ */
+export function moreMenu({ label = '더보기', items = [], cls = '' } = {}) {
+  const id = nextId('menu');
+  const btn = h('button', {
+    type: 'button', class: 'icon-btn menu-btn', 'aria-label': label, title: label,
+    'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-controls': id,
+  }, icon('more'));
+  const list = h('div', { class: 'menu', role: 'menu', id, 'aria-label': label, hidden: true });
+  const wrap = h('div', { class: ['menu-wrap', cls] }, btn, list);
+  const els = items.filter(Boolean).map((it) => {
+    const b = h('button', { type: 'button', role: 'menuitem', tabindex: '-1', class: ['menu-item', it.danger ? 'is-danger' : ''] },
+      it.icon ? icon(it.icon) : null, h('span', { text: it.label }));
+    b.addEventListener('click', () => { close(false); it.onSelect(); });
+    return b;
+  });
+  list.append(...els);
+  const onDoc = (e) => { if (!wrap.contains(e.target)) close(false); };
+  function move(d) {
+    const i = els.indexOf(document.activeElement);
+    const next = els[(i + d + els.length) % els.length];
+    if (next) next.focus();
+  }
+  list.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+    else if (e.key === 'Home') { e.preventDefault(); els[0].focus(); }
+    else if (e.key === 'End') { e.preventDefault(); els[els.length - 1].focus(); }
+    else if (e.key === 'Tab') close(false);
+  });
+  function open() {
+    list.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    document.addEventListener('pointerdown', onDoc, true);
+    if (els[0]) els[0].focus();
+  }
+  function close(focusBtn) {
+    if (list.hidden) return;
+    list.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+    document.removeEventListener('pointerdown', onDoc, true);
+    if (focusBtn) btn.focus();
+  }
+  btn.addEventListener('click', () => (list.hidden ? open() : close(false)));
+  btn.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown' && list.hidden) { e.preventDefault(); open(); } });
+  return wrap;
+}
+
 // ── 종류 배지 ──
 export function typeBadge(type) {
   const t = TYPES[type];
