@@ -3934,11 +3934,27 @@ await step('노트북 1440px: 왼쪽 사이드바 · 여러 단 · 가로 스크
   check('폼: 날짜와 별점은 한 줄', await sideBySide('.page-form .rec-date-rate > .rec-field:first-child', '.page-form .rec-rating'));
   check('폼: 입력칸 높이 44~48px', await page.$eval('.page-form [data-field="date"]', (e) => { const h = e.getBoundingClientRect().height; return h >= 44 && h <= 48; }));
   check('폼에서도 사이드바는 그대로 (휴대폰만 숨김)', await page.$eval('#tabbar', (e) => e.hidden && e.getBoundingClientRect().width > 0));
-  check('저장 버튼이 폼 오른쪽 아래에 보임', await page.$eval('.page-form .save-btn', (e) => { const b = e.getBoundingClientRect(); const f = document.querySelector('.page-form .rec-sheet').getBoundingClientRect(); return b.bottom <= innerHeight && b.top > innerHeight - 120 && Math.abs(b.right - f.right) < 24; }));
+  const saveAt = () => page.$eval('.page-form .save-btn', (e) => {
+    const b = e.getBoundingClientRect();
+    const f = document.querySelector('.page-form .rec-sheet').getBoundingClientRect();
+    return { top: Math.round(b.top), bottom: Math.round(b.bottom), right: Math.round(b.right), sheetRight: Math.round(f.right), sheetBottom: Math.round(f.bottom), vh: innerHeight };
+  });
+  // 폼이 화면보다 짧으면 저장 줄은 폼 바로 아래, 길면 화면 아래에 붙어 있음 (position: sticky)
+  const short = await saveAt();
+  check('저장 버튼이 폼 오른쪽 아래에 보임 (짧은 폼: 폼 바로 아래)', short.bottom <= short.vh && Math.abs(short.right - short.sheetRight) < 24 &&
+    short.top >= short.sheetBottom && short.top - short.sheetBottom < 48, JSON.stringify(short));
   await noOverflow('1440 폼');
   await shot('desktop-form');
-  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.fill(REVIEW, Array.from({ length: 40 }, (_, i) => `${i + 1}번째 줄`).join('\n'));
+  await page.evaluate(() => scrollTo(0, 0));
   await sleep(150);
+  const tall = await saveAt();
+  check('긴 폼: 저장 버튼이 화면 아래에 붙어 보임', tall.sheetBottom > tall.vh && tall.bottom <= tall.vh && tall.top > tall.vh - 120 &&
+    Math.abs(tall.right - tall.sheetRight) < 24, JSON.stringify(tall));
+  await page.click('.page-form .savebar button:has-text("취소")');
+  await page.waitForSelector(dlg);
+  await dialogButton('그만 쓰기');
+  await page.waitForSelector('.page-detail', { timeout: 5000 });
 
   await go('#/stats', '.page-stats');
   check('통계: 숫자 타일이 한 줄 (전체·이번 달 | 종류별)', await sideBySide('.page-stats .stats-body > .tiles-2', '.page-stats .stats-body > .tiles-3'));
