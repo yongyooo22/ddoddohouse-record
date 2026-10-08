@@ -23,6 +23,13 @@ export const getKey = () => lsGet(STORAGE.key) || '';
 export const setKey = (k) => lsSet(STORAGE.key, k);
 export const clearKey = () => lsRemove(STORAGE.key);
 
+// ── 나 (이 기기에서 기록하는 사람) — 기기마다 따로 저장. 멤버가 없어졌으면 없는 것으로 ──
+export const getMeId = () => {
+  const id = lsGet(STORAGE.me);
+  return id && state.members.some((m) => m.id === id) ? id : null;
+};
+export const setMeId = (id) => { if (id) lsSet(STORAGE.me, id); else lsRemove(STORAGE.me); bump(); };
+
 // ── 테마 ──
 export const getTheme = () => {
   const t = lsGet(STORAGE.theme);
@@ -269,6 +276,7 @@ export function wipeLocal() {
   localOps = [];
   clearKey();
   lsRemove(STORAGE.cache);
+  lsRemove(STORAGE.me);
   clearDraft();
   state.records = [];
   state.members = [];

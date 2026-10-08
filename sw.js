@@ -1,7 +1,7 @@
 // 또또하우스 기록장 서비스 워커 — 정적 셸만 캐시. /api/* 는 절대 캐시하지 않음 (항상 네트워크 직행)
 // 배포 전에 npm run bump-sw 로 CACHE_VERSION 을 올리면 새 파일이 바로 반영돼요.
 // (깜빡해도 정적 파일은 뒤에서 새로 받아 두므로 한 번 더 열면 반영돼요)
-const CACHE_VERSION = 'ddh-v19';
+const CACHE_VERSION = 'ddh-v20';
 const CACHE = `ddoddohouse-record-${CACHE_VERSION}`;
 
 const PRECACHE = [

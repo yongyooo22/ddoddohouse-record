@@ -144,6 +144,25 @@ export function mmRoleOf(record, memberId) {
   return arr(obj(obj(record).mm).roles).find((x) => obj(x).memberId === memberId) || null;
 }
 
+/**
+ * 멤버가 머미에서 맡았던 역할 목록 (최근 순). {record, character, hidden}
+ *  - 배역에 역할 이름이 적힌 기록
+ *  - includeMyRole: 이 기기의 '나'라면, 내 역할(mm.myRole)만 적히고 배역이 없는 기록도 내 역할로 봄
+ *  hidden: 스포일러 기록이거나 '역할 가리기'라 열기 전에는 보이면 안 되는 역할
+ */
+export function memberRoles(records, memberId, { includeMyRole = false } = {}) {
+  const out = [];
+  for (const r of arr(records)) {
+    if (!isRecord(r) || r.type !== 'murdermystery') continue;
+    const mm = obj(r.mm);
+    let character = str(obj(mmRoleOf(r, memberId)).character).trim();
+    if (!character && includeMyRole && !mmRoleOf(r, memberId)) character = str(mm.myRole).trim();
+    if (!character) continue;
+    out.push({ record: r, character, hidden: r.spoiler === true || mm.roleSpoiler === true });
+  }
+  return out.sort((a, b) => byLatest(a.record, b.record));
+}
+
 /** 별점 표시: 4.5 → '4.5', 0/없음 → '미평가' */
 export function ratingText(n) {
   const v = num(n);

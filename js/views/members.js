@@ -1,12 +1,12 @@
 // 멤버 목록 · 프로필 · 추가/수정 다이얼로그
 import { h, icon } from '../dom.js';
 import { PALETTE, EMOJI_SUGGESTIONS, LIMITS, TYPES, TYPE_KEYS } from '../constants.js';
-import { state, membersSorted, memberInfo, upsertMember, removeMember, isFirstLoad, loadFailed } from '../store.js';
-import { memberProfile } from '../stats.js';
-import { fmtDate, fmtPct, norm, codePoints } from '../format.js';
+import { state, membersSorted, memberInfo, upsertMember, removeMember, isFirstLoad, loadFailed, getMeId, setMeId } from '../store.js';
+import { memberProfile, memberRoles } from '../stats.js';
+import { fmtDate, fmtPct, norm, codePoints, fmtDateDot } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
-import { appBar, avatar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState, typeName } from '../ui.js';
+import { appBar, avatar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState, typeName, starsView } from '../ui.js';
 import { recordCard } from './bits.js';
 
 // ── 추가/수정 다이얼로그 ──
@@ -92,6 +92,43 @@ export async function openMemberEditor(member) {
   return v === 'ok' ? saved : null;
 }
 
+// ── 나 고르기 ──
+/**
+ * 이 기기에서 '나'가 누구인지 고르는 창 (기기마다 저장). 멤버를 누르면 바로 정해지고, 새 멤버를 만들어 나로 정할 수도 있어요.
+ * @returns {Promise<string|null>} 정한 멤버 id (취소하면 null)
+ */
+export async function pickMe() {
+  let picked = null;
+  let closeDlg = () => {};
+  const mems = membersSorted();
+  const cur = getMeId();
+  const choose = (id) => { picked = id; setMeId(id); closeDlg('ok'); };
+  const list = mems.length
+    ? h('ul', { class: 'me-pick' }, mems.map((m) => h('li', {},
+      h('button', { type: 'button', class: `me-pick-row${m.id === cur ? ' is-current' : ''}`, 'aria-pressed': m.id === cur ? 'true' : 'false', 'data-member-id': m.id, onClick: () => choose(m.id) },
+        avatar(m.id, 'md'), h('span', { class: 'me-pick-name', text: m.name }), m.id === cur ? icon('check') : null))))
+    : h('p', { class: 'muted small', text: '아직 멤버가 없어요. 아래에서 나를 먼저 등록해 주세요.' });
+  const body = h('div', { class: 'me-pick-body' },
+    h('p', { class: 'fhint', text: '이 기기에서 기록하는 사람이에요. 기록할 때 나로 자동 표시되고, 내 역할이 내 이름으로 저장돼요. 기기마다 한 번씩 정해요.' }),
+    list);
+  const v = await openDialog({
+    title: '나는 누구인가요?',
+    body,
+    cls: 'dlg-me',
+    bind: (c) => { closeDlg = c; },
+    actions: [
+      { label: '취소', value: null, kind: 'ghost' },
+      ...(cur ? [{ label: '나 해제', value: 'clear', kind: 'ghost', handler: () => { setMeId(null); return true; } }] : []),
+      { label: '새 멤버로 등록', value: 'new', kind: 'soft' },
+    ],
+  });
+  if (v === 'new') {
+    const saved = await openMemberEditor(null);
+    if (saved) { setMeId(saved.id); picked = saved.id; }
+  }
+  return picked;
+}
+
 // ── 목록 ──
 /** 이번 달 기록에서 멤버별로 함께한 횟수 (떠난 멤버 제외, 많은 순) */
 function monthTopMembers(records, now = new Date()) {
@@ -169,7 +206,7 @@ function renderList(root, ctx) {
           h('a', { class: 'mlist-row', href: `#/member/${encodeURIComponent(m.id)}` },
             avatar(m.id, 'md'),
             h('span', { class: 'mlist-text' },
-              h('span', { class: 'mlist-name', text: m.name }),
+              h('span', { class: 'mlist-name' }, h('span', { text: m.name }), m.id === getMeId() ? h('span', { class: 'me-badge', text: '나' }) : null),
               h('span', { class: 'mlist-sub', text: c ? `기록 ${c.n}개 · 최근 ${fmtDate(c.last, { weekday: false, year: false })}` : '아직 함께한 기록이 없어요' })),
             icon('chevron', 'mlist-go')));
       }))
@@ -234,6 +271,26 @@ function renderProfile(root, id, ctx) {
   }
 
   const recent = (p && Array.isArray(p.recent)) ? p.recent : [];
+  const isMe = getMeId() === m.id;
+  // 맡았던 역할 (머더미스터리): 스포일러로 가린 기록은 역할을 보이지 않고 기록으로만 이어 줌
+  let roles = [];
+  try { roles = memberRoles(state.records, m.id, { includeMyRole: isMe }); } catch { roles = []; }
+  const roleList = roles.length
+    ? h('section', { class: 'card prole' },
+      h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title', text: isMe ? '내가 맡았던 역할' : '맡았던 역할' }), h('span', { class: 'sec-sub', text: `${roles.length}개` })),
+      h('ul', { class: 'prole-list' }, roles.slice(0, 10).map((x) => h('li', { class: 'prole-row' },
+        h('a', { class: 'prole-link', href: `#/record/${encodeURIComponent(x.record.id)}` },
+          h('span', { class: 'prole-role', text: x.hidden ? '가려진 역할' : x.character }),
+          h('span', { class: 'prole-title', text: x.record.title || '(제목 없음)' }),
+          h('span', { class: 'prole-meta' },
+            h('span', { text: fmtDateDot(x.record.date) }),
+            Number(x.record.rating) > 0 ? starsView(x.record.rating, { size: 'xs' }) : null))))),
+      roles.length > 10 ? h('p', { class: 'muted small', text: `최근 10개만 보여요 (전체 ${roles.length}개)` }) : null)
+    : null;
+  const meBtn = h('button', {
+    type: 'button', class: `btn btn-sm ${isMe ? 'btn-soft' : 'btn-ghost'} phero-me`, 'aria-pressed': isMe ? 'true' : 'false',
+    onClick: () => { setMeId(isMe ? null : m.id); renderProfile(root, id, ctx); const nb = root.querySelector('.phero-me'); if (nb) nb.focus(); toast(isMe ? '이 기기의 나를 해제했어요' : `이 기기에서는 ${m.name} 님이 나예요`, 'ok'); },
+  }, icon(isMe ? 'check' : 'users'), h('span', { text: isMe ? '이 기기의 나예요 (해제)' : '이 기기에서 나로 설정' }));
   root.replaceChildren(h('div', { class: 'page page-profile' },
     appBar({
       title: '멤버', back: '#/members',
@@ -244,15 +301,17 @@ function renderProfile(root, id, ctx) {
     }),
     h('section', { class: 'phero card' },
       avatar(memberInfo(m.id), 'xl'),
-      h('h1', { class: 'phero-name', text: m.name }),
+      h('h1', { class: 'phero-name' }, h('span', { text: m.name }), isMe ? h('span', { class: 'me-badge', text: '나' }) : null),
       h('p', { class: 'phero-sub', text: total ? `함께한 기록 ${total}개` : '아직 함께한 기록이 없어요' }),
-      total ? ratio : null),
+      total ? ratio : null,
+      meBtn),
     h('div', { class: 'ptiles' },
       tile('boardgame', `${byType.boardgame || 0}회`,
         bg.decided ? `${bg.wins}승 · 승률 ${fmtPct(bg.wins / bg.decided)}` : bg.plays ? '결과 기록 없음' : '기록 없음'),
       tile('murdermystery', `${byType.murdermystery || 0}회`,
         mm.plays ? `범인 ${mm.culpritCount}번${mm.mvpCount ? ` · MVP ${mm.mvpCount}번` : ''}` : '기록 없음'),
       tile('escaperoom', `${byType.escaperoom || 0}회`, er.plays ? `성공률 ${fmtPct(er.cleared / er.plays)}` : '기록 없음')),
+    roleList,
     h('section', { class: 'home-recent' },
       h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title', text: '최근 함께한 기록' }),
         total ? h('a', { class: 'link-more', href: `#/records?member=${encodeURIComponent(m.id)}` }, '모두 보기', icon('chevron')) : null),

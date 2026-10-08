@@ -1,18 +1,21 @@
 // 새 기록 / 수정 폼 — 가운데 1열. 종류 · 게임 · 날짜 · 별점 · (머더미스터리: 내 역할) · 감상만 적고,
 // 사진은 작은 버튼으로 펼쳐서. 예전 기록에 있던 결과·자세한 정보·태그·함께한 사람은 화면에서 빠졌지만
-// 수정해서 저장해도 그 값은 그대로 보존돼요 (모델에 실어 두었다가 다시 보냄)
+// 수정해서 저장해도 그 값은 그대로 보존돼요 (모델에 실어 두었다가 다시 보냄).
+// 이 기기의 '나'가 정해져 있으면 새 기록에 나를 참여자로 넣고, 내 역할을 내 배역(mm.roles)에도 남겨요.
+// 함께한 사람은 선택 사항 (작은 버튼으로 펼침)
 import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, LIMITS, FIELD_LABELS, MM_SCORES, ER_SCORES } from '../constants.js';
 import {
   state, recordById, upsertRecord, getDraft, setDraft, clearDraftIf, isFirstLoad, photosOf,
-  gameById, titleOf, getLastType, setLastType,
+  gameById, titleOf, getLastType, setLastType, membersSorted, memberInfo, getMeId,
 } from '../store.js';
 import { todayStr, yesterdayStr, defaultRecordDate, fmtDate, relTime, parseDate, fmtDateTime } from '../format.js';
 import * as api from '../api.js';
 import { navigate, goBack } from '../nav.js';
 import {
-  appBar, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge, typeName,
+  appBar, chip, segmented, counterFor, ratingInput, openDialog, confirmDialog, toast, emptyState, starsView, nextId, typeBadge, typeName, avatar,
 } from '../ui.js';
+import { openMemberEditor, pickMe } from './members.js';
 import { photoField, discardPhotos } from './photos.js';
 import { gamePicker } from './game-picker.js';
 import { existingPhotos } from '../images.js';
@@ -25,13 +28,13 @@ function miniCheck(label, checked, onChange, title) {
 }
 
 // ── 모델 ──
-function blankModel(type) {
+function blankModel(type, meId = null) {
   return {
     type,
     date: defaultRecordDate(),
     gameId: null,
     title: '',
-    members: [],
+    members: meId ? [meId] : [],
     rating: 0,
     oneLiner: '',
     review: '',
@@ -71,7 +74,8 @@ function mergeReview(oneLiner, review) {
 
 /** 저장된 기록 또는 초안 → 폼 모델 (구조 보장) */
 function toModel(src, type) {
-  const m = blankModel(type);
+  // 새 기록(저장된 값 없음)만 이 기기의 '나'를 참여자로 넣음
+  const m = blankModel(type, isObj(src) ? null : getMeId());
   if (!isObj(src)) return m;
   for (const k of ['date', 'title']) if (typeof src[k] === 'string') m[k] = src[k];
   Object.assign(m, mergeReview(src.oneLiner, typeof src.review === 'string' ? src.review : ''));
@@ -110,6 +114,12 @@ function toModel(src, type) {
       })) : [],
     });
     if (isObj(b.scores)) for (const s of MM_SCORES) m.mm.scores[s.key] = Number(b.scores[s.key]) || 0;
+    // 내 역할을 따로 적지 않은 기록이면, 이 기기의 '나'의 배역 이름을 보여 줌 (고치지 않으면 값은 그대로)
+    const me = getMeId();
+    if (!m.mm.myRole && me) {
+      const mine = m.mm.roles.find((r) => r.memberId === me);
+      if (mine && mine.character) m.mm.myRole = mine.character;
+    }
   }
   if (isObj(src.er)) {
     const b = src.er;
@@ -148,7 +158,7 @@ const newId = api.newId;
 const intOrNull = (v) => (v === '' || v === null || v === undefined ? null : Math.round(Number(v)));
 
 /** 폼 모델 → 서버 전송용 레코드 (적지 않은 점수·시간·결과는 null — 0점·0분·실패로 보내지 않음) */
-function toPayload(m, id, createdAt) {
+function toPayload(m, id, createdAt, meId = null) {
   const rec = {
     id, type: m.type, date: m.date, title: m.title.trim(), gameId: m.gameId || null, members: [...m.members], rating: m.rating,
     oneLiner: m.oneLiner.trim(), review: m.review.trim(), spoiler: !!m.spoiler, tags: [...m.tags], photos: [...m.photos],
@@ -172,11 +182,19 @@ function toPayload(m, id, createdAt) {
     const b = m.mm;
     const pc = intOrNull(b.playerCount) ?? (n ? Math.min(20, n) : null);
     const own = b.format === 'box' ? ownOrNull(b.ownership) : null; // 예전 기록의 소장 여부 (보드게임형만)
+    // 내 역할을 적었고 나를 알면, 나의 배역(mm.roles)에도 같은 이름으로 남김 → 프로필·멤버 통계에 이어짐
+    const roles = b.roles.map((r) => ({ ...r }));
+    const role = b.myRole.trim();
+    if (meId && role && m.members.includes(meId)) {
+      const mine = roles.find((r) => r.memberId === meId);
+      if (mine) mine.character = role;
+      else roles.push({ memberId: meId, character: role, culprit: false, outcome: null, mvp: false });
+    }
     rec.mm = {
       myRole: b.myRole.trim(),
       publisher: b.publisher.trim(), format: b.format, store: b.format === 'store' ? b.store.trim() : '', gm: b.gm.trim(),
       playerCount: pc, playTimeMin: intOrNull(b.playTimeMin),
-      roles: b.roles.filter((r) => m.members.includes(r.memberId)).map((r) => ({
+      roles: roles.filter((r) => m.members.includes(r.memberId)).map((r) => ({
         memberId: r.memberId, character: r.character.trim(), culprit: !!r.culprit, outcome: r.outcome || null, mvp: !!r.mvp,
       })),
       roleSpoiler: !!b.roleSpoiler,
@@ -259,6 +277,7 @@ export function mount(root, ctx) {
 
 const PANELS = [
   { key: 'photos', label: '사진', icon: 'camera' },
+  { key: 'members', label: '함께한 사람', icon: 'users' },
 ];
 
 function buildForm(root, { rec, type: startType, query, orphanId = null }) {
@@ -402,11 +421,34 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     autocomplete: 'off', id: nextId('myrole'), 'data-field': 'mm.myRole',
   });
   roleIn.addEventListener('input', () => { m.mm.myRole = roleIn.value; changed(); });
+  // 이 기기의 '나': 정해 두면 새 기록에 나를 참여자로 넣고 내 역할을 내 이름으로 남김
+  const meRow = h('div', { class: 'me-row' });
+  function paintMe() {
+    const id = getMeId();
+    meRow.replaceChildren(id
+      ? h('span', { class: 'me-row-text' }, avatar(id, 'xs'), h('span', { text: `나: ${memberInfo(id).name}` }))
+      : h('span', { class: 'me-row-text muted', text: '내가 누구인지 아직 안 골랐어요' }),
+    h('button', { type: 'button', class: 'btn btn-ghost btn-sm me-row-btn', onClick: chooseMe }, id ? '바꾸기' : '나 고르기'));
+  }
+  async function chooseMe() {
+    const before = getMeId();
+    const id = await pickMe();
+    const now = getMeId();
+    if (now !== before) {
+      // 나를 새로 정했으면 이 기록의 참여자에도 넣고(예전 나는 그대로 둠), 함께한 사람 칸도 새로 그림
+      if (now && isNew && !m.members.includes(now)) m.members = [...m.members, now];
+      changed();
+      rebuildMembers();
+    }
+    paintMe();
+    return id;
+  }
   const roleSlot = h('div', { class: 'rec-field rec-role' },
-    h('label', { class: 'field-label', htmlFor: roleIn.id, text: '내 역할' }), roleIn);
+    h('label', { class: 'field-label', htmlFor: roleIn.id, text: '내 역할' }), roleIn, meRow);
   function paintRole() {
     roleSlot.hidden = type !== 'murdermystery';
     roleIn.value = m.mm.myRole;
+    paintMe();
   }
 
   // 감상: 한줄평·후기를 하나로. 처음엔 3줄, 쓰는 만큼 늘어남. 스포일러는 바로 옆에 작게
@@ -453,16 +495,61 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     onAdd: () => openPanel('photos'),
   });
 
+  const memberNames = () => {
+    const ns = m.members.map((id) => memberInfo(id).name);
+    return ns.length > 2 ? `${ns.slice(0, 2).join(', ')} 외 ${ns.length - 2}명` : ns.join(', ');
+  };
   const summaries = {
     photos: () => {
       const n = photos.count();
       const busy = photos.busy();
       return n ? `${n}장${busy ? ' · 올리는 중' : ''}` : '';
     },
+    members: memberNames,
   };
+
+  // 함께한 사람 (선택): 참여자 칩. 나는 이 칸에서 빼도 되고, 다른 사람을 고르면 그 사람의 프로필에도 기록이 쌓여요
+  function toggleMember(id, on) {
+    if (on) {
+      if (m.members.length >= LIMITS.members) { toast(`멤버는 최대 ${LIMITS.members}명까지 고를 수 있어요`, 'error'); return false; }
+      if (!m.members.includes(id)) m.members = [...m.members, id];
+    } else {
+      m.members = m.members.filter((x) => x !== id);
+    }
+    changed();
+    return true;
+  }
+  function membersBody() {
+    const mems = membersSorted();
+    const known = new Set(mems.map((x) => x.id));
+    const gone = m.members.filter((id) => !known.has(id));
+    const one = (id, name, isGone) => {
+      const c = chip({
+        label: name, pressed: m.members.includes(id), cls: `chip-member${isGone ? ' is-gone' : ''}`, lead: avatar(id, 'xs'),
+        onToggle: (on) => toggleMember(id, on),
+      });
+      c.dataset.memberId = id;
+      return c;
+    };
+    return h('div', { class: 'rp-fields' },
+      h('div', { class: 'chips chips-members', role: 'group', 'aria-label': '함께한 사람' },
+        mems.map((mb) => one(mb.id, mb.name, false)),
+        gone.map((id) => one(id, memberInfo(id).name, true)),
+        h('button', {
+          type: 'button', class: 'chip chip-add',
+          onClick: async () => { const saved = await openMemberEditor(null); if (saved && alive) { toggleMember(saved.id, true); rebuildMembers(); } },
+        }, icon('plus'), h('span', { class: 'chip-label', text: '새 멤버' }))),
+      !mems.length ? h('p', { class: 'fhint', text: '아직 등록된 멤버가 없어요. ‘새 멤버’로 바로 추가할 수 있어요.' }) : null);
+  }
+  function rebuildMembers() {
+    const pn = panels.members;
+    if (pn && pn.built) buildPanel('members');
+    paintAddons();
+  }
 
   const builders = {
     photos: () => photos.el,
+    members: membersBody,
   };
 
   for (const p of PANELS) {
@@ -700,7 +787,7 @@ function buildForm(root, { rec, type: startType, query, orphanId = null }) {
     }
     saving = true;
     setBusy(true);
-    const payload = toPayload(m, recordId, recreateCreatedAt);
+    const payload = toPayload(m, recordId, recreateCreatedAt, getMeId());
     try {
       const res = await api.saveRecord(payload, base);
       await finish(res.record);

@@ -121,4 +121,5 @@ export const STORAGE = {
   draft: 'ddh:draft',
   theme: 'ddh:theme',
   lastType: 'ddh:lastType',
+  me: 'ddh:me', // 이 기기에서 '나'인 멤버 id (기기마다 따로)
 };
