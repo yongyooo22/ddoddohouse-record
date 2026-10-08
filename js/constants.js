@@ -13,7 +13,7 @@ export const TYPES = {
   },
   murdermystery: {
     key: 'murdermystery', label: '머더미스터리', short: '머미', icon: 'magnifier', cls: 't-murdermystery', noun: '작품',
-    titleLabel: '작품 이름', titlePlaceholder: '예) 붉은 저택의 초대',
+    titleLabel: '작품 이름', titlePlaceholder: '예) 웬디, 어른이 되렴',
     desc: '역할, 범인, 평점을 남겨요',
   },
   escaperoom: {
