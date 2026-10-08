@@ -1314,6 +1314,8 @@ button.card-link { padding: 0; border: 0; background: none; font: inherit; lette
 .cell-m span:last-child { overflow: hidden; text-overflow: ellipsis; }
 
 /* ── 멤버 ───────────────────────────────────────────── */
+/* 멤버 목록: 한 판 안의 목록 (넓은 화면에서는 표처럼 칸을 나눔 — 아래 container query) */
+.mroster { overflow: hidden; }
 .mlist { margin: 0; padding: 4px 0; list-style: none; }
 .mlist li + li { border-top: 1px solid var(--line); }
 .mlist-row { display: flex; align-items: center; gap: 13px; min-height: 68px; padding: 12px 16px; color: inherit; text-decoration: none; transition: background-color .18s; }
@@ -1321,6 +1323,8 @@ button.card-link { padding: 0; border: 0; background: none; font: inherit; lette
 .mlist-name { font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
 .mlist-sub { color: var(--ink-3); font-size: 13px; }
 .mlist-go { width: 18px; height: 18px; color: var(--ink-3); }
+.mlist-row:focus-visible { outline-offset: -3px; border-radius: 12px; } /* 판이 overflow: hidden 이라 안쪽에 */
+.mlist-head, .mlist-col { display: none; }
 .phero { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 30px 18px 24px; overflow: hidden; text-align: center; }
 .phero::before { content: ""; position: absolute; inset: 0 0 auto; height: 96px; background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 12%, transparent), transparent); pointer-events: none; }
 .phero > * { position: relative; }
@@ -1721,9 +1725,19 @@ html.vw-open, html.vw-open body { overflow: hidden; }
   .page-members .mate-row { flex: 1; flex-wrap: nowrap; gap: 24px; }
   .page-members .mate-others { flex-direction: row; flex-wrap: wrap; gap: 8px 20px; padding-left: 24px; border-left: 1px solid var(--line); }
   .more-btn { max-width: 360px; margin: 8px auto 0; }
-  .mlist.card { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; padding: 0; background: none; border: 0; box-shadow: none; }
-  .mlist li + li { border-top: 0; }
-  .mlist-row { height: 100%; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-1); transition: transform .18s var(--ease), box-shadow .2s, border-color .2s; }
+  /* 멤버 목록: 이름 · 함께한 기록 · 종류별 · 최근 칸으로 */
+  .mlist-head, .mlist-row { display: grid; grid-template-columns: minmax(140px, 1fr) 112px minmax(0, 1.6fr) 104px 18px; align-items: center; gap: 20px; padding: 0 22px; }
+  .mlist-head { min-height: 44px; border-bottom: 1px solid var(--line); background: var(--surface-2); color: var(--ink-3); font-size: 12.5px; font-weight: 650; }
+  .mlist { padding: 0; }
+  .mlist-row { min-height: 58px; }
+  .mlist-sub { display: none; }
+  .mlist-col { display: block; min-width: 0; color: var(--ink-2); font-size: 14px; }
+  .mlist-n, .mlist-last { font-variant-numeric: tabular-nums; }
+  .mlist-n { color: var(--ink); font-weight: 650; }
+  .mlist-types { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  .mlist-type { display: inline-flex; align-items: center; gap: 7px; font-size: 13.5px; white-space: nowrap; }
+  .mlist-type::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--tc); flex: none; }
+  .mlist-n.is-zero { color: var(--ink-3); font-weight: 500; }
   .stats-body { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); grid-auto-flow: row dense; align-items: stretch; }
   .stats-body > * { grid-column: span 6; }
   .stats-body > .tiles, .stats-body > .empty, .stats-body > .loading-state, .stats-body > .span-12 { grid-column: span 12; }
