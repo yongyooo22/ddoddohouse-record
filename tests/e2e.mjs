@@ -682,7 +682,7 @@ await step('머더미스터리 기록 (팝업 등록 · 작품 태그 · 내 역
   check('상세: 가린 내용은 스크린리더에도 숨김 · 키보드로도 못 감', await page.$eval(`${myRoleSec} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true' && e.inert === true) &&
     await page.$eval(`${reviewSec} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true'));
   check('상세: 내 역할 가림 버튼', (await text(`${myRoleSec} .spoiler-btn`)) === '내 역할 보기', await text(`${myRoleSec} .spoiler-btn`));
-  check('상세: 적지 않은 역할과 결과·그날의 정보·세부 평가·태그는 안 보임', !(await page.$('.page-detail .role-row')) && !(await page.$('.page-detail .info-grid')) && !(await page.$('.page-detail .scorebars')) &&
+  check('상세: 적지 않은 역할과 결과·그날의 정보·세부 평가·태그는 안 보임', !(await page.$('.page-detail .role-cell')) && !(await page.$('.page-detail .info-grid')) && !(await page.$('.page-detail .scorebars')) &&
     !(await page.$('.page-detail .dtags')) && !(await page.$('.page-detail .dpart:has(.dpart-label:text-is("역할과 결과"))')) && !(await page.$('.page-detail .dpart:has(.dpart-label:text-is("세부 평가"))')) &&
     !(await page.$('.page-detail .dpart:has(.dpart-label:text-is("그날의 정보"))')), await text('.page-detail'));
   const dgame = await text('.page-detail .dgame');
@@ -727,18 +727,23 @@ await step('예전 기록 준비 (API) — 머더미스터리: 멤버·역할·�
   await page.waitForSelector('#tabbar:not([hidden])');
   await go(`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail');
   const reviewSec = '.page-detail .dpart:has(.dpart-label:text-is("감상"))';
-  // 누가 어떤 역할이었는지는 '함께한 멤버'에서: 스포일러면 이름은 보이고 역할·범인만 가림
+  // 누가 어떤 역할이었는지는 '함께한 멤버'에서: 멤버마다 한 줄, 이름 오른쪽에 역할 — 이름은 보이고 역할·범인만 가림
   const rolesSec = '.page-detail .dres:has(.dres-title:text-is("함께한 멤버"))';
-  const blurred = await page.$$eval('.page-detail .spoiler .spoiler-content', (els) => els.map((e) => getComputedStyle(e).filter));
-  check('상세: 감상·내 역할·범인/역할 모두 가림', blurred.length === 3 && blurred.every((f) => f.includes('blur')), JSON.stringify(blurred));
+  const blurred = await page.$$eval('.page-detail .spoiler .spoiler-content, .page-detail .is-secret', (els) => els.map((e) => getComputedStyle(e).filter));
+  check('상세: 감상·내 역할·멤버별 역할 3칸·범인 도주 모두 가림', blurred.length === 6 && blurred.every((f) => f.includes('blur')), JSON.stringify(blurred));
   check('상세: 역할이 가려져도 함께한 멤버 이름은 보임', canon((await texts(`${rolesSec} .dres-list .mrow-name`)).sort()) === canon(['도윤', '연경', '영식'].sort()), await text(rolesSec));
-  check('상세: 가린 역할의 멤버 링크는 키보드로도 못 감(inert)', await page.$eval(`${rolesSec} .spoiler-content`, (e) => e.inert === true && e.getAttribute('aria-hidden') === 'true'));
-  check('상세: 범인 도주(결말)도 맨 위가 아니라 범인·역할과 함께 접혀 있음 · ‘역할과 결과’ 칸은 따로 없음', !(await page.$('.page-detail .dhead .stamp')) && !(await page.$('.page-detail .dres-line')) &&
-    (await page.$eval(`${rolesSec} .spoiler-content`, (e) => e.textContent)).includes('범인 도주') &&
+  check('상세: 역할은 같은 줄 이름 오른쪽', await page.$eval(`${rolesSec} .mm-row:has(.role-char)`, (row) => {
+    const n = row.querySelector('.mrow').getBoundingClientRect();
+    const c = row.querySelector('.role-cell').getBoundingClientRect();
+    return c.left >= n.right && Math.abs((c.top + c.bottom) / 2 - (n.top + n.bottom) / 2) < 12;
+  }));
+  check('상세: 가린 역할 칸은 스크린리더·키보드에서도 숨김(inert)', await page.$$eval(`${rolesSec} .role-cell`, (els) => els.length === 3 && els.every((e) => e.inert === true && e.getAttribute('aria-hidden') === 'true')));
+  check('상세: 범인 도주(결말)도 맨 위가 아니라 역할과 함께 가려져 있음 · ‘역할과 결과’ 칸은 따로 없음', !(await page.$('.page-detail .dhead .stamp')) && !(await page.$('.page-detail .dres-line')) &&
+    (await text(`${rolesSec} .mm-culprit.is-secret`)).includes('범인 도주') &&
     !(await page.$('.page-detail .dpart:has(.dpart-label:text-is("역할과 결과"))')));
-  check('상세: 역할 가림 버튼', (await text(`${rolesSec} .spoiler-btn`)) === '범인·역할 보기', await text(`${rolesSec} .spoiler-btn`));
+  check('상세: 역할 펼치기 버튼은 카드 머리에', (await text(`${rolesSec} .dres-head .secret-btn`)) === '범인·역할 보기', await text(`${rolesSec} .dres-head`));
   await page.click(`${reviewSec} .spoiler .spoiler-btn`);
-  check('감상을 열어도 범인/역할은 계속 가림', !!(await page.$(`${rolesSec} .spoiler:not(.is-revealed) .spoiler-btn`)));
+  check('감상을 열어도 범인/역할은 계속 가림', !!(await page.$(`${rolesSec} .secret-btn`)) && (await page.$$(`${rolesSec} .is-secret`)).length === 4);
   // 백그라운드 새로고침(다시 온라인 등)으로 화면을 다시 그려도 연 스포일러는 그대로
   const reqs = [];
   const onReq = (r) => { if (r.url().endsWith('/api/data')) reqs.push(r); };
@@ -748,14 +753,14 @@ await step('예전 기록 준비 (API) — 머더미스터리: 멤버·역할·�
   await sleep(400);
   page.off('request', onReq);
   check('새로고침 후에도 연 감상 유지', reqs.length > 0 && !!(await page.$(`${reviewSec} .spoiler.is-revealed`)) && !(await page.$(`${reviewSec} .spoiler-btn`)));
-  await page.click(`${rolesSec} .spoiler-btn`);
-  check('범인·역할 펼침', !!(await until(() => page.$(`${rolesSec} .spoiler.is-revealed`), 2000)) &&
-    (await page.$eval(`${rolesSec} .spoiler-content`, (e) => e.inert === false)));
-  const roles = await texts('.page-detail .role-row');
-  check('역할 3개', roles.length === 3, roles.join(' | '));
+  await page.click(`${rolesSec} .secret-btn`);
+  check('범인·역할 펼침 (버튼은 사라짐)', !!(await until(async () => !(await page.$(`${rolesSec} .is-secret`)) && !(await page.$(`${rolesSec} .secret-btn`)), 2000)) &&
+    (await page.$$eval(`${rolesSec} .role-cell`, (els) => els.every((e) => e.inert === false))));
+  const roles = await texts('.page-detail .mm-row');
+  check('멤버 3줄 (이름 + 역할)', roles.length === 3, roles.join(' | '));
   const yk = roles.find((r) => r.includes('연경')) || '';
   check('연경: 캐릭터·범인·승·MVP', yk.includes('집사 세바스찬') && yk.includes('범인') && yk.includes('승') && yk.includes('MVP'), yk);
-  check('펼치면 범인 도주 결과', (await text(`${rolesSec} .spoiler.is-revealed .dres-outcome`)).includes('범인 도주'));
+  check('펼치면 범인 도주 결과', (await text(`${rolesSec} .mm-culprit:not(.is-secret)`)).includes('범인 도주'));
   const info = await text('.page-detail .info-grid');
   check('제작사·형태·매장·GM·인원·시간', ['머더랩', '매장형', '강남점', '하람', '6인', '4시간'].every((s) => info.includes(s)), info);
   const bars = await texts('.page-detail .scorebars .sb-row');
@@ -1828,7 +1833,7 @@ await step('멤버 삭제 → (떠난 멤버)', async () => {
   await go(`#/record/${encodeURIComponent(ids.mm)}`, '.page-detail');
   const mem = await texts('.page-detail .dres-list .mrow-name');
   check('상세: (떠난 멤버) 표시', mem.includes('(떠난 멤버)') && mem.includes('연경'), mem.join(','));
-  const roles = await texts('.page-detail .role-row');
+  const roles = await texts('.page-detail .mm-row');
   check('역할에도 (떠난 멤버)', roles.some((r) => r.includes('(떠난 멤버)') && r.includes('정원사')), roles.join(' | '));
   check('떠난 멤버는 링크 아님', !!(await page.$('.page-detail .mrow.is-gone')) && !(await page.$('.page-detail a.mrow.is-gone')));
   // 수정 폼에는 멤버·역할 칸이 없지만, 떠난 멤버가 들어 있는 예전 기록을 고쳐 저장해도 멤버·역할·범인·점수는 그대로
@@ -1846,7 +1851,7 @@ await step('멤버 삭제 → (떠난 멤버)', async () => {
   check('서버: 떠난 멤버 포함 멤버·역할·범인·검거 결과·점수·태그·내 역할이 그대로', withoutEdited(afterMm) === withoutEdited(beforeMm) && afterMm.members.includes(ids['도윤']) && afterMm.mm.roles.length === 3 &&
     afterMm.mm.roles.find((x) => x.memberId === ids['연경']).culprit === true && afterMm.mm.culpritResult === 'escaped' && afterMm.mm.scores.story === 4.5 && afterMm.mm.myRole === '마르타' &&
     afterMm.tags.length === 3, `${withoutEdited(beforeMm)}\n${withoutEdited(afterMm)}`);
-  const rolesAfter = await texts('.page-detail .role-row');
+  const rolesAfter = await texts('.page-detail .mm-row');
   check('상세: 역할에 (떠난 멤버) 그대로', rolesAfter.some((r) => r.includes('(떠난 멤버)') && r.includes('정원사')), rolesAfter.join(' | '));
 });
 
@@ -2026,12 +2031,19 @@ await step('소장 탭 · 소장 필터 · 예전 기록 이름을 게임으로 
     check('새 기록 버튼이 가운데', !!plus && Math.abs(plus.mid - VIEWPORT.width / 2) < 2, JSON.stringify(plus));
     check('홈 머리에 톱니 버튼 없음 (설정은 탭 막대에)', !(await page.$('.page-home .home-head .icon-btn')));
 
-    // 소장 탭: '내 소장'인 게임만 (소장 아닌 게임 정보·방탈출 테마·대여 기록은 없음)
+    // 소장 탭: 소장 여부와 상관없이 보드게임·머미를 모두 보여 주고(방탈출 테마는 없음), ‘내 소장’·소장한 사람으로 좁혀 봄
     await tab('collection', '.page-collection');
     check('소장 탭 선택 표시', (await page.getAttribute('#tabbar [data-tab="collection"]', 'aria-current')) === 'page');
+    check('처음엔 ‘모든 게임’', (await page.getAttribute('.page-collection .coll-owners .chip:has-text("모든 게임")', 'aria-pressed')) === 'true');
+    const allGames = await texts('.page-collection .gcard-title');
+    check('모든 게임: 소장 아닌 게임·예전 기록 이름도 보임 · 방탈출 테마는 없음', ['테라포밍 마스', '마지막 야간열차', '붉은 저택의 초대', '스플렌더'].every((x) => allGames.includes(x)) &&
+      !allGames.includes('잊혀진 연구소'), JSON.stringify(allGames));
+    check('모든 게임 개수', (await text('.page-collection .list-count')) === `모든 게임 ${allGames.length}개`, await text('.page-collection .list-count'));
+    await noOverflow('소장 탭 (모든 게임)');
+    await page.click('.page-collection .coll-owners .chip:has-text("내 소장")');
     const owned = await texts('.page-collection .gcard-title');
     check('소장 게임 2개 (최근 순) — 등록한 내 소장 + 예전 기록의 내 소장', JSON.stringify(owned) === JSON.stringify(['테라포밍 마스', '마지막 야간열차']), JSON.stringify(owned));
-    check('소장 아닌 게임(붉은 저택의 초대·삭제할 게임)·테마·대여는 없음', !owned.includes('붉은 저택의 초대') && !owned.includes('잊혀진 연구소') && !owned.includes('스플렌더') && !(await page.$('.page-collection .borrowed')));
+    check('내 소장: 소장 아닌 게임(붉은 저택의 초대·삭제할 게임)·테마·대여는 없음', !owned.includes('붉은 저택의 초대') && !owned.includes('잊혀진 연구소') && !owned.includes('스플렌더') && !(await page.$('.page-collection .borrowed')));
     check('소장 개수', (await text('.page-collection .list-count')) === '내 소장 2개', await text('.page-collection .list-count'));
     const tera = '.page-collection .gcard:has(.card-link:text-is("테라포밍 마스"))';
     const teraRec = (await api('GET', '/api/data')).data.records.find((r) => r.id === ids.bg);
@@ -2129,6 +2141,7 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
   const todayDot = TODAY.replace(/-/g, '.');
   try {
     await tab('collection', '.page-collection');
+    await page.click('.page-collection .coll-owners .chip:has-text("내 소장")');
     const before = await texts('.page-collection .gcard-title');
     const playedToday = (await texts('.page-collection .gcard-last')).filter((x) => x === `최근 ${todayDot}`).length;
     check('머리에 ‘게임 등록’ 버튼 (휴대폰에서도 글자)', (await text('.page-collection .head-add')) === '게임 등록' && await page.isVisible('.page-collection .head-add .head-label'));
@@ -2141,6 +2154,8 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     check('기본 종류 보드게임 · 게임 이름 · 종류는 보드게임·머더미스터리만', (await page.$eval(`${dlg} .seg-input:checked`, (e) => e.value)) === 'boardgame' && (await text(nameLabel)) === '게임 이름' &&
       JSON.stringify(await texts(`${dlg} .seg-type .seg-item`)) === JSON.stringify(['보드게임', '머더미스터리']));
     check('소장 탭에서 연 창: 내 소장 기본 선택', await page.isChecked(`${dlg} .gf-own-input`));
+    check('소장한 사람: 멤버 칩 (나를 정하지 않았으면 미리 고르지 않음)', (await page.$$(`${dlg} .gf-owners .chip-member`)).length >= 3 &&
+      (await page.$$(`${dlg} .gf-owners .chip[aria-pressed="true"]`)).length === 0 && (await text(`${dlg} .gf-owners-box .field-label`)) === '소장한 사람 (선택)');
     // 보드게임 정보: 인원 · 예상 시간은 나란히, 장르는 그 아래
     const pos = await page.evaluate(() => {
       const r = (sel) => document.querySelector(`dialog[open] ${sel}`).getBoundingClientRect();
@@ -2167,6 +2182,7 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     await page.fill(`${dlg} input[aria-label="장르 직접 추가"]`, '농장');
     await page.press(`${dlg} input[aria-label="장르 직접 추가"]`, 'Enter');
     check('직접 넣은 장르도 칩으로 · 선택됨', (await page.getAttribute(`${dlg} .gf-genres .chip:has-text("농장")`, 'aria-pressed')) === 'true');
+    await page.click(`${dlg} .gf-owners .chip-member:has-text("영식")`);
     await dialogButton('계속 등록');
     check('최대 시간 < 최소 시간 → 안내', !!(await until(async () => (await text(`${dlg} .form-err`)) === '최대 시간이 최소 시간보다 짧아요')));
     await page.fill(`${dlg} input[aria-label="최소 예상 시간(분)"]`, '30');
@@ -2176,6 +2192,8 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     check('계속 등록 → 창 유지 · 방금 넣은 이름 안내 · 칸 비움', !!addedLine && (await page.inputValue('[data-field="game-title"]')) === '' &&
       (await page.inputValue('[data-field="game-memo"]')) === '' && (await page.inputValue(`${dlg} input[aria-label="최소 인원"]`)) === '' &&
       await page.evaluate(() => document.activeElement.dataset.field === 'game-title'), String(addedLine));
+    check('계속 등록: 소장한 사람은 그대로 (같은 사람 게임을 이어서 넣기 쉽게)', (await page.getAttribute(`${dlg} .gf-owners .chip-member:has-text("영식")`, 'aria-pressed')) === 'true');
+    await page.click(`${dlg} .gf-owners .chip-member:has-text("영식")`);
     // 같은 종류·같은 이름(공백·대소문자 무시)은 먼저 보여 줌 (합치지 않음)
     await page.fill('[data-field="game-title"]', '  아그리콜라 ');
     const dup = await until(async () => { const t = await text(`${dlg} .gf-dup`); return t.includes('같은 이름이 이미 있어요') && t; });
@@ -2199,9 +2217,10 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     check('닫으면 몇 개 등록했는지 알림', !!(await toastSeen(/소장 게임 2개를 등록했어요/)), String(await texts('.toast')));
     let games = await serverGames();
     const agri = games.find((g) => g.title === '아그리콜라');
-    check('서버: 내 소장 · 인원 1~4 · 시간 30~150 · 장르 2개', agri && agri.type === 'boardgame' && agri.owned === true && agri.memo === '확장 포함' &&
+    check('서버: 내 소장 · 소장한 사람 영식 · 인원 1~4 · 시간 30~150 · 장르 2개', agri && agri.type === 'boardgame' && agri.owned === true && agri.memo === '확장 포함' &&
+      JSON.stringify(agri.owners) === JSON.stringify([ids['영식']]) &&
       agri.playersMin === 1 && agri.playersMax === 4 && agri.timeMin === 30 && agri.timeMax === 150 && JSON.stringify(agri.genres) === '["전략","농장"]', JSON.stringify(agri));
-    check('서버: 머더미스터리도 내 소장 · 태그는 genres 에', games.some((g) => g.type === 'murdermystery' && g.title === '열차 밖의 밤' && g.owned === true && JSON.stringify(g.genres) === JSON.stringify(['호러', '열차물'])), JSON.stringify(games));
+    check('서버: 머더미스터리도 내 소장 · 태그는 genres 에 · 소장한 사람은 비움', games.some((g) => g.type === 'murdermystery' && g.title === '열차 밖의 밤' && g.owned === true && JSON.stringify(g.genres) === JSON.stringify(['호러', '열차물']) && !('owners' in g)), JSON.stringify(games));
     check('서버: 머더미스터리 작품에는 인원·시간 값 없음', games.filter((g) => g.title === '열차 밖의 밤').every((g) => !('playersMin' in g) && !('timeMin' in g)), JSON.stringify(games.filter((g) => g.title === '열차 밖의 밤')));
 
     // 목록: 기록이 없어도 소장에 보임
@@ -2213,6 +2232,13 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
       (await text(`${gcard('아그리콜라')} .gcard-plays`)) === '아직 안 해 봤어요' && (await text(`${gcard('아그리콜라')} .gcard-last`)) === `${todayDot} 등록` &&
       (await text(`${gcard('아그리콜라')} .gcard-memo`)) === '확장 포함' && !!(await page.$(`${gcard('아그리콜라')} .gcard-more`)), await text(gcard('아그리콜라')));
     check('머더미스터리 카드: 정보 줄에 태그', (await text(`${gcard('열차 밖의 밤')} .gcard-info`)) === '호러, 열차물', await text(gcard('열차 밖의 밤')));
+    check('카드에 소장한 사람', (await text(`${gcard('아그리콜라')} .gcard-owners`)) === '영식' && !(await page.$(`${gcard('열차 밖의 밤')} .gcard-owners`)));
+    // 소장한 사람으로 좁히기: 영식을 고르면 영식이 가진 게임만
+    await page.click('.page-collection .coll-owners .chip-member:has-text("영식")');
+    check('영식 소장만 (아그리콜라 1개)', JSON.stringify(await texts('.page-collection .gcard-title')) === JSON.stringify(['아그리콜라']) &&
+      (await text('.page-collection .list-count')) === '영식 소장 1개', await text('.page-collection .list-count'));
+    check('멤버 칩은 소장한 게임이 있는 사람만 (아무것도 없는 민지짱은 없음)', !(await texts('.page-collection .coll-owners .chip')).includes('민지짱'), JSON.stringify(await texts('.page-collection .coll-owners .chip')));
+    await page.click('.page-collection .coll-owners .chip:has-text("내 소장")');
     await page.selectOption('.page-collection select[aria-label="정렬"]', 'plays');
     check('많이 한 순: 안 해 본 게임은 뒤로', (await texts('.page-collection .gcard-title')).slice(-2).every((x) => ['아그리콜라', '열차 밖의 밤'].includes(x)));
     await page.selectOption('.page-collection select[aria-label="정렬"]', 'recent');
@@ -3167,10 +3193,10 @@ await step('머더미스터리: 함께한 사람마다 맡은 역할 → 상세�
   const memSec = '.page-detail .dres:has(.dres-title:text-is("함께한 멤버"))';
   check('상세: 함께한 3명 이름은 보임', canon((await texts(`${memSec} .dres-list .mrow-name`)).sort()) === canon(['점수가', '점수나', '점수다']), await text(memSec));
   // 역할은 작품 스포일러라 스포일러 기록이 아니어도 접어 둠
-  check('상세: 역할은 처음엔 접혀 있음 (‘역할 보기’)', (await text(`${memSec} .spoiler-btn`)) === '역할 보기' && await page.$eval(`${memSec} .spoiler-content`, (e) => e.inert === true));
-  await page.click(`${memSec} .spoiler-btn`);
-  const rows = await page.$$eval(`${memSec} .spoiler.is-revealed .role-row`, (els) => els.map((e) => [e.querySelector('.mrow-name').textContent, (e.querySelector('.role-char') || { textContent: '' }).textContent]));
-  check('상세: 펼치면 역할을 적은 멤버마다 맡은 역할', canon(rows) === canon([['점수가', '집사 세바스찬'], ['점수나', '탐정 조수']]), JSON.stringify(rows));
+  check('상세: 역할은 처음엔 가려 있음 (‘역할 보기’)', (await text(`${memSec} .secret-btn`)) === '역할 보기' && await page.$$eval(`${memSec} .role-cell`, (els) => els.length === 3 && els.every((e) => e.inert === true)));
+  await page.click(`${memSec} .secret-btn`);
+  const rows = await page.$$eval(`${memSec} .mm-row`, (els) => els.map((e) => [e.querySelector('.mrow-name').textContent, (e.querySelector('.role-char') || { textContent: '' }).textContent]));
+  check('상세: 펼치면 멤버마다 이름 오른쪽에 맡은 역할 (안 적은 사람은 빈칸)', canon(rows) === canon([['점수가', '집사 세바스찬'], ['점수나', '탐정 조수'], ['점수다', '']]) && !(await page.$(`${memSec} .is-secret`)), JSON.stringify(rows));
   check('상세: 따로 ‘역할과 결과’ 칸은 없음', !(await page.$('.page-detail .dpart:has(.dpart-label:text-is("역할과 결과"))')));
   await noOverflow('머더미스터리 상세 (역할)');
   await shot('role-detail');
@@ -3181,9 +3207,9 @@ await step('머더미스터리: 함께한 사람마다 맡은 역할 → 상세�
   await page.click('.save-btn');
   await page.waitForSelector('.page-detail', { timeout: 8000 });
   check('스포일러: 이름은 보이고 역할은 ‘역할 보기’로 가림', (await texts(`${memSec} .dres-list .mrow-name`)).length === 3 &&
-    (await text(`${memSec} .spoiler-btn`)) === '역할 보기' && await page.$eval(`${memSec} .spoiler-content`, (e) => e.inert === true));
-  await page.click(`${memSec} .spoiler-btn`);
-  check('역할 보기 → 역할이 보임', (await texts(`${memSec} .spoiler.is-revealed .role-char`)).join() === '집사 세바스찬,탐정 조수');
+    (await text(`${memSec} .secret-btn`)) === '역할 보기' && await page.$$eval(`${memSec} .role-cell`, (els) => els.every((e) => e.inert === true)));
+  await page.click(`${memSec} .secret-btn`);
+  check('역할 보기 → 역할이 보임', (await texts(`${memSec} .mm-row .role-char`)).join() === '집사 세바스찬,탐정 조수' && !(await page.$(`${memSec} .is-secret`)));
 });
 
 await step('나의 결과: 공동 순위 · 함께하지 않음 · 결과 미입력 · 협력 · 멤버 화면에서 나는 빼고', async () => {

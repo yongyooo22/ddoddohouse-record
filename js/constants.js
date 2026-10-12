@@ -109,7 +109,7 @@ export const FIELD_LABELS = {
   roles: '역할', character: '캐릭터', culpritResult: '범인 검거 결과', scores: '세부 점수', difficulty: '난이도',
   brand: '브랜드', branch: '지점', genre: '장르', timeLimitMin: '제한 시간', remainingSec: '남은 시간',
   hints: '힌트', fear: '공포도', activity: '활동성', name: '이름', emoji: '이모지', color: '색', photos: '사진',
-  ownership: '소장 여부', lender: '빌려준 사람', gameId: '게임', memo: '메모', owned: '소장 여부', cover: '대표 이미지',
+  ownership: '소장 여부', lender: '빌려준 사람', gameId: '게임', memo: '메모', owned: '소장 여부', owners: '소장한 사람', cover: '대표 이미지',
   playersMin: '최소 인원', playersMax: '최대 인원', timeMin: '예상 시간', timeMax: '예상 시간', genres: '장르', myRole: '내 역할', roleSpoiler: '역할 가리기',
 };
 

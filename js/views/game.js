@@ -9,7 +9,7 @@ import { navigate } from '../nav.js';
 import { appBar, typeBadge, emptyState, loadingState, loadErrorState } from '../ui.js';
 import { recordCard, sectionHead, gamePageHref, gameWriteHref } from './bits.js';
 import { gameThumb, openGameEditor, canDeleteGame, setOwned, deleteGameInfo } from './game-form.js';
-import { statText } from './collection.js';
+import { statText, ownersOf, ownerNames } from './collection.js';
 
 const OWNABLE = ['boardgame', 'murdermystery'];
 
@@ -74,6 +74,7 @@ function render(root, ctx) {
       h('div', { class: 'ghero-badges' }, typeBadge(e.type), owned ? h('span', { class: 'rbadge rbadge-own', text: '내 소장' }) : null),
       h('h2', { class: 'ghero-title', text: e.title }),
       info ? h('p', { class: 'ghero-info', text: info }) : null,
+      ownersOf(e).length ? h('p', { class: 'ghero-owners' }, icon('users'), h('span', { text: `소장 · ${ownerNames(ownersOf(e))}` })) : null,
       e.memo ? h('p', { class: 'ghero-memo', text: e.memo }) : null,
       // 항목('평균 ★ 4.3' 등)이 중간에서 줄바꿈되지 않게 하나씩 묶음
       h('p', { class: 'ghero-stat' }, statText(e).split(' · ').map((x, i) => [i ? ' · ' : null, h('span', { text: x })]))),

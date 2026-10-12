@@ -685,6 +685,13 @@ describe('게임 정보 검증', () => {
     assert.equal(g({ cover: 'img-1' }).value.cover, 'img-1');
     assert.equal(g({ cover: null }).value.cover, null);
     assert.equal(g({ cover: 'bad id' }).field, 'cover');
+    // 소장한 사람: 멤버 id 여러 명 (중복 없이), 비우면 []
+    assert.deepEqual(g({ owners: ['m1', 'm2', 'm1'] }).value.owners, ['m1', 'm2']);
+    assert.deepEqual(g({ owners: [] }).value.owners, []);
+    assert.equal(g({ owners: 'm1' }).field, 'owners');
+    assert.equal(g({ owners: ['bad id'] }).field, 'owners');
+    assert.equal(g({ owners: Array.from({ length: 21 }, (_, i) => `m${i}`) }).field, 'owners');
+    assert.equal(g({}).value.owners, undefined, '안 보내면 담지 않음 (저장된 값 유지)');
   });
 
   test('finalizeGame: 종류에 맞는 항목만, 소장 여부를 정한 적 없으면 내 소장(예전 소장 게임)', () => {
@@ -694,6 +701,13 @@ describe('게임 정보 검증', () => {
       { type: 'murdermystery', title: 'm', memo: '', owned: false, cover: 'c1', genres: ['a'] }); // 작품 태그는 genres 에
     assert.deepEqual(finalizeGame({ type: 'escaperoom', title: 'e', owned: true, playersMin: 2, brand: 'b' }),
       { type: 'escaperoom', title: 'e', memo: '', owned: false, brand: 'b', branch: '' });
+  });
+
+  test('finalizeGame: 소장한 사람은 보드게임·머미만, 있을 때만 (비우면 빠짐)', () => {
+    assert.deepEqual(finalizeGame({ type: 'boardgame', title: '카탄', owners: ['m1', 'm1', 'bad id', 3] }).owners, ['m1']);
+    assert.deepEqual(finalizeGame({ type: 'murdermystery', title: 'm', owners: ['m2'] }).owners, ['m2']);
+    assert.equal('owners' in finalizeGame({ type: 'boardgame', title: '카탄', owners: [] }), false);
+    assert.equal('owners' in finalizeGame({ type: 'escaperoom', title: 'e', owners: ['m1'] }), false);
   });
 
   test('기록: 게임 연결(gameId) · 결과를 고르지 않으면 실패·0으로 저장하지 않음', () => {
@@ -1004,6 +1018,12 @@ function storageSuite(label, makeRedis) {
       // 같은 이름이 둘이어도 이름을 바꾸지 않는 수정은 됨
       const memoOnly = await post('games', { game: { ...second.body.game, memo: '초판' } });
       assert.equal(memoOnly.statusCode, 200);
+      // 소장한 사람: 저장 · 안 보내면 그대로(예전 앱) · 빈 목록이면 지움
+      const owned = await post('games', { game: { ...memoOnly.body.game, owners: ['m-a', 'm-b'] } });
+      assert.deepEqual(owned.body.game.owners, ['m-a', 'm-b']);
+      const { owners: _o, ...withoutOwners } = owned.body.game;
+      assert.deepEqual((await post('games', { game: { ...withoutOwners, memo: '재판' } })).body.game.owners, ['m-a', 'm-b']);
+      assert.equal('owners' in (await post('games', { game: { ...withoutOwners, owners: [] } })).body.game, false);
       await del('games', second.body.game.id);
       // 종류가 다르면 같은 이름도 됨
       const mm = await post('games', { game: { type: 'murdermystery', title: 'catan' } });

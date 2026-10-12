@@ -1,8 +1,8 @@
-// 소장 — '내 소장'으로 표시한 보드게임·머미를 게임별로 모아 보기 (방탈출 테마는 소장 개념 없음)
+// 소장 — 보드게임·머미를 게임별로 모두 모아 보고, '소장한 사람'(멤버)이나 '내 소장'으로 좁혀 봄 (방탈출 테마는 소장 개념 없음)
 // 게임 등록은 여기서 '내 소장'이 기본으로 선택된 채 열림. 소장 해제는 소장 여부만 바꾸고 게임 정보·기록은 그대로
 import { h, icon, starShape } from '../dom.js';
 import { TYPES } from '../constants.js';
-import { state, isFirstLoad, loadFailed, gameById, gameSummaries } from '../store.js';
+import { state, isFirstLoad, loadFailed, gameById, gameSummaries, membersSorted, memberInfo, getMeId } from '../store.js';
 import { fmtDateDot, todayStr, gameInfoText } from '../format.js';
 import { navigate } from '../nav.js';
 import { segmented, typeBadge, typeName, emptyState, loadingState, loadErrorState, openDialog } from '../ui.js';
@@ -13,8 +13,16 @@ import { gamePageHref, gameWriteHref } from './bits.js';
 
 const KINDS = ['boardgame', 'murdermystery'];
 
-// 화면을 떠났다 돌아와도 고른 종류·정렬 유지
-const view = { type: 'all', sort: 'recent' };
+// 화면을 떠났다 돌아와도 고른 종류·소장한 사람·정렬 유지. owner: '' 모든 게임 · 'mine' 내 소장 · 멤버 id
+const view = { type: 'all', sort: 'recent', owner: '' };
+
+/** 게임의 소장한 사람 (멤버 id) */
+export const ownersOf = (g) => (g && g.game && Array.isArray(g.game.owners) ? g.game.owners : []);
+
+/** '연경, 영식' (없으면 '') */
+export function ownerNames(ids) {
+  return (Array.isArray(ids) ? ids : []).map((id) => memberInfo(id).name).join(', ');
+}
 
 const SORTS = [
   ['recent', '최근 순'],
@@ -60,8 +68,8 @@ export function statText(g) {
     : `아직 안 해 봤어요${addedOn(g) ? ` · ${fmtDateDot(addedOn(g))} 등록` : ''}`;
 }
 
-/** 소장 게임 등록 (내 소장 기본 선택, 계속 등록) */
-export const registerOwned = (type) => openGameEditor(null, { type, context: 'collection' });
+/** 소장 게임 등록 (내 소장 기본 선택, 계속 등록). owners: 미리 고를 소장한 사람 */
+export const registerOwned = (type, owners = null) => openGameEditor(null, { type, context: 'collection', owners });
 
 /** 게임 메뉴: 기록 보기 · 기록 쓰기 · 정보 고치기 · 소장에서 빼기 (등록 전 예전 기록은 '게임으로 등록') */
 async function openGameMenu(g) {
@@ -114,9 +122,10 @@ function gameCard(g) {
     h('div', { class: 'gcard-thumb', 'aria-hidden': 'true' },
       photo || h('span', { class: 'rcard-noimg' }, icon(t.icon))),
     h('div', { class: 'gcard-body' },
-      h('div', { class: 'gcard-top' }, typeBadge(g.type)),
+      h('div', { class: 'gcard-top' }, typeBadge(g.type), g.owned ? h('span', { class: 'rbadge rbadge-own', text: '내 소장' }) : null),
       h('h3', { class: 'gcard-title' }, main),
       info ? h('p', { class: 'gcard-info', text: info }) : null,
+      ownersOf(g).length ? h('p', { class: 'gcard-owners' }, icon('users'), h('span', { text: ownerNames(ownersOf(g)) })) : null,
       h('p', { class: 'gcard-meta' },
         g.plays
           ? [h('span', { class: 'gcard-plays', text: `${g.plays}번 했어요` }), h('span', { class: 'gcard-last', text: `최근 ${fmtDateDot(g.lastDate)}` })]
@@ -126,7 +135,8 @@ function gameCard(g) {
 }
 
 export function mount(root, ctx) {
-  const register = () => registerOwned(view.type === 'all' ? undefined : view.type);
+  const ownerSel = () => (view.owner && view.owner !== 'mine' ? [view.owner] : null);
+  const register = () => registerOwned(view.type === 'all' ? undefined : view.type, ownerSel());
   const seg = segmented({
     label: '종류', value: view.type, cls: 'seg-type',
     options: [{ key: 'all', label: '전체' }, ...KINDS.map((k) => ({ key: k, label: typeName(k), cls: TYPES[k].cls }))],
@@ -135,6 +145,8 @@ export function mount(root, ctx) {
   const sortSel = h('select', { class: 'select select-sm', 'aria-label': '정렬' },
     SORTS.map(([v, l]) => h('option', { value: v, selected: view.sort === v }, l)));
   sortSel.addEventListener('change', () => { view.sort = sortSel.value; paint(); });
+  // 소장한 사람: 모든 게임 · 내 소장 · 멤버 (하나만 고름)
+  const owners = h('div', { class: 'chips coll-owners', role: 'group', 'aria-label': '소장한 사람' });
   const count = h('p', { class: 'list-count', 'aria-live': 'polite' });
   const tools = h('div', { class: 'list-tools-row' }, count, h('div', { class: 'list-tools-right' }, sortSel));
   const results = h('div', { class: 'coll-results' });
@@ -142,32 +154,56 @@ export function mount(root, ctx) {
     icon('plus'), h('span', { class: 'head-label', text: '게임 등록' }));
   const page = h('div', { class: 'page page-collection' },
     h('header', { class: 'page-head' }, h('h1', { class: 'page-title', text: '소장' }), h('div', { class: 'head-actions' }, addBtn, meChip())),
-    seg, tools, results);
+    seg, owners, tools, results);
 
-  // 종류·정렬을 바꿔도 고르던 칸에 초점이 남도록 아래 결과만 다시 그림
+  function paintOwners(all) {
+    // 소장한 게임이 있는 멤버 + 이 기기의 나 (아직 없어도 골라 볼 수 있게), 떠난 멤버는 빼고
+    const me = getMeId();
+    const has = new Set(all.flatMap(ownersOf));
+    const mems = membersSorted().filter((m) => has.has(m.id) || m.id === me);
+    if (view.owner && view.owner !== 'mine' && !mems.some((m) => m.id === view.owner)) view.owner = '';
+    const btn = (key, label, extra = {}) => h('button', {
+      type: 'button', class: ['chip', 'chip-sm', extra.cls], 'aria-pressed': view.owner === key ? 'true' : 'false', dataset: extra.data,
+      onClick: () => { view.owner = key; paint(); },
+    }, h('span', { class: 'chip-label', text: label }));
+    owners.replaceChildren(
+      btn('', '모든 게임'),
+      all.some((e) => e.owned) ? btn('mine', '내 소장') : null,
+      ...mems.map((m) => btn(m.id, m.name, { cls: 'chip-member', data: { memberId: m.id } })));
+  }
+
+  // 종류·소장한 사람·정렬을 바꿔도 고르던 칸에 초점이 남도록 아래 결과만 다시 그림
   function paint() {
     const waiting = !state.records.length && !state.games.length && (isFirstLoad() || loadFailed());
     seg.hidden = waiting;
+    owners.hidden = waiting;
     tools.hidden = waiting;
     addBtn.hidden = waiting;
     if (waiting) {
       results.replaceChildren(isFirstLoad() ? loadingState() : loadErrorState(ctx && ctx.refresh));
       return;
     }
-    const owned = gameSummaries().filter((e) => e.owned && KINDS.includes(e.type));
-    const shown = sorted(view.type === 'all' ? owned : owned.filter((g) => g.type === view.type));
-    count.textContent = `${view.type === 'all' ? '내 소장' : TYPES[view.type].label} ${shown.length}개`;
+    // 소장 여부와 상관없이 보드게임·머미를 모두 (등록한 게임 + 아직 등록하지 않은 예전 기록 이름)
+    const all = gameSummaries().filter((e) => KINDS.includes(e.type));
+    paintOwners(all);
+    const byOwner = view.owner === 'mine' ? all.filter((e) => e.owned)
+      : view.owner ? all.filter((e) => ownersOf(e).includes(view.owner)) : all;
+    const shown = sorted(view.type === 'all' ? byOwner : byOwner.filter((g) => g.type === view.type));
+    const scope = view.owner === 'mine' ? '내 소장' : view.owner ? `${memberInfo(view.owner).name} 소장` : '모든 게임';
+    count.textContent = `${scope}${view.type === 'all' ? '' : ` · ${TYPES[view.type].label}`} ${shown.length}개`;
 
     const addAction = (label) => h('button', { type: 'button', class: 'btn btn-primary', onClick: register }, icon('plus'), h('span', { text: label }));
     let body;
-    if (!owned.length) {
+    if (!all.length) {
       body = emptyState({
-        icon: 'box', title: '아직 소장한 게임이 없어요',
+        icon: 'box', title: '아직 등록한 게임이 없어요',
         text: '가지고 있는 게임을 등록해 두면 기록할 때 바로 골라 쓸 수 있어요.',
         action: addAction('게임 등록'),
       });
     } else if (!shown.length) {
-      body = emptyState({ icon: 'box', title: '이 종류는 소장한 게임이 없어요', text: '가지고 있는 게임을 등록하거나 다른 종류를 골라 보세요.', action: addAction('게임 등록') });
+      body = view.owner && view.owner !== 'mine'
+        ? emptyState({ icon: 'box', title: `${memberInfo(view.owner).name} 님이 소장한 게임이 없어요`, text: '게임 정보의 ‘소장한 사람’에서 고르거나, 지금 바로 등록해 보세요.', action: addAction('게임 등록') })
+        : emptyState({ icon: 'box', title: '이 조건에 맞는 게임이 없어요', text: '다른 종류나 ‘모든 게임’을 골라 보세요.', action: addAction('게임 등록') });
     } else {
       body = h('ul', { class: 'glist' }, shown.map(gameCard));
     }

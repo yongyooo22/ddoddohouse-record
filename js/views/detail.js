@@ -7,7 +7,7 @@ import { participants, bgResultRows, myBgResult, bgWinners, titleKey } from '../
 import { fmtDate, fmtMinutes, fmtRemaining, fmtDateTime, gameInfoText } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
-import { appBar, typeBadge, starsView, stamp, scoreBars, spoilerBlock, confirmDialog, toast, emptyState, loadingState, loadErrorState, moreMenu } from '../ui.js';
+import { appBar, typeBadge, starsView, stamp, scoreBars, spoilerBlock, revealGroup, confirmDialog, toast, emptyState, loadingState, loadErrorState, moreMenu } from '../ui.js';
 import { ordinalLabel, bgOf, mmOf, erOf, spoilerKey, ownershipText, gamePageHref, gameWriteHref } from './bits.js';
 import { gallery, closeViewer } from './photos.js';
 import { gameThumb, openGameEditor } from './game-form.js';
@@ -154,11 +154,12 @@ function headResult(r) {
 
 // ── 플레이 결과 (오른쪽 단) ──
 
-function resultsCard(title, n, ...children) {
+function resultsCard(title, n, children, { action = null } = {}) {
   return h('section', { class: 'card dres' },
     h('div', { class: 'dres-head' },
       h('h2', { class: 'dres-title', text: title }),
-      n ? h('span', { class: 'dres-sub', text: `${n}명` }) : null),
+      n ? h('span', { class: 'dres-sub', text: `${n}명` }) : null,
+      action),
     children);
 }
 
@@ -177,16 +178,16 @@ function bgResults(r) {
     const outcome = bg.coopWin === true ? stamp('협력 승리', 'win', { tilt: false })
       : bg.coopWin === false ? stamp('협력 패배', 'fail', { tilt: false })
       : h('span', { class: 'dres-pending', text: '결과 미입력' });
-    return resultsCard('플레이 결과', ids.length, h('div', { class: 'dres-outcome' }, outcome), ids.length ? peopleRows(ids) : noPeople());
+    return resultsCard('플레이 결과', ids.length, [h('div', { class: 'dres-outcome' }, outcome), ids.length ? peopleRows(ids) : noPeople()]);
   }
   const rows = bgResultRows(r);
-  if (!rows.length) return resultsCard('플레이 결과', 0, noPeople());
+  if (!rows.length) return resultsCard('플레이 결과', 0, [noPeople()]);
   const any = rows.some((x) => x.hasResult);
   const ranked = rows.some((x) => x.rank !== null);
   const team = bg.mode === 'team';
   const shared = bgWinners(r).size > 1;
   const winText = team ? '승리' : shared ? '공동 우승' : '우승';
-  return resultsCard(team ? '팀전 결과' : '플레이 결과', rows.length,
+  return resultsCard(team ? '팀전 결과' : '플레이 결과', rows.length, [
     any ? null : h('div', { class: 'dres-outcome' }, h('span', { class: 'dres-pending', text: '결과 미입력' })),
     h('ol', { class: `dres-list${ranked ? ' has-ranks' : any ? ' has-results' : ''}` }, rows.map((x) => {
       const me = x.memberId === getMeId();
@@ -198,7 +199,7 @@ function bgResults(r) {
         memberLink(x.memberId),
         x.winner ? h('span', { class: 'rank-win' }, icon('crown'), h('span', { text: winText })) : null,
         any ? h('span', { class: `rank-score${x.hasResult ? '' : ' is-blank'}`, text: x.score !== null ? `${x.score}점` : x.hasResult ? '' : '결과 없음' }) : null);
-    })));
+    }))]);
 }
 
 function erResults(r) {
@@ -209,17 +210,18 @@ function erResults(r) {
   const outcome = er.cleared === true ? stamp('탈출 성공', 'clear', { tilt: false })
     : er.cleared === false ? stamp('탈출 실패', 'fail', { tilt: false })
     : h('span', { class: 'dres-pending', text: '결과 미입력' });
-  return resultsCard('플레이 결과', ids.length,
+  return resultsCard('플레이 결과', ids.length, [
     h('div', { class: 'dres-outcome' }, outcome,
       remain || hasHints ? h('div', { class: 'er-nums' },
         h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: remain || '–' }), h('span', { class: 'er-num-l', text: '남은 시간' })),
         h('div', { class: 'er-num' }, h('span', { class: 'er-num-v', text: hasHints ? String(Number(er.hints)) : '–' }), h('span', { class: 'er-num-l', text: '힌트' }))) : null),
-    ids.length ? peopleRows(ids) : noPeople());
+    ids.length ? peopleRows(ids) : noPeople()]);
 }
 
 /**
- * 머더미스터리: 함께한 사람 이름은 보이고, 누가 어떤 역할·범인이었는지와 범인 검거·도주(결말)는
- * 작품 스포일러라 늘 접어 두고 ‘보기’를 눌렀을 때만 펼침 (펼친 상태는 이 실행 동안 기억)
+ * 머더미스터리: 함께한 사람마다 한 줄 — 이름 오른쪽에 맡은 역할(범인·승패·MVP 표시 포함).
+ * 누가 어떤 역할·범인이었는지와 범인 검거·도주(결말)는 작품 스포일러라, 이름은 보이고 역할 칸만
+ * 늘 가려 두었다가 위의 ‘범인·역할 보기’를 눌렀을 때 한꺼번에 펼침 (펼친 상태는 이 실행 동안 기억)
  */
 function mmResults(r) {
   const mm = mmOf(r);
@@ -228,24 +230,30 @@ function mmResults(r) {
   const byId = new Map(roles.map((x) => [x.memberId, x]));
   const culprit = mm.culpritResult === 'caught' ? stamp('범인 검거', 'caught', { tilt: false })
     : mm.culpritResult === 'escaped' ? stamp('범인 도주', 'escaped', { tilt: false }) : null;
-  const secretRoles = roles.filter((x) => x.culprit || x.character || x.outcome || x.mvp);
-  const row = (x) => {
-    const oc = MM_OUTCOMES.find((o) => o.key === x.outcome);
-    return h('li', { class: `role-row${x.culprit ? ' is-culprit' : ''}${x.memberId === getMeId() ? ' is-me' : ''}`, 'data-member-id': x.memberId },
-      memberLink(x.memberId),
-      x.character ? h('span', { class: 'role-char', text: x.character }) : null,
-      h('span', { class: 'role-flags' },
-        x.culprit ? stamp('범인', 'culprit', { tilt: false }) : null,
+  const hasRole = (x) => !!x && !!(x.culprit || x.character || x.outcome || x.mvp);
+  const anyRole = ids.some((id) => hasRole(byId.get(id)));
+  const cells = [];
+  const row = (id) => {
+    const x = byId.get(id);
+    let cell = null;
+    if (anyRole) {
+      const oc = x && MM_OUTCOMES.find((o) => o.key === x.outcome);
+      cell = h('span', { class: 'role-cell' },
+        x && x.character ? h('span', { class: 'role-char', text: x.character }) : null,
+        x && x.culprit ? stamp('범인', 'culprit', { tilt: false }) : null,
         oc ? h('span', { class: `outcome outcome-${oc.key}`, text: oc.label }) : null,
-        x.mvp ? h('span', { class: 'mvp' }, icon('crown'), h('span', { text: 'MVP' })) : null));
+        x && x.mvp ? h('span', { class: 'mvp' }, icon('crown'), h('span', { text: 'MVP' })) : null);
+      cells.push(cell);
+    }
+    return h('li', { class: ['dres-row', 'mm-row', id === getMeId() ? 'is-me' : '', x && x.culprit ? 'is-culprit' : ''], 'data-member-id': id },
+      memberLink(id), cell);
   };
-  const secret = culprit || secretRoles.length
-    ? spoilerBlock(h('div', { class: 'mm-secret' },
-      culprit ? h('div', { class: 'dres-outcome' }, culprit) : null,
-      secretRoles.length ? h('ul', { class: 'roles' }, ids.filter((id) => byId.has(id) && secretRoles.includes(byId.get(id))).map((id) => row(byId.get(id)))) : null),
-    { label: secretRoles.some((x) => x.culprit) || culprit ? '범인·역할 보기' : '역할 보기', key: spoilerKey(r, 'roles') })
-    : null;
-  return resultsCard('함께한 멤버', ids.length, ids.length ? peopleRows(ids) : noPeople(), secret);
+  const culpritLine = culprit ? h('div', { class: 'dres-outcome mm-culprit' }, culprit) : null;
+  const list = ids.length ? h('ul', { class: `dres-list${anyRole ? ' has-roles' : ''}` }, ids.map(row)) : noPeople();
+  const reveal = revealGroup([culpritLine, ...cells], {
+    label: roles.some((x) => x.culprit) || culprit ? '범인·역할 보기' : '역할 보기', key: spoilerKey(r, 'roles'),
+  });
+  return resultsCard('함께한 멤버', ids.length, [culpritLine, list], { action: reveal });
 }
 
 function resultsOf(r) {
