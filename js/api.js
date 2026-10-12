@@ -21,7 +21,7 @@ export function newId() {
 }
 
 let errorHook = null;
-/** 401/429/503 등 전역 처리용 훅 등록 */
+/** 401 등 전역 처리용 훅 등록 (HTTP 오류 응답마다 호출) */
 export function onApiError(fn) { errorHook = fn; }
 
 /** HTTP 헤더에 넣을 수 있는 키인지 (눈에 보이는 ASCII만) */

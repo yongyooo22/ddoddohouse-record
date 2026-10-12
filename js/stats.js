@@ -108,7 +108,7 @@ export function bgWinners(record) {
  * 보드게임 결과가 기록된 판인지 (승률의 분모).
  * 협력: 승리/패배를 골랐을 때. 경쟁·팀전: 승자가 한 명이라도 표시됐을 때. '미기록'은 패배로 세지 않는다.
  */
-export function bgDecided(record) {
+function bgDecided(record) {
   const bg = obj(obj(record).bg);
   if (bg.mode === 'coop') return typeof bg.coopWin === 'boolean';
   return arr(bg.results).some((x) => obj(x).winner === true);
@@ -170,7 +170,7 @@ export function lenderOf(record) {
 }
 
 /** 머미 기록에서 해당 멤버의 배역 (없으면 null) */
-export function mmRoleOf(record, memberId) {
+function mmRoleOf(record, memberId) {
   return arr(obj(obj(record).mm).roles).find((x) => obj(x).memberId === memberId) || null;
 }
 
@@ -733,7 +733,7 @@ function cleanTitle(s) {
 // ── 사진 저장 공간 ──────────────────────────────────────────
 
 /** 이만큼 차면 미리 알림 */
-export const STORAGE_WARN_RATIO = 0.8;
+const STORAGE_WARN_RATIO = 0.8;
 
 /**
  * 사진 저장 공간 사용량 (서버 /api/images?stats=1 응답: count·bytes·limitCount·limitBytes).

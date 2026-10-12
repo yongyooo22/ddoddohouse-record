@@ -13,7 +13,7 @@ export function yesterdayStr(d = new Date()) {
 }
 
 /** 새 기록의 기본 날짜: 새벽(0~5시)에 쓰면 보통 전날 밤 모임이므로 어제 */
-export const LATE_NIGHT_UNTIL = 5;
+const LATE_NIGHT_UNTIL = 5;
 export function defaultRecordDate(d = new Date()) {
   return d.getHours() < LATE_NIGHT_UNTIL ? yesterdayStr(d) : todayStr(d);
 }
@@ -70,11 +70,6 @@ export function fmtMinutes(min) {
   return `${mm}분`;
 }
 
-export function fmtScore(n) {
-  const v = Number(n) || 0;
-  return Number.isInteger(v) ? `${v}.0` : v.toFixed(1);
-}
-
 export function fmtAvg(n, digits = 1) {
   if (n === null || n === undefined || !Number.isFinite(Number(n))) return '–';
   return Number(n).toFixed(digits);
@@ -115,19 +110,6 @@ export function codePoints(str) {
   return Array.from(String(str || ''));
 }
 
-export function clampInt(v, min, max) {
-  if (v === '' || v === null || v === undefined) return null;
-  const n = Math.round(Number(v));
-  if (!Number.isFinite(n)) return null;
-  return Math.min(max, Math.max(min, n));
-}
-
-export function numOrNull(v) {
-  if (v === '' || v === null || v === undefined) return null;
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-}
-
 export function dateStamp(d = new Date()) {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
 }
@@ -144,7 +126,7 @@ export function fmtBytes(n) {
 }
 
 /** 인원 범위: 2~4 → '2~4명', 2~2 → '2명', 없음 → '' */
-export function fmtPlayers(min, max) {
+function fmtPlayers(min, max) {
   const a = Number.isInteger(min) ? min : null;
   const b = Number.isInteger(max) ? max : a;
   const lo = a ?? b;
@@ -153,7 +135,7 @@ export function fmtPlayers(min, max) {
 }
 
 /** 예상 시간 범위(분): 60~90 → '60~90분', 60 → '60분', 없음 → '' */
-export function fmtTimeRange(min, max) {
+function fmtTimeRange(min, max) {
   const a = Number.isInteger(min) ? min : null;
   const b = Number.isInteger(max) ? max : a;
   const lo = a ?? b;
