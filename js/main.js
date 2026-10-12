@@ -138,15 +138,13 @@ function start() {
   if (!verifying) refresh().catch(() => {});
 }
 
-// 401/429/503 전역 처리
+// 401 전역 처리 (429 는 요청한 쪽이 알림 — 띠·토스트가 두 번 뜨지 않게. 사진 불러오기는 images.js 가 알림)
 api.onApiError((err) => {
   if (err.code === 'unauthorized') {
     store.forgetAccess();
     started = false;
     clearHttpImageCache(); // 이 기기 브라우저 캐시에 남은 사진도 (다음 사람이 못 보게)
     lock('코드가 바뀌었거나 맞지 않아요. 새로 공유받은 링크로 들어와 주세요.');
-  } else if (err.code === 'too_many_attempts') {
-    toast('시도가 너무 많아요. 15분쯤 뒤에 다시 해 주세요', 'error', 4500);
   }
 });
 
@@ -273,7 +271,8 @@ window.addEventListener('hashchange', route);
 store.subscribe((kind) => {
   if (currentName === 'lock') return;
   if (kind === 'status') renderBanner();
-  if (current && current.update && (kind === 'data' || currentName === 'settings' || (kind === 'status' && !store.state.lastSync))) {
+  // 'me': 이 기기의 나가 바뀌면 '나' 배지·내 결과·내 승률 같은 부분도 바로 바뀌게 지금 화면을 다시 그림
+  if (current && current.update && (kind === 'data' || kind === 'me' || currentName === 'settings' || (kind === 'status' && !store.state.lastSync))) {
     try { current.update(); } catch (e) { console.error(e); }
   }
 });

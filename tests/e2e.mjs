@@ -1654,6 +1654,22 @@ await step('나 버튼 (.me-chip): 다섯 화면 오른쪽 위 · 고르기 · �
   await page.setViewportSize(VIEWPORT);
   await sleep(150);
 
+  // 나 버튼으로 고르면 그 화면도 바로 바뀜 (화면을 옮기지 않아도 멤버 목록의 '나' 배지가 붙고 떨어짐)
+  await tab('members', '.page-members');
+  check('멤버 목록: 나가 없으면 ‘나’ 배지 없음', (await page.$$('.page-members .mlist-row .me-badge')).length === 0);
+  await page.click('.me-chip');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await page.click(`${dlg}.dlg-me .me-pick-row[data-member-id="${ys}"]`);
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  check('멤버 목록: 나 버튼으로 영식을 고르면 화면을 옮기지 않아도 영식 줄에 ‘나’ 배지',
+    !!(await until(async () => (await page.$$eval('.page-members .mlist-row', (els) => els.filter((e) => e.querySelector('.me-badge')).map((e) => e.getAttribute('href')))).join() === `#/member/${encodeURIComponent(ys)}`)),
+    JSON.stringify(await page.$$eval('.page-members .mlist-row', (els) => els.filter((e) => e.querySelector('.me-badge')).map((e) => e.getAttribute('href')))));
+  await page.click('.me-chip');
+  await page.waitForSelector(`${dlg}.dlg-me`);
+  await dialogButton('나 해제');
+  await page.waitForSelector(`${dlg}.dlg-me`, { state: 'detached', timeout: 5000 });
+  check('멤버 목록: 나 해제도 바로 반영 (배지 사라짐)', !!(await until(async () => (await page.$$('.page-members .mlist-row .me-badge')).length === 0 && (await chipText()) === '나 고르기')));
+
   // 누르면 나 고르기 창 → 영식 고름
   await tab('home', '.page-home');
   await page.click('.me-chip');

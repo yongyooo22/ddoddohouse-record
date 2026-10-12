@@ -3,6 +3,7 @@
 import { h, icon } from './dom.js';
 import { getKey, state, subscribe } from './store.js';
 import * as api from './api.js';
+import { toast } from './ui.js';
 
 const MAX_CACHED = 150;
 const cache = new Map();    // `${id}:${size}` → objectURL (Map 순서 = 오래 안 쓴 순)
@@ -95,7 +96,7 @@ function put(key, blob) {
 }
 
 /** 이미 받아 둔 사진이면 바로 objectURL (없으면 null) */
-export function peekImage(id, size = 't') {
+function peekImage(id, size = 't') {
   checkOwner();
   const key = `${id}:${size}`;
   const url = cache.get(key);
@@ -130,6 +131,7 @@ export function loadImage(id, size = 't') {
       return put(key, blob);
     } catch (e) {
       if (e && e.code === 'not_found' && myGen === gen) missing.add(key);
+      if (e && e.code === 'too_many_attempts') toast(api.errorMessage(e), 'error', 4500);
       throw e;
     } finally {
       release();
@@ -153,8 +155,6 @@ export async function existingPhotos(ids) {
   }
   return out;
 }
-
-export const isMissing = (id, size = 't') => missing.has(`${id}:${size}`);
 
 // ── 화면에 가까워지면 불러오기 ──
 let io = null;

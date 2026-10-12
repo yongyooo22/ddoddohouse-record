@@ -203,11 +203,6 @@ export function typeName(type, fit = 'snug') {
   return h('span', { class: `tn tn-${fit}`, dataset: { short: t.short } }, h('span', { class: 'tn-full', text: t.label }));
 }
 
-export function typeIcon(type, cls = '') {
-  const t = TYPES[type];
-  return h('span', { class: `type-ico ${t ? t.cls : ''} ${cls}`, 'aria-hidden': 'true' }, icon(t ? t.icon : 'book'));
-}
-
 // ── 도장 ──
 export function stamp(text, kind = 'ink', { tilt = true } = {}) {
   return h('span', { class: `stamp stamp-${kind}${tilt ? '' : ' stamp-flat'}` }, text);

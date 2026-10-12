@@ -13,6 +13,14 @@ const OWNABLE = ['boardgame', 'murdermystery'];
 // 소장 탭에서 마지막으로 고른 종류 (이어서 여러 개 넣을 때 다시 고르지 않게)
 let lastCollectionType = 'boardgame';
 
+/** 소장 표시를 바꿀 때 '소장한 사람'의 나도 함께 맞춤 (창의 체크박스와 같은 규칙). 나를 모르면 그대로(undefined = 안 보냄) */
+function ownersWithMe(game, owned) {
+  const meId = getMeId();
+  if (!meId) return undefined;
+  const cur = Array.isArray(game.owners) ? game.owners : [];
+  return owned ? [...new Set([...cur, meId])] : cur.filter((x) => x !== meId);
+}
+
 /** 게임 썸네일 (대표 이미지 또는 종류 아이콘) */
 export function gameThumb(g, cls = 'gthumb') {
   const t = TYPES[g && g.type] || TYPES.boardgame;
@@ -220,7 +228,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
 
   async function markOwned(g) {
     try {
-      const res = await api.saveGame({ id: g.id, type: g.type, title: g.title, memo: g.memo || '', owned: true });
+      const res = await api.saveGame({ id: g.id, type: g.type, title: g.title, memo: g.memo || '', owned: true, owners: ownersWithMe(g, true) });
       upsertGame(res.game);
       result = { game: res.game, existing: true };
       toast(`‘${res.game.title}’ 내 소장으로 표시했어요`, 'ok');
@@ -401,7 +409,7 @@ export async function setOwned(game, owned) {
     if (!ok) return false;
   }
   try {
-    const res = await api.saveGame({ id: game.id, type: game.type, title: game.title, memo: game.memo || '', owned });
+    const res = await api.saveGame({ id: game.id, type: game.type, title: game.title, memo: game.memo || '', owned, owners: ownersWithMe(game, owned) });
     upsertGame(res.game);
     toast(owned ? `‘${res.game.title}’ 내 소장으로 표시했어요` : '소장에서 뺐어요. 게임 정보와 기록은 그대로예요', 'ok', 3500);
     return true;

@@ -23,8 +23,6 @@ export const TYPES = {
   },
 };
 
-export const typeOf = (key) => TYPES[key] || null;
-
 // 머더미스터리 작품 태그 추천 (게임 정보에 저장, # 없이)
 export const TAG_SUGGESTIONS = {
   murdermystery: ['추리중심', 'RP중심', '감성', '반전', '호러', '코믹', '피폐', '잔혹', '성인', '입문추천', '고인물용', '밸런스좋음'],
@@ -79,11 +77,6 @@ export const OWNERSHIPS = [
   { key: 'borrowed', label: '대여' },
 ];
 
-export const CULPRIT_RESULTS = [
-  { key: 'caught', label: '검거 성공' },
-  { key: 'escaped', label: '범인 도주' },
-];
-
 // 멤버 팔레트 (실제 색은 CSS 변수 --m-c1 … --m-c10, 라이트/다크 각각 정의)
 export const PALETTE = [
   { key: 'c1', label: '장미' },
@@ -97,7 +90,6 @@ export const PALETTE = [
   { key: 'c9', label: '분홍' },
   { key: 'c10', label: '모카' },
 ];
-export const PALETTE_KEYS = PALETTE.map((p) => p.key);
 
 export const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 

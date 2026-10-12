@@ -3,13 +3,13 @@ import { STORAGE } from './constants.js';
 import { escapeRoomOrdinals, participants, resolveGameIds, gameEntries, isOwnedGame } from './stats.js';
 
 // ── localStorage 안전 래퍼 (사생활 보호 모드 등에서 throw 가능) ──
-export function lsGet(k) {
+function lsGet(k) {
   try { return localStorage.getItem(k); } catch { return null; }
 }
-export function lsSet(k, v) {
+function lsSet(k, v) {
   try { localStorage.setItem(k, v); return true; } catch { return false; }
 }
-export function lsRemove(k) {
+function lsRemove(k) {
   try { localStorage.removeItem(k); } catch { /* 무시 */ }
 }
 function lsGetJSON(k) {
@@ -21,7 +21,7 @@ function lsGetJSON(k) {
 // ── 키 ──
 export const getKey = () => lsGet(STORAGE.key) || '';
 export const setKey = (k) => lsSet(STORAGE.key, k);
-export const clearKey = () => lsRemove(STORAGE.key);
+const clearKey = () => lsRemove(STORAGE.key);
 
 // ── 나 (이 기기에서 기록하는 사람) — 기기마다 따로 저장. 멤버가 없어졌으면 없는 것으로 ──
 export const getMeId = () => {
@@ -60,7 +60,7 @@ export function setDraft(d) {
   lsRemove(STORAGE.cache);
   return lsSet(STORAGE.draft, raw);
 }
-export const clearDraft = () => lsRemove(STORAGE.draft);
+const clearDraft = () => lsRemove(STORAGE.draft);
 /** 지정한 초안일 때만 지움 (다른 기록의 초안을 실수로 날리지 않도록) */
 export function clearDraftIf(match) {
   const d = getDraft();
@@ -293,7 +293,7 @@ function cached(name, fn) {
   return memo[name];
 }
 
-export function memberMap() {
+function memberMap() {
   return cached('memberMap', () => new Map(state.members.map((m) => [m.id, m])));
 }
 
@@ -330,7 +330,7 @@ export function erOrdinals() {
 
 // ── 게임 정보 ──
 
-export function gameMap() {
+function gameMap() {
   return cached('gameMap', () => new Map(state.games.map((g) => [g.id, g])));
 }
 
@@ -365,10 +365,6 @@ export function recordsOfGame(gameId) {
 /** 게임별 요약 (등록한 게임 + 기록에만 있는 이름) — stats.gameEntries */
 export function gameSummaries() {
   return cached('gameSummaries', () => gameEntries(state.records, state.games));
-}
-
-export function gameSummary(gameId) {
-  return gameSummaries().find((e) => e.gameId === gameId) || null;
 }
 
 /** 종류의 게임 정보 (최근에 한 것·최근에 등록한 것 먼저) */
