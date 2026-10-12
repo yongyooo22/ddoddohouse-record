@@ -452,7 +452,6 @@ body.is-loading .loadbar { opacity: 1; }
 .chip .ico { width: 16px; height: 16px; }
 .chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
-.chip-member { padding-left: 4px; }
 .chip-member.is-gone { font-style: italic; }
 .chip-culprit[aria-pressed="true"] { background: var(--st-culprit); border-color: var(--st-culprit); color: var(--on-tc); }
 .chip-mvp[aria-pressed="true"] { background: var(--st-win); border-color: var(--st-win); color: var(--on-tc); }
@@ -764,7 +763,7 @@ a.sum-link:focus-visible { outline-offset: -3px; }
 .otiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 10px; margin: 0; padding: 0; list-style: none; }
 .otile { min-width: 0; }
 .otile-link { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: inherit; text-decoration: none; border-radius: 12px; }
-.otile-cover { display: grid; place-items: center; aspect-ratio: 1; margin-bottom: 4px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--stage); }
+.otile-cover { position: relative; display: grid; place-items: center; aspect-ratio: 1; margin-bottom: 4px; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--stage); }
 .otile-cover .rcard-photo { width: 100%; height: 100%; }
 .otile-name { display: -webkit-box; overflow: hidden; font-size: 13.5px; font-weight: 700; letter-spacing: -.02em; line-height: 1.35; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .otile-sub { color: var(--ink-3); font-size: 12px; }
@@ -865,6 +864,18 @@ a.sum-link:focus-visible { outline-offset: -3px; }
 .gcard-info { overflow: hidden; color: var(--ink-2); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .gmenu-meta { margin-top: -4px; color: var(--ink-2); font-size: 13.5px; }
 .gcard-memo { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 12.5px; }
+.gcard-top { align-items: center; gap: 6px; }
+.gcard-top .rbadge { margin-left: 0; }
+/* 소장한 사람: 작은 사람 아이콘 + 이름 */
+.gcard-owners, .ghero-owners { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--ink-2); font-size: 12.5px; font-weight: 600; }
+.gcard-owners span, .ghero-owners span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gcard-owners .ico, .ghero-owners .ico { width: 14px; height: 14px; color: var(--ink-3); }
+.ghero-owners { font-size: 13.5px; }
+/* 소장 탭: 소장한 사람 고르기 (모든 게임 · 내 소장 · 멤버) — 휴대폰에서는 가로로 밀어서 */
+.coll-owners { flex-wrap: nowrap; gap: 6px; margin: -4px calc(var(--pad-r) * -1) 0 calc(var(--pad-l) * -1); padding: 4px var(--pad-r) 4px var(--pad-l); overflow-x: auto; scrollbar-width: none; }
+.coll-owners::-webkit-scrollbar { display: none; }
+.coll-owners .chip { flex: none; }
+.gf-owners { gap: 6px; }
 .gcard.is-unplayed .gcard-plays { color: var(--ink-3); font-weight: 600; }
 button.card-link { padding: 0; border: 0; background: none; font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
 /* 소장 머리: 휴대폰에서도 '게임 등록' 글자를 함께 */
@@ -995,14 +1006,14 @@ button.card-link { padding: 0; border: 0; background: none; font: inherit; lette
 .dres-list { display: flex; flex-direction: column; margin: 0 -10px; padding: 0; list-style: none; }
 .dres-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 48px; padding: 2px 10px; border-radius: 10px; }
 /* 줄 사이 얇은 선 (모서리가 둥근 '나' 줄 앞뒤는 선 없이) */
-.dres-row + .dres-row::before, .role-row + .role-row::before { content: ""; position: absolute; top: 0; right: 10px; left: 10px; height: 1px; background: var(--line); }
-.dres-row.is-me::before, .dres-row.is-me + .dres-row::before, .role-row.is-me::before, .role-row.is-me + .role-row::before { display: none; }
+.dres-row + .dres-row::before { content: ""; position: absolute; top: 0; right: 10px; left: 10px; height: 1px; background: var(--line); }
+.dres-row.is-me::before, .dres-row.is-me + .dres-row::before { display: none; }
 .dres-list.has-ranks .dres-row { grid-template-columns: 26px minmax(0, 1fr) auto auto; }
 .dres-list.has-results .dres-row { grid-template-columns: minmax(0, 1fr) auto auto; }
 .is-me .me-badge { background: var(--surface); }
 .dhead-norate { color: var(--ink-3); font-size: 14px; font-weight: 600; }
 .dres-row.is-me { background: var(--accent-soft); }
-.dres-row .mrow, .role-row .mrow { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 40px; color: var(--ink); font-weight: 650; text-decoration: none; }
+.dres-row .mrow { display: inline-flex; align-items: center; gap: 6px; min-width: 0; min-height: 40px; color: var(--ink); font-weight: 650; text-decoration: none; }
 .mrow-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mrow .me-badge { flex: none; margin-left: 0; }
 .mrow.is-gone { color: var(--ink-3); font-weight: 500; }
@@ -1012,19 +1023,21 @@ button.card-link { padding: 0; border: 0; background: none; font: inherit; lette
 .rank-win .ico { width: 15px; height: 15px; }
 .rank-score { min-width: 44px; font-weight: 700; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rank-score.is-blank { color: var(--ink-3); font-size: 12.5px; font-weight: 500; }
-.dres .spoiler { margin-top: 8px; min-height: 64px; }
-.mm-secret { display: flex; flex-direction: column; padding-top: 4px; }
+/* 머더미스터리: 이름 오른쪽에 역할 · 범인 · 승패 · MVP (펼치기 전에는 흐리게 가림) */
+.dres-list.has-roles .dres-row { grid-template-columns: minmax(4.5em, auto) minmax(0, 1fr); column-gap: 12px; }
+.role-cell { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 8px; min-width: 0; text-align: right; }
+.role-char { color: var(--ink-2); font-weight: 500; overflow-wrap: anywhere; }
+.role-cell .stamp { padding: 2px 8px 2px 7px; font-size: 11.5px; gap: 5px; }
+.role-cell .stamp::before { width: 5px; height: 5px; }
+.is-secret { filter: blur(6px); user-select: none; -webkit-user-select: none; pointer-events: none; }
+.dres-head .secret-btn { margin-left: auto; }
+.secret-btn { position: relative; display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border: 0; border-radius: 999px; background: var(--ink); color: var(--paper); font: inherit; font-size: 12.5px; font-weight: 700; white-space: nowrap; cursor: pointer; }
+.secret-btn::after { content: ""; position: absolute; inset: -5px 0; } /* 누르는 영역 44px */
+.secret-btn .ico { width: 15px; height: 15px; }
 .er-nums { display: flex; gap: 24px; }
 .er-num { display: flex; flex-direction: column; }
 .er-num-v { font-size: 22px; font-weight: 400; letter-spacing: -.03em; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .er-num-l { color: var(--ink-3); font-size: var(--fs-caption); font-weight: 600; }
-.roles { display: flex; flex-direction: column; margin: 0 -10px; padding: 0; list-style: none; }
-.role-row { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-height: 48px; padding: 4px 10px; border-radius: 10px; }
-.role-row.is-me { background: var(--accent-soft); }
-.role-char { color: var(--ink-2); font-weight: 500; }
-.role-flags { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.role-row .stamp { padding: 2px 8px 2px 7px; font-size: 11.5px; gap: 5px; }
-.role-row .stamp::before { width: 5px; height: 5px; }
 .outcome { padding: 2px 9px; border-radius: 6px; background: var(--surface-3); font-size: 12px; font-weight: 750; }
 .outcome-win { color: var(--st-clear); }
 .outcome-lose { color: var(--st-escaped); }
@@ -1522,6 +1535,8 @@ button.card-link { padding: 0; border: 0; background: none; font: inherit; lette
 
 /* 기록 카드의 대표 사진: 72px 정사각형 안에 원본 비율 그대로 전체가 보이게 */
 .rcard-photo { position: relative; width: 100%; height: 100%; }
+/* 썸네일 칸(격자) 안에서는 칸에 꽉 맞춤 — 그냥 두면 세로 사진이 제 비율(72×96)로 커져 위에 붙고 아래가 잘림 */
+.rcard-thumb > .rcard-photo, .gcard-thumb > .rcard-photo, .otile-cover > .rcard-photo { position: absolute; inset: 0; }
 .rcard-photo .pimg { background: var(--stage); }
 .rcard-photo .pimg img { object-fit: contain; }
 .rcard-pn { position: absolute; right: 4px; bottom: 4px; display: inline-flex; align-items: center; gap: 2px; padding: 0 5px 0 4px; border-radius: 999px; background: rgba(20, 16, 12, .58); color: #FFFFFF; font-size: 10px; font-weight: 700; line-height: 1.6; }
@@ -1741,6 +1756,7 @@ html.vw-open, html.vw-open body { overflow: hidden; }
 
 /* ── 넓은 화면: .view 너비에 따라 2~3단 (container query) ─ */
 @container view (min-width: 640px) {
+  .coll-owners { flex-wrap: wrap; margin: -4px 0 0; padding: 4px 0; overflow: visible; }
   .page { --gap: 20px; }
   .page-title { font-size: 30px; }
   .page-head { padding-top: 28px; }

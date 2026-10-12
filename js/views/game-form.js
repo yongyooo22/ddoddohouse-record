@@ -2,7 +2,7 @@
 // 이름만 필수. 대표 이미지 · 내가 소장한 게임 · (보드게임) 인원·예상 시간·장르 · (방탈출) 매장·지점 · 메모는 선택
 import { h, icon } from '../dom.js';
 import { TYPES, TYPE_KEYS, LIMITS, GENRE_SUGGESTIONS, TAG_SUGGESTIONS } from '../constants.js';
-import { state, upsertGame, removeGame, gamesOfType, isOwnedGame, coverOf, recordsOfGame } from '../store.js';
+import { state, upsertGame, removeGame, gamesOfType, isOwnedGame, coverOf, recordsOfGame, membersSorted, memberInfo, getMeId } from '../store.js';
 import { nameKey, codePoints, gameInfoText } from '../format.js';
 import * as api from '../api.js';
 import { segmented, chip, openDialog, confirmDialog, toast, nextId } from '../ui.js';
@@ -45,9 +45,10 @@ function readInt(el, min, max) {
  * @param {object} opts
  *   type: 처음 고른 종류 · title: 이름 칸에 미리 채울 글자
  *   context: 'collection'(소장 탭: 보드게임·머미만, '내 소장' 기본 선택, 계속 등록) | 'record'(기록 폼: 세 종류, 기본 선택 안 함)
+ *   owners: 새로 등록할 때 미리 고를 '소장한 사람' (소장 탭에서 멤버를 골라 둔 채 열면 그 멤버, 없으면 이 기기의 나)
  * @returns {Promise<{game: object, existing?: boolean}|null>}  저장한(또는 같은 이름 목록에서 고른) 게임
  */
-export async function openGameEditor(game = null, { type: startType, title: startTitle = '', context = 'record' } = {}) {
+export async function openGameEditor(game = null, { type: startType, title: startTitle = '', context = 'record', owners: startOwners = null } = {}) {
   const isNew = !game;
   const inCollection = context === 'collection';
   const kinds = inCollection ? OWNABLE : TYPE_KEYS;
@@ -57,6 +58,10 @@ export async function openGameEditor(game = null, { type: startType, title: star
   const added = [];
   let genres = game && Array.isArray(game.genres) ? [...game.genres] : [];
   let ownedOn = game ? isOwnedGame(game) : inCollection;
+  const meId = getMeId();
+  // 소장한 사람 (멤버 id, 선택): 소장 탭에서 멤버별로 모아 봄
+  let owners = game && Array.isArray(game.owners) ? [...game.owners]
+    : inCollection ? (startOwners || (meId ? [meId] : [])) : [];
   let dupShownFor = null; // 같은 이름 목록을 보여 준 이름 → 그 이름으로 다시 누르면 따로 등록
   let closeDlg = () => {};
 
@@ -130,10 +135,38 @@ export async function openGameEditor(game = null, { type: startType, title: star
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: '지점' }), branchIn));
 
   const ownIn = h('input', { type: 'checkbox', class: 'gf-own-input', checked: ownedOn, id: nextId('gown') });
-  ownIn.addEventListener('change', () => { ownedOn = ownIn.checked; });
+  // 이 기기의 나를 정해 두었으면 '내가 소장한 게임'과 소장한 사람의 '나'를 함께 맞춤
+  ownIn.addEventListener('change', () => {
+    ownedOn = ownIn.checked;
+    if (meId && ownedOn !== owners.includes(meId)) { owners = ownedOn ? [...owners, meId] : owners.filter((x) => x !== meId); paintOwners(); }
+  });
   const ownRow = h('label', { class: 'gf-own', htmlFor: ownIn.id }, ownIn,
     h('span', { class: 'gf-own-text' }, h('span', { class: 'gf-own-label', text: '내가 소장한 게임' }),
-      h('span', { class: 'gf-own-desc', text: '소장 탭에 보여요' })));
+      h('span', { class: 'gf-own-desc', text: '‘내 소장’으로 표시 · 홈의 내 소장 게임에 보여요' })));
+  const ownerChips = h('div', { class: 'chips gf-owners', role: 'group', 'aria-label': '소장한 사람' });
+  function paintOwners() {
+    const mems = membersSorted();
+    const known = new Set(mems.map((m) => m.id));
+    const gone = owners.filter((id) => !known.has(id)); // 떠난 멤버도 지울 수 있게 보여 줌
+    const one = (id, name) => {
+      const c = chip({
+        label: name, pressed: owners.includes(id), cls: 'chip-member chip-sm',
+        onToggle: (on) => {
+          owners = on ? [...owners, id] : owners.filter((x) => x !== id);
+          if (id === meId && ownedOn !== on) { ownedOn = on; ownIn.checked = on; }
+          return true;
+        },
+      });
+      c.dataset.memberId = id;
+      return c;
+    };
+    ownerChips.replaceChildren(...mems.map((m) => one(m.id, m.name)), ...gone.map((id) => one(id, memberInfo(id).name)));
+  }
+  paintOwners();
+  const ownersBox = h('div', { class: 'field gf-owners-box' },
+    h('span', { class: 'field-label', text: '소장한 사람 (선택)' }),
+    state.members.length ? ownerChips : h('p', { class: 'field-hint', text: '멤버를 등록하면 누가 가진 게임인지 고를 수 있어요' }),
+    h('p', { class: 'field-hint', text: '소장 탭에서 멤버를 고르면 그 사람이 가진 게임만 모아 봐요' }));
 
   const memoIn = h('input', {
     type: 'text', class: 'input', maxlength: String(LIMITS.gameMemo), value: game ? game.memo || '' : '',
@@ -153,6 +186,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     paintGenres();
     erBox.hidden = type !== 'escaperoom';
     ownRow.hidden = !OWNABLE.includes(type); // 방탈출 테마에는 소장 여부 없음
+    ownersBox.hidden = !OWNABLE.includes(type);
     paintDup();
   }
 
@@ -221,7 +255,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     if (codePoints(title).length > LIMITS.title) return fail(`이름은 ${LIMITS.title}자까지예요`);
     if (codePoints(memo).length > LIMITS.gameMemo) return fail(`메모는 ${LIMITS.gameMemo}자까지예요`, memoIn);
     const payload = { ...(game ? { id: game.id } : {}), type, title, memo };
-    if (OWNABLE.includes(type)) payload.owned = ownedOn;
+    if (OWNABLE.includes(type)) { payload.owned = ownedOn; payload.owners = owners; }
     if (type !== 'escaperoom' && !addGenre()) return false;
     if (type === 'murdermystery') {
       payload.genres = genres;
@@ -305,6 +339,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     genreBox,
     erBox,
     ownRow,
+    ownersBox,
     h('div', { class: 'field' }, h('label', { class: 'field-label', htmlFor: memoIn.id, text: '메모 (선택)' }), memoIn),
     err,
     addedLine);

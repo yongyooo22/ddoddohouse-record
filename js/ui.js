@@ -461,6 +461,31 @@ export function scoreBars(items, { cls = '' } = {}) {
 // 이번 실행 동안 펼친 스포일러 (백그라운드 새로고침으로 화면을 다시 그려도 다시 가려지지 않게)
 const revealedSpoilers = new Set();
 
+/**
+ * 여러 칸을 함께 가렸다가 버튼 하나로 펼침 (같은 줄의 이름은 보이고 옆의 역할만 가릴 때).
+ * parts 는 가릴 요소들, 반환은 펼치기 버튼 (이미 펼친 key 거나 가릴 것이 없으면 null — 그대로 보임)
+ */
+export function revealGroup(parts, { label = '스포일러 보기', key = null } = {}) {
+  const els = parts.filter(Boolean);
+  if (!els.length || (key && revealedSpoilers.has(key))) return null;
+  for (const el of els) {
+    el.classList.add('is-secret');
+    el.setAttribute('aria-hidden', 'true');
+    el.inert = true; // 가려진 안의 링크에 키보드 초점이 가지 않게
+  }
+  const btn = h('button', { type: 'button', class: 'secret-btn' }, icon('eye'), h('span', { text: label }));
+  btn.addEventListener('click', () => {
+    if (key) revealedSpoilers.add(key);
+    for (const el of els) {
+      el.classList.remove('is-secret');
+      el.removeAttribute('aria-hidden');
+      el.inert = false;
+    }
+    btn.remove();
+  });
+  return btn;
+}
+
 /** 스포일러 가림 블록: 탭하면 보임. key 를 주면 펼친 상태를 기억 */
 export function spoilerBlock(content, { label = '스포일러 보기', inline = false, key = null } = {}) {
   const inner = h(inline ? 'span' : 'div', { class: 'spoiler-content' }, content);
