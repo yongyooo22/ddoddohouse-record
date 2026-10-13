@@ -50,9 +50,10 @@ export function toast(message, kind = 'info', ms = 2800, { action = null } = {})
 // ── 다이얼로그 (bottom sheet 스타일) ──
 /**
  * actions: [{label, value, kind:'primary'|'danger'|'ghost', handler?: async () => boolean(false면 유지)}]
+ * beforeDismiss: 배경 누름·ESC·뒤로가기로 닫기 전에 부름 (async → true 면 닫음). 버튼으로 닫을 때는 안 부름
  * 반환: 누른 action 의 value (닫기/ESC 는 null)
  */
-export function openDialog({ title, body, actions = [{ label: '확인', value: true, kind: 'primary' }], dismissible = true, cls = '', onOpen, bind } = {}) {
+export function openDialog({ title, body, actions = [{ label: '확인', value: true, kind: 'primary' }], dismissible = true, cls = '', onOpen, bind, beforeDismiss } = {}) {
   return new Promise((resolve) => {
     const titleId = nextId('dlg');
     const dlg = h('dialog', { class: ['dlg', cls], 'aria-labelledby': titleId });
@@ -89,12 +90,30 @@ export function openDialog({ title, body, actions = [{ label: '확인', value: t
     }
     // 밖에서 닫혀도(잠금 등 closeAllDialogs) 기다리는 쪽이 '취소'로 받게
     dlg.addEventListener('close', () => close(null));
+    // 배경 누름·ESC·뒤로가기: 쓰던 내용이 있는 창은 먼저 묻고(beforeDismiss) 닫음
+    let asking = false;
+    async function dismiss() {
+      if (done || !dismissible || asking) return;
+      if (beforeDismiss) {
+        asking = true;
+        let ok = false;
+        try { ok = await beforeDismiss(); } catch { ok = false; }
+        asking = false;
+        if (done || !ok) return;
+      }
+      close(null);
+    }
     dlg.addEventListener('cancel', (e) => {
       e.preventDefault();
-      if (dismissible) close(null);
+      dismiss();
     });
+    // 배경을 눌러서 뗀 때만 닫음 — 창 안에서 글을 드래그하다 바깥에서 손을 떼면 click 이 dialog 로 오는데, 그건 닫는 게 아님
+    let downOnBackdrop = false;
+    dlg.addEventListener('pointerdown', (e) => { downOnBackdrop = e.target === dlg; });
     dlg.addEventListener('click', (e) => {
-      if (e.target === dlg && dismissible) close(null);
+      const fromBackdrop = downOnBackdrop;
+      downOnBackdrop = false;
+      if (e.target === dlg && fromBackdrop) dismiss();
     });
     dlg.showModal();
     if (bind) bind(close);
@@ -108,6 +127,11 @@ export function closeAllDialogs() {
     try { d.close(); } catch { /* 무시 */ }
     d.remove();
   }
+}
+
+/** 입력 창의 beforeDismiss: 고치던 내용(isDirty)이 있으면 버릴지 물어봄 */
+export function confirmDiscard(isDirty, what = '작성하던 내용을') {
+  return async () => !isDirty() || confirmDialog(`${what} 버릴까요?`, '저장하지 않은 내용은 사라져요.', { ok: '버리기', cancel: '계속 쓰기', danger: true });
 }
 
 export async function confirmDialog(title, message, { ok = '확인', cancel = '취소', danger = false } = {}) {

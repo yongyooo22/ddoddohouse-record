@@ -5,7 +5,7 @@ import { TYPES, TYPE_KEYS, LIMITS, GENRE_SUGGESTIONS, TAG_SUGGESTIONS } from '..
 import { state, upsertGame, removeGame, gamesOfType, isOwnedGame, coverOf, recordsOfGame, membersSorted, memberInfo, getMeId } from '../store.js';
 import { nameKey, codePoints, gameInfoText } from '../format.js';
 import * as api from '../api.js';
-import { segmented, chip, openDialog, confirmDialog, toast, nextId } from '../ui.js';
+import { segmented, chip, openDialog, confirmDialog, confirmDiscard, toast, nextId } from '../ui.js';
 import { photoImg } from '../images.js';
 import { coverField } from './photos.js';
 
@@ -326,6 +326,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     cover.reset();
     paintDup();
     titleIn.focus();
+    initial = snapshot(); // 비운 칸이 기준 — 그대로 닫으면 묻지 않음
     return false;
   }
 
@@ -364,11 +365,18 @@ export async function openGameEditor(game = null, { type: startType, title: star
       ]
       : [{ label: '취소', value: null, kind: 'ghost' }, { label: '등록', value: 'ok', kind: 'primary', handler: save }];
 
+  // 배경을 누르거나 ESC·뒤로가기로 닫을 때, 고치던 내용이 있으면 버릴지 먼저 물어봄 (실수로 닫혀서 쓴 게 날아가지 않게)
+  const snapshot = () => JSON.stringify([type, titleIn.value, memoIn.value, cover.value(), pMin.value, pMax.value, tMin.value, tMax.value,
+    genres, genreIn.value, brandIn.value, branchIn.value, ownedOn, owners]);
+  let initial = snapshot();
+  const isDirty = () => cover.busy() || snapshot() !== initial;
+
   const v = await openDialog({
     title: isNew ? (inCollection ? '소장 게임 등록' : `새 ${TYPES[type].noun} 등록`) : `${TYPES[type].noun} 정보 수정`,
     body,
     cls: 'dlg-game-form',
     actions,
+    beforeDismiss: confirmDiscard(isDirty, isNew ? '적던 내용을' : '고치던 내용을'),
     bind: (c) => { closeDlg = c; },
     onOpen: (dlg) => {
       // Enter = 등록/저장 (한글 조합 중 Enter 는 글자를 마무리할 뿐이라 무시)

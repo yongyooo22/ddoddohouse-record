@@ -6,7 +6,7 @@ import { memberProfile, memberRoles, memberActivity, mateRanking, topTies, filte
 import { fmtDate, fmtPct, norm, codePoints, fmtDateDot } from '../format.js';
 import * as api from '../api.js';
 import { navigate } from '../nav.js';
-import { appBar, openDialog, confirmDialog, toast, emptyState, nextId, loadingState, loadErrorState, typeName, starsView, spoilerBlock } from '../ui.js';
+import { appBar, openDialog, confirmDialog, confirmDiscard, toast, emptyState, nextId, loadingState, loadErrorState, typeName, starsView, spoilerBlock } from '../ui.js';
 import { recordCard } from './bits.js';
 
 // ── 추가/수정 다이얼로그 ──
@@ -15,6 +15,7 @@ export async function openMemberEditor(member) {
   const isNew = !member;
   const used = new Set(state.members.map((m) => m.color));
   let color = member ? member.color : (PALETTE.find((p) => !used.has(p.key)) || PALETTE[0]).key;
+  const color0 = color;
   let saved = null;
 
   const nameIn = h('input', { type: 'text', class: 'input', maxlength: String(LIMITS.memberName), value: member ? member.name : '', placeholder: '이름 또는 별명', autocomplete: 'off', id: nextId('mname') });
@@ -37,10 +38,12 @@ export async function openMemberEditor(member) {
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: '색' }), swatches),
     err);
 
+  const isDirty = () => nameIn.value.trim() !== (member ? member.name : '') || color !== (member ? member.color : color0);
   const v = await openDialog({
     title: isNew ? '새 멤버' : '멤버 수정',
     body,
     cls: 'dlg-member',
+    beforeDismiss: confirmDiscard(isDirty, isNew ? '적던 내용을' : '고치던 내용을'),
     onOpen: () => { if (isNew) nameIn.focus(); },
     actions: [
       { label: '취소', value: null, kind: 'ghost' },
