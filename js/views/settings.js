@@ -418,7 +418,7 @@ async function importFlow(file) {
     tick();
   }
   // 게임 정보는 대표 이미지를 올린 뒤에 (서버가 대표 이미지가 있는지 확인함)
-  const GAME_FIELDS = ['memo', 'owned', 'playersMin', 'playersMax', 'timeMin', 'timeMax', 'genres', 'brand', 'branch', 'createdAt'];
+  const GAME_FIELDS = ['memo', 'owned', 'playersMin', 'playersMax', 'timeMin', 'timeMax', 'genres', 'author', 'brand', 'branch', 'createdAt'];
   for (const g of games) {
     if (cancelled) break;
     const payload = { id: g.id, type: g.type, title: g.title };
