@@ -668,6 +668,14 @@ describe('멤버가 맡았던 역할', () => {
     assert.deepEqual(memberRoles(records, 'nobody'), []);
   });
 
+  test('knows(r): 보는 사람이 함께한 기록은 스포일러·역할 가리기를 풀어 줌', () => {
+    const knows = (r) => r.id === 'b'; // b 에는 함께했고 c 에는 없음
+    const list = memberRoles(records, 'm1', { knows });
+    assert.deepEqual(list.map((x) => [x.record.id, x.hidden]), [['b', false], ['c', true], ['a', false]]);
+    assert.deepEqual(memberRoles(records, 'm1', { knows: () => true }).map((x) => x.hidden), [false, false, false]);
+    assert.deepEqual(memberRoles(records, 'm1', { knows: null }).map((x) => x.hidden), [true, true, false]);
+  });
+
   test('includeMyRole: 이 기기의 나만 배역 없는 내 역할(mm.myRole)도 봄', () => {
     assert.equal(memberRoles(records, 'm1').some((x) => x.record.id === 'd'), false);
     const mine = memberRoles(records, 'm1', { includeMyRole: true });

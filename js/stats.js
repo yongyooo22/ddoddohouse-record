@@ -180,7 +180,7 @@ function mmRoleOf(record, memberId) {
  *  - includeMyRole: 이 기기의 '나'라면, 내 역할(mm.myRole)만 적히고 배역이 없는 기록도 내 역할로 봄
  *  hidden: 스포일러 기록이거나 '역할 가리기'라 열기 전에는 보이면 안 되는 역할
  */
-export function memberRoles(records, memberId, { includeMyRole = false } = {}) {
+export function memberRoles(records, memberId, { includeMyRole = false, knows = null } = {}) {
   const out = [];
   for (const r of arr(records)) {
     if (!isRecord(r) || r.type !== 'murdermystery') continue;
@@ -188,7 +188,9 @@ export function memberRoles(records, memberId, { includeMyRole = false } = {}) {
     let character = str(obj(mmRoleOf(r, memberId)).character).trim();
     if (!character && includeMyRole && !mmRoleOf(r, memberId)) character = str(mm.myRole).trim();
     if (!character) continue;
-    out.push({ record: r, character, hidden: r.spoiler === true || mm.roleSpoiler === true });
+    // knows(r): 보는 사람이 그 기록의 스포일러를 이미 아는지 (내가 함께한 기록) → 가리지 않음
+    const hidden = (r.spoiler === true || mm.roleSpoiler === true) && !(typeof knows === 'function' && knows(r));
+    out.push({ record: r, character, hidden });
   }
   return out.sort((a, b) => byLatest(a.record, b.record));
 }

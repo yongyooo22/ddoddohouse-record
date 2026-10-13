@@ -1129,6 +1129,8 @@ await step('내 역할 (머더미스터리): 종류에 따라 칸 보임/숨김 
 const ME_KEY = 'ddh:me';
 const getMeLS = () => page.evaluate((k) => localStorage.getItem(k), ME_KEY);
 const setMeLS = (id) => page.evaluate(([k, v]) => { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); }, [ME_KEY, id]);
+/** 설정 ‘내가 함께한 기록은 바로 보기’ (기본 켬 = 키 없음, 끄면 '0') */
+const setSpoilerMineLS = (on) => page.evaluate(([k, v]) => { if (v) localStorage.removeItem(k); else localStorage.setItem(k, '0'); }, ['ddh:spoilerMine', on]);
 const meT = { recs: [], members: [], base: null };
 const mkRole = (memberId, character) => ({ memberId, character, culprit: false, outcome: null, mvp: false });
 /** 추가 입력 버튼의 요약 (펼쳐 놓은 동안에는 영역 머리의 요약) */
@@ -1393,6 +1395,7 @@ await step('프로필: 맡았던 역할 (내가 맡았던 역할 · 가려진 �
   meT.r5 = await seedMm('RP-빈배역', { date: d4, members: [na], myRole: '무시됨', roles: [mkRole(na, '')] });
   await reloadApp();
   await setMeLS(na);
+  await setSpoilerMineLS(false); // 이 단계는 ‘내가 함께한 기록은 바로 보기’를 끈 상태(전처럼 모두 가림)를 검사. 켠 상태는 다음 단계
   await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
   const prole = '.page-profile .prole';
   // 앞 단계의 ‘붉은 저택의 초대’ 스포일러 기록(ids.mm)은 내 역할(mm.myRole)만 있고 배역이 없어서, 나로 정한 사람이면 누구에게나 ‘가려진 역할’ 한 줄로 이어짐
@@ -1450,6 +1453,75 @@ await step('프로필: 맡았던 역할 (내가 맡았던 역할 · 가려진 �
   await reloadApp();
   await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
   check('(정리) 다시 5개 · 안내 없음', (await text(`${prole} .sec-sub`)) === '5개' && !(await page.$(`${prole} > p`)));
+  await setSpoilerMineLS(true);
+});
+
+await step('내가 함께한 기록의 스포일러: 나가 함께한 사람에 있는 기록은 가리지 않음 (카드 · 상세 · 프로필 · 설정 스위치)', async () => {
+  const na = meT.na;
+  const nam = meT.nam;
+  await setMeLS(na);
+  const mk = (title, members, roles, extra = {}) => api('POST', '/api/records', {
+    record: { type: 'murdermystery', date: PAST, title, members, rating: 4, oneLiner: `${title} 한줄평`, review: `${title} 후기`, spoiler: true, mm: { myRole: '', roles, roleSpoiler: false }, ...extra },
+  });
+  const mineRes = await mk('SP-내가함께', [na, nam], [mkRole(na, '탐정'), { ...mkRole(nam, '집사'), culprit: true }], { mm: { myRole: '탐정', roles: [mkRole(na, '탐정'), { ...mkRole(nam, '집사'), culprit: true }], roleSpoiler: false } });
+  const otherRes = await mk('SP-남의기록', [nam], [{ ...mkRole(nam, '하녀'), culprit: true }]);
+  check('(준비) 나가 함께한 스포일러 기록 · 나가 없는 스포일러 기록', mineRes.status === 200 && otherRes.status === 200, JSON.stringify([mineRes.data, otherRes.data]));
+  const mineId = mineRes.data.record.id;
+  const otherId = otherRes.data.record.id;
+  meT.recs.push(mineId, otherId);
+  await reloadApp();
+  const cardOf = (id) => `.page-list .rcard:has(.card-link[href="#/record/${encodeURIComponent(id)}"])`;
+
+  // 목록 카드: 내가 함께한 기록의 한줄평은 바로 보임, 남의 기록은 전처럼 가림
+  await go('#/records?type=murdermystery', '.page-list');
+  await page.waitForSelector(cardOf(mineId));
+  check('카드: 내가 함께한 스포일러 기록의 한줄평은 바로 보임 (가림 버튼 없음)', !(await page.$(`${cardOf(mineId)} .spoiler`)) && (await text(cardOf(mineId))).includes('SP-내가함께 한줄평'), await text(cardOf(mineId)));
+  check('카드: 나가 없는 스포일러 기록은 전처럼 가림', !!(await page.$(`${cardOf(otherId)} .spoiler:not(.is-revealed) .spoiler-btn`)) &&
+    await page.$eval(`${cardOf(otherId)} .spoiler-content`, (e) => e.getAttribute('aria-hidden') === 'true' && getComputedStyle(e).filter.includes('blur')));
+
+  // 상세: 감상 · 내 역할 · 범인·역할이 처음부터 펼쳐짐
+  await go(`#/record/${encodeURIComponent(mineId)}`, '.page-detail');
+  const memSec = '.page-detail .dres';
+  check('상세: 내가 함께한 기록은 감상·내 역할·범인·역할을 가리지 않음', !(await page.$('.page-detail .spoiler')) && !(await page.$('.page-detail .secret-btn')) && !(await page.$('.page-detail .is-secret')) &&
+    (await text('.page-detail .review-text')) === 'SP-내가함께 후기' && (await text('.page-detail .my-role')) === '탐정' &&
+    (await texts(`${memSec} .mm-row .role-char`)).join() === '탐정,집사' && !!(await page.$(`${memSec} .mm-row.is-culprit`)), await text('.page-detail .dmain'));
+  await noOverflow('내가 함께한 스포일러 기록 상세');
+  await shot('me-spoiler-detail-390');
+  await go(`#/record/${encodeURIComponent(otherId)}`, '.page-detail');
+  check('상세: 나가 없는 스포일러 기록은 전처럼 감상·역할을 가림', !!(await page.$('.page-detail .dpart .spoiler:not(.is-revealed) .spoiler-btn')) && (await text(`${memSec} .secret-btn`)) === '범인·역할 보기' &&
+    await page.$$eval(`${memSec} .role-cell`, (els) => els.every((e) => e.inert === true)));
+
+  // 프로필: 내가 함께한 기록의 역할은 ‘가려진 역할’이 아니라 이름 그대로. 모르는 기록이 섞여 있으면 목록은 접어 둠
+  const prole = '.page-profile .prole';
+  await go(`#/member/${encodeURIComponent(nam)}`, '.page-profile');
+  const namRoles = (await texts(`${prole} .prole-role`)).sort();
+  check('다른 멤버 프로필: 내가 함께한 기록의 역할(집사 · 하인 톰)은 보이고, 나가 없는 스포일러 기록만 ‘가려진 역할’', JSON.stringify(namRoles) === JSON.stringify(['가려진 역할', '집사', '하인 톰'].sort()) && !!(await page.$(`${prole} .spoiler-btn`)), JSON.stringify(namRoles));
+  await go(`#/member/${encodeURIComponent(na)}`, '.page-profile');
+  const naRoles = (await texts(`${prole} .prole-role`)).sort();
+  check('내 프로필: 내가 함께한 스포일러·역할가림 기록의 역할(비밀 범인 · 가린 역할2)도 보임 · 함께한 사람이 없는 기록(붉은 저택)만 가림', JSON.stringify(naRoles) === JSON.stringify(['가려진 역할', '가린 역할2', '공작부인', '레거시역할', '비밀 범인', '탐정'].sort()), JSON.stringify(naRoles));
+
+  // 설정 스위치로 끄면 전처럼 모두 가림 · 다시 켜면 보임
+  await go('#/settings', '.page-settings');
+  const sw = '.page-settings .set-spoiler .switch-input';
+  check('설정: ‘내가 함께한 기록은 바로 보기’ 스위치 · 기본 켬', (await text('.page-settings .set-spoiler .set-title')) === '스포일러' && (await page.isChecked(sw)) === true, await text('.page-settings .set-spoiler'));
+  await page.click(sw);
+  check('끄면 안내 토스트 · localStorage', !!(await toastSeen(/내가 함께한 기록도 스포일러를 가려요/)) && (await page.evaluate(() => localStorage.getItem('ddh:spoilerMine'))) === '0');
+  await go(`#/record/${encodeURIComponent(mineId)}`, '.page-detail');
+  check('끄면 내가 함께한 기록도 전처럼 가림', !!(await page.$('.page-detail .dpart .spoiler:not(.is-revealed) .spoiler-btn')) && (await text(`${memSec} .secret-btn`)) === '범인·역할 보기');
+  await go('#/settings', '.page-settings');
+  await page.click(sw);
+  check('다시 켜면 localStorage 키 없음', !!(await toastSeen(/내가 함께한 기록은 스포일러를 바로 보여요/)) && (await page.evaluate(() => localStorage.getItem('ddh:spoilerMine'))) === null);
+  await go(`#/record/${encodeURIComponent(mineId)}`, '.page-detail');
+  check('다시 켜면 바로 보임', !(await page.$('.page-detail .spoiler')) && !(await page.$('.page-detail .secret-btn')));
+  // 나가 없으면 설정이 켜져 있어도 가림
+  await setMeLS(null);
+  await go('#/', '.page-home');
+  await go(`#/record/${encodeURIComponent(mineId)}`, '.page-detail');
+  check('나를 풀면 같은 기록도 가림', !!(await page.$('.page-detail .dpart .spoiler:not(.is-revealed) .spoiler-btn')) && (await text(`${memSec} .secret-btn`)) === '범인·역할 보기');
+
+  for (const id of [mineId, otherId]) await api('DELETE', `/api/records?id=${encodeURIComponent(id)}`);
+  meT.recs = meT.recs.filter((x) => ![mineId, otherId].includes(x));
+  await syncFromServer();
 });
 
 await step('나: 수정 폼에서 배역 이름을 내 역할로 채워 줌 (저장해도 배역은 그대로)', async () => {
@@ -3264,7 +3336,12 @@ await step('머더미스터리: 함께한 사람마다 맡은 역할 → 상세�
     canon(byMember(rec.mm.roles)) === canon(byMember([mkRole(sc['점수가'], '집사 세바스찬'), mkRole(sc['점수나'], '탐정 조수')])), JSON.stringify(rec && rec.mm.roles));
   const memSec = '.page-detail .dres:has(.dres-title:text-is("함께한 멤버"))';
   check('상세: 함께한 3명 이름은 보임', canon((await texts(`${memSec} .dres-list .mrow-name`)).sort()) === canon(['점수가', '점수나', '점수다']), await text(memSec));
-  // 역할은 작품 스포일러라 스포일러 기록이 아니어도 접어 둠
+  // 나(점수가)가 함께한 기록 → 역할은 이미 아는 내용이라 처음부터 보임 (설정 ‘내가 함께한 기록은 바로 보기’ 기본 켬)
+  check('상세: 내가 함께한 기록이라 역할이 처음부터 보임', !(await page.$(`${memSec} .secret-btn`)) && await page.$$eval(`${memSec} .role-cell`, (els) => els.length === 3 && els.every((e) => e.inert === false)), await text(memSec));
+  // 그 설정을 끄면: 역할은 작품 스포일러라 스포일러 기록이 아니어도 접어 둠
+  await setSpoilerMineLS(false);
+  await go('#/', '.page-home');
+  await go(`#/record/${encodeURIComponent(sc.mm1)}`, '.page-detail');
   check('상세: 역할은 처음엔 가려 있음 (‘역할 보기’)', (await text(`${memSec} .secret-btn`)) === '역할 보기' && await page.$$eval(`${memSec} .role-cell`, (els) => els.length === 3 && els.every((e) => e.inert === true)));
   await page.click(`${memSec} .secret-btn`);
   const rows = await page.$$eval(`${memSec} .mm-row`, (els) => els.map((e) => [e.querySelector('.mrow-name').textContent, (e.querySelector('.role-char') || { textContent: '' }).textContent]));
@@ -3282,6 +3359,7 @@ await step('머더미스터리: 함께한 사람마다 맡은 역할 → 상세�
     (await text(`${memSec} .secret-btn`)) === '역할 보기' && await page.$$eval(`${memSec} .role-cell`, (els) => els.every((e) => e.inert === true)));
   await page.click(`${memSec} .secret-btn`);
   check('역할 보기 → 역할이 보임', (await texts(`${memSec} .mm-row .role-char`)).join() === '집사 세바스찬,탐정 조수' && !(await page.$(`${memSec} .is-secret`)));
+  await setSpoilerMineLS(true);
 });
 
 await step('나의 결과: 공동 순위 · 함께하지 않음 · 결과 미입력 · 협력 · 멤버 화면에서 나는 빼고', async () => {

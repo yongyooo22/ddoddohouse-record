@@ -3,7 +3,7 @@
 // 결과·별점을 적지 않은 판은 0점·패배·실패로 세지 않고 '기록 없음'으로 따로 보여 줌
 import { h, icon, starShape } from '../dom.js';
 import { TYPES, TYPE_KEYS, MM_SCORES, WEEKDAYS } from '../constants.js';
-import { state, memberInfo, isFirstLoad, loadFailed, recordsForStats, recordById, gameOfRecord, getMeId } from '../store.js';
+import { state, memberInfo, isFirstLoad, loadFailed, recordsForStats, recordById, gameOfRecord, getMeId, knowsSpoiler } from '../store.js';
 import {
   overview, boardgameStats, bgMemberTable, mmStats, erStats, gameEntries, filterPeriod, mateRanking, monthlyOf,
 } from '../stats.js';
@@ -161,7 +161,7 @@ function worksCard(recs, type, { title, extra } = {}) {
   return card(title, `${works.length}${TYPES[type].noun === '테마' ? '개' : '편'}`,
     h('ul', { class: 'works' }, shown.map((e) => {
       const r = recordById(e.latestId);
-      const excerpt = r && !r.spoiler ? reviewExcerpt(r) : '';
+      const excerpt = r && (!r.spoiler || knowsSpoiler(r)) ? reviewExcerpt(r) : '';
       return h('li', { class: 'work' },
         h('a', { class: 'work-link', href: r ? `#/record/${encodeURIComponent(r.id)}` : gamePageHref(e) },
           gameThumb({ type: e.type, cover: e.cover }, 'gthumb work-thumb'),
@@ -174,7 +174,7 @@ function worksCard(recs, type, { title, extra } = {}) {
               e.plays > 1 ? h('span', { text: `${e.plays}회${e.avgRating && e.rated > 1 ? ' · 평균 별점' : ''}` }) : null,
               extra ? extra(r) : null),
             excerpt ? h('span', { class: 'work-review', text: excerpt })
-              : r && r.spoiler ? h('span', { class: 'work-review is-hidden', text: '스포일러로 가린 감상' }) : null)));
+              : r && r.spoiler && !knowsSpoiler(r) ? h('span', { class: 'work-review is-hidden', text: '스포일러로 가린 감상' }) : null)));
     })),
     more);
 }
