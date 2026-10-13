@@ -578,6 +578,62 @@ await step('보드게임 기록 (새 간단 폼: 소장 게임 검색·선택 ·
   await shot('09-detail-boardgame');
 });
 
+await step('게임 정보 수정 창: 고치다가 배경을 누르거나 드래그가 밖에서 끝나도 창이 그냥 사라지지 않음', async () => {
+  const editor = `${dlg}.dlg-game-form`;
+  const confirmSel = `${dlg}:not(.dlg-game-form) .dlg-title:text-is("고치던 내용을 버릴까요?")`;
+  const openEditor = async () => {
+    await page.click('.page-detail .dgame .dgame-edit');
+    await page.waitForSelector(editor);
+  };
+  const memoBefore = (await api('GET', '/api/data')).data.games.find((g) => g.id === ids.gTera).memo;
+
+  // 아무것도 안 고쳤으면 배경을 눌러 바로 닫힘 (전처럼)
+  await openEditor();
+  await page.mouse.click(195, 30);
+  check('안 고쳤으면 배경 누름 → 바로 닫힘', !!(await until(async () => !(await page.$(dlg)), 3000)));
+
+  // 고친 뒤 배경 누름 → 버릴지 물어봄 · '계속 쓰기' 면 창과 고친 내용 그대로
+  await openEditor();
+  await page.fill('[data-field="game-memo"]', '프렐류드 확장 포함');
+  await page.mouse.click(195, 30);
+  check('고친 뒤 배경 누름 → 버릴지 묻는 창', !!(await until(() => page.$(confirmSel), 3000)) && !!(await page.$(editor)));
+  await shot('09b-game-editor-discard-confirm-390');
+  await page.click(`${dlg}:not(.dlg-game-form) .dlg-actions button:text-is("계속 쓰기")`);
+  await sleep(150);
+  check('계속 쓰기 → 수정 창은 그대로 · 고친 내용도 그대로', !(await page.$(confirmSel)) && !!(await page.$(editor)) && (await page.inputValue('[data-field="game-memo"]')) === '프렐류드 확장 포함');
+
+  // 창 안에서 드래그하다 바깥(배경)에서 손을 떼도 닫히지 않음 (글자 선택하다 흔히 생김)
+  const memoBox = await page.$eval('[data-field="game-memo"]', (e) => { const b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; });
+  await page.mouse.move(memoBox.x, memoBox.y);
+  await page.mouse.down();
+  await page.mouse.move(195, 30, { steps: 6 });
+  await page.mouse.up();
+  await sleep(200);
+  check('안에서 드래그 → 밖에서 뗌: 창 그대로 · 묻지도 않음', !!(await page.$(editor)) && !(await page.$(confirmSel)));
+
+  // ESC 도 먼저 물어봄 → '버리기' 면 닫히고 서버 값은 그대로
+  await page.keyboard.press('Escape');
+  check('ESC → 버릴지 묻는 창', !!(await until(() => page.$(confirmSel), 3000)));
+  await page.click(`${dlg}:not(.dlg-game-form) .dlg-actions button:text-is("버리기")`);
+  check('버리기 → 창 닫힘', !!(await until(async () => !(await page.$(dlg)), 3000)));
+  const memoAfter = (await api('GET', '/api/data')).data.games.find((g) => g.id === ids.gTera).memo;
+  check('버리면 저장되지 않음 (메모 그대로)', memoAfter === memoBefore, `${memoBefore} → ${memoAfter}`);
+
+  // 노트북 폭: 가운데 창 — 창 아래 빈 곳을 눌러도 같음
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await sleep(150);
+  await openEditor();
+  await page.fill('[data-field="game-memo"]', '프렐류드 확장 포함');
+  await page.mouse.click(720, 880);
+  check('1440: 창 아래를 눌러도 버릴지 먼저 물어봄', !!(await until(() => page.$(confirmSel), 3000)) && !!(await page.$(editor)));
+  await noOverflow('1440 버릴지 묻는 창');
+  await shot('09b-game-editor-discard-confirm-1440');
+  await page.click(`${dlg}:not(.dlg-game-form) .dlg-actions button:text-is("버리기")`);
+  await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
+  await page.setViewportSize(VIEWPORT);
+  await sleep(150);
+});
+
 await step('예전 기록 준비 (API) — 보드게임: 멤버·점수·순위·승자·장소·태그', async () => {
   // 예전 화면(함께한 사람·결과·자세한 정보·태그)으로 남긴 기록을 흉내: 이후 단계의 통계·프로필·소장·백업 검사에 쓰임
   const res = await seedLegacy(ids.bg, {
