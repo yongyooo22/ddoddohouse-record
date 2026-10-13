@@ -1539,6 +1539,8 @@ button.card-link { padding: 0; border: 0; background: none; font: inherit; lette
 .rcard-thumb > .rcard-photo, .gcard-thumb > .rcard-photo, .otile-cover > .rcard-photo { position: absolute; inset: 0; }
 .rcard-photo .pimg { background: var(--stage); }
 .rcard-photo .pimg img { object-fit: contain; }
+/* 거의 정사각형인 사진(상자 사진 등)은 꽉 채움 — 게임 상세의 표지처럼 보이게. 길쭉한 책·포스터는 위처럼 전부 보임 */
+.rcard-photo .pimg.is-near-square img { object-fit: cover; }
 .rcard-pn { position: absolute; right: 4px; bottom: 4px; display: inline-flex; align-items: center; gap: 2px; padding: 0 5px 0 4px; border-radius: 999px; background: rgba(20, 16, 12, .58); color: #FFFFFF; font-size: 10px; font-weight: 700; line-height: 1.6; }
 .rcard-pn .ico { width: 10px; height: 10px; stroke-width: 2.2; }
 

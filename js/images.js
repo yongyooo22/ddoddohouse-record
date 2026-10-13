@@ -202,6 +202,12 @@ if (typeof window !== 'undefined') {
 export function photoImg(id, { size = 't', alt = '', cls = '', lazy = true, progressive = false } = {}) {
   const img = h('img', { alt, decoding: 'async', draggable: 'false', hidden: true });
   const box = h('span', { class: ['pimg', 'is-loading', cls], dataset: { photo: id } }, img);
+  // 거의 정사각형(세로:가로 0.7~1.43)인 사진은 카드 썸네일에서 꽉 채워 보여 줌 (상자 사진의 여백만 조금 잘림).
+  // 책·포스터처럼 길쭉한 사진은 그대로 전부 보임 — CSS 의 .is-near-square 참고
+  img.addEventListener('load', () => {
+    const r = img.naturalHeight ? img.naturalWidth / img.naturalHeight : 0;
+    box.classList.toggle('is-near-square', r >= 0.7 && r <= 1 / 0.7);
+  });
   let shown = null;
 
   const show = async (url) => {
