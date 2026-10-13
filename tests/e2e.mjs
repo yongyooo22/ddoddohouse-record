@@ -694,10 +694,10 @@ await step('머더미스터리 기록 (팝업 등록 · 작품 태그 · 내 역
     (await page.inputValue('[data-field="game-title"]')) === '붉은 저택의 초대' && (await text(`${dlg} .dlg-title`)) === '새 작품 등록');
   check('기록에서 연 등록 창: 내 소장은 기본 선택 안 함', (await page.isChecked(`${dlg} .gf-own-input`)) === false);
   check('이름만 필수 (대표 이미지·소장은 선택)', (await text(`${dlg} .gform`)).includes('대표 이미지 (선택)'));
-  // 머더미스터리 작품에는 ‘태그’ (보드게임의 ‘장르’ 자리) — 인원·시간 칸은 없음
-  check('작품 등록 창: ‘태그’ 칸 · 추천 칩 · 직접 추가 (장르·인원·시간 칸 없음)', (await text(`${dlg} .gf-genre-box .field-label`)) === '태그' && await page.isVisible(`${dlg} .gf-genre-box`) &&
+  // 머더미스터리 작품에는 ‘태그’ (보드게임의 ‘장르’ 자리) · 작가 · 인원·시간 칸
+  check('작품 등록 창: ‘태그’ 칸 · 추천 칩 · 직접 추가 · 작가·인원·시간 칸 (‘장르’ 글자는 없음)', (await text(`${dlg} .gf-genre-box .field-label`)) === '태그' && await page.isVisible(`${dlg} .gf-genre-box`) &&
     (await texts(`${dlg} .gf-genres .chip-label`)).slice(0, 4).join() === '추리중심,RP중심,감성,반전' && !!(await page.$(`${dlg} input[aria-label="태그 직접 추가"]`)) &&
-    await page.isHidden(`${dlg} .gf-bg`) && !(await text(`${dlg} .gform`)).includes('장르'), await text(`${dlg} .gform`));
+    await page.isVisible(`${dlg} .gf-bg`) && await page.isVisible(`${dlg} .gf-author`) && !(await text(`${dlg} .gform`)).includes('장르'), await text(`${dlg} .gform`));
   // 취소해도 쓰던 날짜·내 역할·감상·별점은 그대로
   await dialogButton('취소');
   await page.waitForSelector(dlg, { state: 'detached' });
@@ -763,6 +763,51 @@ await step('머더미스터리 기록 (팝업 등록 · 작품 태그 · 내 역
   ids.gMm = mmGame && mmGame.id;
   await noOverflow('머더미스터리 상세');
   await shot('12-detail-murdermystery');
+});
+
+await step('머더미스터리 작품 정보: 작가 · 인원 · 예상 시간 (등록 · 요약 · 고치기)', async () => {
+  const workTitle = '작가 시험 작품';
+  await go('#/new/murdermystery', '.page-form.t-murdermystery');
+  await setGame(workTitle, {
+    extra: async () => {
+      check('작품 등록 창: 작가 칸 · 인원·예상 시간 칸 · 머미용 예시', await page.isVisible('[data-field="game-author"]') && await page.isVisible(`${dlg} .gf-bg`) &&
+        (await text(`${dlg} .gf-author .field-label`)) === '작가 (선택)' &&
+        (await page.getAttribute(`${dlg} input[aria-label="최대 인원"]`, 'placeholder')) === '6' && (await page.getAttribute(`${dlg} input[aria-label="최소 예상 시간(분)"]`, 'placeholder')) === '120' &&
+        (await text(`${dlg} .gf-range-hint`)) === '인원·시간이 정해져 있으면 한 칸만 적어요', await text(`${dlg} .gform`));
+      await page.fill('[data-field="game-author"]', '  정   작가 ');
+      await page.fill(`${dlg} input[aria-label="최소 인원"]`, '6');
+      await page.fill(`${dlg} input[aria-label="최소 예상 시간(분)"]`, '180');
+      await page.fill(`${dlg} input[aria-label="최대 예상 시간(분)"]`, '240');
+      await noOverflow('390 머미 작품 등록 창 (작가·인원·시간)');
+      await shot('10b-game-dialog-mm-author-390');
+    },
+  });
+  const work = (await api('GET', '/api/data')).data.games.find((g) => g.title === workTitle);
+  check('서버: 작가(공백 정리) · 인원 6명(한 칸만 → 고정) · 180~240분', work && work.type === 'murdermystery' && work.author === '정 작가' &&
+    work.playersMin === 6 && work.playersMax === 6 && work.timeMin === 180 && work.timeMax === 240, JSON.stringify(work));
+  check('고른 작품 요약: ‘정 작가 작 · 6명 · 180~240분’', (await text('.page-form .gp-picked-meta')) === '정 작가 작 · 6명 · 180~240분', await text('.page-form .gp-picked-meta'));
+
+  // 다시 열면 값이 채워져 있음 · 노트북 폭에서도 넘침 없음 · 작가를 지우고 저장하면 비워짐 (인원·시간은 그대로)
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await sleep(150);
+  await page.click('.page-form .gp-edit');
+  await page.waitForSelector(`${dlg}.dlg-game-form`);
+  check('고치기 창: 작가·인원·시간이 채워져 있음', (await page.inputValue('[data-field="game-author"]')) === '정 작가' &&
+    (await page.inputValue(`${dlg} input[aria-label="최소 인원"]`)) === '6' && (await page.inputValue(`${dlg} input[aria-label="최대 인원"]`)) === '6' &&
+    (await page.inputValue(`${dlg} input[aria-label="최대 예상 시간(분)"]`)) === '240');
+  await noOverflow('1440 머미 작품 고치기 창');
+  await shot('10b-game-dialog-mm-author-1440');
+  await page.fill('[data-field="game-author"]', '');
+  await dialogButton('저장');
+  await page.waitForSelector(dlg, { state: 'detached', timeout: 5000 });
+  const work2 = (await api('GET', '/api/data')).data.games.find((g) => g.id === (work && work.id));
+  check('작가를 지우면 비워짐 · 인원·시간은 그대로', work2 && work2.author === '' && work2.playersMax === 6 && work2.timeMin === 180, JSON.stringify(work2));
+  check('요약도 ‘6명 · 180~240분’', (await text('.page-form .gp-picked-meta')) === '6명 · 180~240분', await text('.page-form .gp-picked-meta'));
+  await page.setViewportSize(VIEWPORT);
+  await sleep(150);
+  await leaveForm();
+  if (work) await api('DELETE', `/api/games?id=${encodeURIComponent(work.id)}`);
+  await syncFromServer();
 });
 
 await step('예전 기록 준비 (API) — 머더미스터리: 멤버·역할·범인·점수·태그', async () => {
@@ -2343,13 +2388,14 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
     const dup = await until(async () => { const t = await text(`${dlg} .gf-dup`); return t.includes('같은 이름이 이미 있어요') && t; });
     check('같은 이름 → 기존 게임을 먼저 보여 줌 (이미 내 소장)', !!dup && dup.includes('아그리콜라') && dup.includes('1~4명 · 30~150분') && dup.includes('이미 내 소장'), String(dup));
     await shot('25b2-collection-register-dup');
-    // 머더미스터리로 바꾸면 인원·시간 칸은 숨고 장르 자리가 ‘태그’(추천 칩도 작품용)로 바뀜
+    // 머더미스터리로 바꾸면 작가 칸이 생기고(인원·시간 칸은 그대로) 장르 자리가 ‘태그’(추천 칩도 작품용)로 바뀜
     await page.click(`${dlg} .seg-item:has-text("머더미스터리")`);
-    check('머더미스터리 → 작품 이름 · 보드게임 칸 숨김 · 같은 이름 안내 사라짐', (await text(nameLabel)) === '작품 이름' && await page.isHidden(`${dlg} .gf-bg`) && await page.isHidden(`${dlg} .gf-dup`));
+    check('머더미스터리 → 작품 이름 · 작가 칸 · 인원·시간 칸 · 같은 이름 안내 사라짐', (await text(nameLabel)) === '작품 이름' && await page.isVisible(`${dlg} .gf-bg`) &&
+      await page.isVisible(`${dlg} .gf-author`) && await page.isHidden(`${dlg} .gf-dup`));
     check('머더미스터리 → 장르 대신 ‘태그’ 칸 · 작품 태그 추천 칩', (await text(`${dlg} .gf-genre-box .field-label`)) === '태그' && await page.isVisible(`${dlg} .gf-genre-box`) &&
       (await texts(`${dlg} .gf-genres .chip-label`)).slice(0, 4).join() === '추리중심,RP중심,감성,반전' && !!(await page.$(`${dlg} input[aria-label="태그 직접 추가"]`)), JSON.stringify(await texts(`${dlg} .gf-genres .chip-label`)));
     await page.click(`${dlg} .seg-item:has-text("보드게임")`);
-    check('다시 보드게임 → ‘장르’ 이름표 · 장르 추천 칩', (await text(`${dlg} .gf-genre-box .field-label`)) === '장르' && (await texts(`${dlg} .gf-genres .chip-label`)).slice(0, 4).join() === '전략,파티,추리,협력' && await page.isVisible(`${dlg} .gf-bg`));
+    check('다시 보드게임 → ‘장르’ 이름표 · 장르 추천 칩', (await text(`${dlg} .gf-genre-box .field-label`)) === '장르' && (await texts(`${dlg} .gf-genres .chip-label`)).slice(0, 4).join() === '전략,파티,추리,협력' && await page.isVisible(`${dlg} .gf-bg`) && await page.isHidden(`${dlg} .gf-author`));
     await page.click(`${dlg} .seg-item:has-text("머더미스터리")`);
     await page.fill('[data-field="game-title"]', '열차 밖의 밤');
     await page.click(`${dlg} .gf-genres .chip:has-text("호러")`);
@@ -2365,7 +2411,7 @@ await step('소장 게임 등록 · 인원·시간·장르 · 같은 이름 · �
       JSON.stringify(agri.owners) === JSON.stringify([ids['영식']]) &&
       agri.playersMin === 1 && agri.playersMax === 4 && agri.timeMin === 30 && agri.timeMax === 150 && JSON.stringify(agri.genres) === '["전략","농장"]', JSON.stringify(agri));
     check('서버: 머더미스터리도 내 소장 · 태그는 genres 에 · 소장한 사람은 비움', games.some((g) => g.type === 'murdermystery' && g.title === '열차 밖의 밤' && g.owned === true && JSON.stringify(g.genres) === JSON.stringify(['호러', '열차물']) && !('owners' in g)), JSON.stringify(games));
-    check('서버: 머더미스터리 작품에는 인원·시간 값 없음', games.filter((g) => g.title === '열차 밖의 밤').every((g) => !('playersMin' in g) && !('timeMin' in g)), JSON.stringify(games.filter((g) => g.title === '열차 밖의 밤')));
+    check('서버: 적지 않은 머미 작가·인원·시간은 비어 있음', games.filter((g) => g.title === '열차 밖의 밤').every((g) => g.author === '' && g.playersMin === null && g.timeMin === null), JSON.stringify(games.filter((g) => g.title === '열차 밖의 밤')));
 
     // 목록: 기록이 없어도 소장에 보임
     const after = await texts('.page-collection .gcard-title');

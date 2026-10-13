@@ -143,7 +143,7 @@ function fmtTimeRange(min, max) {
   return b !== null && b !== lo ? `${lo}~${b}분` : `${lo}분`;
 }
 
-/** 게임 정보 요약 한 줄: '2~4명 · 60~90분 · 전략, 협력' (보드게임) · '추리중심, 반전' (머더미스터리 태그) · '키이스케이프 홍대점' (방탈출) */
+/** 게임 정보 요약 한 줄: '2~4명 · 60~90분 · 전략, 협력' (보드게임) · '홍길동 작 · 6명 · 180~240분 · 추리중심, 반전' (머더미스터리) · '키이스케이프 홍대점' (방탈출) */
 export function gameInfoText(g, { genres = 2 } = {}) {
   if (!g || typeof g !== 'object') return '';
   const parts = [];
@@ -152,6 +152,9 @@ export function gameInfoText(g, { genres = 2 } = {}) {
     const gs = Array.isArray(g.genres) ? g.genres.filter((x) => typeof x === 'string' && x) : [];
     if (gs.length) parts.push(gs.length > genres ? `${gs.slice(0, genres).join(', ')} 외 ${gs.length - genres}` : gs.join(', '));
   } else if (g.type === 'murdermystery') {
+    // '홍길동 작 · 6명 · 180~240분 · 추리중심, 반전'
+    const author = typeof g.author === 'string' ? g.author.trim() : '';
+    parts.push(author ? `${author} 작` : '', fmtPlayers(g.playersMin, g.playersMax), fmtTimeRange(g.timeMin, g.timeMax));
     const gs = Array.isArray(g.genres) ? g.genres.filter((x) => typeof x === 'string' && x) : [];
     if (gs.length) parts.push(gs.length > genres ? `${gs.slice(0, genres).join(', ')} 외 ${gs.length - genres}` : gs.join(', '));
   } else if (g.type === 'escaperoom') {

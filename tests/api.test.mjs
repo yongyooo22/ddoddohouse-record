@@ -694,11 +694,27 @@ describe('게임 정보 검증', () => {
     assert.equal(g({}).value.owners, undefined, '안 보내면 담지 않음 (저장된 값 유지)');
   });
 
+  test('머더미스터리 작품: 작가 · 인원 · 예상 시간', () => {
+    const g = (extra) => validateGame({ type: 'murdermystery', title: '붉은 저택', ...extra });
+    assert.deepEqual(g({ author: '  홍   길동 ', playersMin: 6, playersMax: '', timeMin: '180', timeMax: 240 }).value,
+      { type: 'murdermystery', title: '붉은 저택', memo: '', author: '홍 길동', playersMin: 6, playersMax: 6, timeMin: 180, timeMax: 240 });
+    assert.equal(g({ author: '가'.repeat(41) }).field, 'author');
+    assert.equal(g({ author: '가'.repeat(40) }).ok, true);
+    assert.equal(g({ author: 3 }).field, 'author');
+    assert.equal(g({ author: '' }).value.author, '');
+    assert.equal(g({}).value.author, undefined, '안 보내면 담지 않음 (저장된 값 유지)');
+    assert.equal(g({ playersMin: 7, playersMax: 6 }).field, 'playersMax');
+  });
+
   test('finalizeGame: 종류에 맞는 항목만, 소장 여부를 정한 적 없으면 내 소장(예전 소장 게임)', () => {
     assert.deepEqual(finalizeGame({ type: 'boardgame', title: '카탄', memo: '', brand: 'x' }),
       { type: 'boardgame', title: '카탄', memo: '', owned: true, playersMin: null, playersMax: null, timeMin: null, timeMax: null, genres: [] });
     assert.deepEqual(finalizeGame({ type: 'murdermystery', title: 'm', owned: false, genres: ['a'], cover: 'c1' }),
-      { type: 'murdermystery', title: 'm', memo: '', owned: false, cover: 'c1', genres: ['a'] }); // 작품 태그는 genres 에
+      { type: 'murdermystery', title: 'm', memo: '', owned: false, cover: 'c1', author: '', playersMin: null, playersMax: null, timeMin: null, timeMax: null, genres: ['a'] }); // 작품 태그는 genres 에
+    assert.deepEqual(finalizeGame({ type: 'murdermystery', title: 'm', author: '홍길동', playersMin: 6, playersMax: 6, timeMin: 180, timeMax: 240, brand: 'x' }),
+      { type: 'murdermystery', title: 'm', memo: '', owned: true, author: '홍길동', playersMin: 6, playersMax: 6, timeMin: 180, timeMax: 240, genres: [] });
+    // 작가는 머더미스터리에만
+    assert.equal(finalizeGame({ type: 'boardgame', title: '카탄', author: '클라우스' }).author, undefined);
     assert.deepEqual(finalizeGame({ type: 'escaperoom', title: 'e', owned: true, playersMin: 2, brand: 'b' }),
       { type: 'escaperoom', title: 'e', memo: '', owned: false, brand: 'b', branch: '' });
   });
@@ -1043,6 +1059,15 @@ function storageSuite(label, makeRedis) {
       const old = await post('games', { game: { id: catan.id, type: 'boardgame', title: 'Catan', memo: '확장' } });
       assert.deepEqual([old.body.game.playersMin, old.body.game.playersMax, old.body.game.timeMin, old.body.game.timeMax, old.body.game.genres, old.body.game.owned],
         [3, 4, 60, 90, ['전략'], false]);
+      // 머더미스터리 작품: 작가·인원·시간도 저장, 이름만 고쳐도 그대로
+      const mmWork = await post('games', { game: { type: 'murdermystery', title: '작가 시험 작품', author: '홍길동', playersMin: 6, timeMin: 180, timeMax: 240, genres: ['반전'] } });
+      assert.equal(mmWork.statusCode, 200);
+      assert.deepEqual([mmWork.body.game.author, mmWork.body.game.playersMin, mmWork.body.game.playersMax, mmWork.body.game.timeMin, mmWork.body.game.timeMax, mmWork.body.game.genres],
+        ['홍길동', 6, 6, 180, 240, ['반전']]);
+      const mmRenamed = await post('games', { game: { id: mmWork.body.game.id, type: 'murdermystery', title: '작가 시험 작품 2' } });
+      assert.deepEqual([mmRenamed.body.game.author, mmRenamed.body.game.playersMax, mmRenamed.body.game.timeMax], ['홍길동', 6, 240]);
+      assert.equal((await post('games', { game: { id: mmWork.body.game.id, type: 'murdermystery', title: 'x', author: '가'.repeat(41) } })).body.field, 'author');
+      assert.equal((await del('games', mmWork.body.game.id)).statusCode, 200); // 아래 목록 검사에 섞이지 않게
       // 소장 해제는 소장 여부만
       const unown = await post('games', { game: { id: catan.id, type: 'boardgame', title: 'Catan', owned: true } });
       assert.equal(unown.body.game.owned, true);

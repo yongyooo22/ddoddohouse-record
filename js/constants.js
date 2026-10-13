@@ -35,7 +35,7 @@ export const LIMITS = {
   title: 80, oneLiner: 100, review: 5000, tag: 15, tags: 10, members: 20,
   place: 40, expansion: 60, publisher: 40, store: 40, gm: 20, character: 30,
   brand: 40, branch: 40, genre: 20, memberName: 20, lender: 20, photos: 4,
-  gameMemo: 100, gameGenre: 15, gameGenres: 10, gamePlayers: 99, gameTime: 1440,
+  gameMemo: 100, gameGenre: 15, gameGenres: 10, gamePlayers: 99, gameTime: 1440, gameAuthor: 40,
 };
 
 export const BG_MODES = [
@@ -102,7 +102,7 @@ export const FIELD_LABELS = {
   brand: '브랜드', branch: '지점', genre: '장르', timeLimitMin: '제한 시간', remainingSec: '남은 시간',
   hints: '힌트', fear: '공포도', activity: '활동성', name: '이름', emoji: '이모지', color: '색', photos: '사진',
   ownership: '소장 여부', lender: '빌려준 사람', gameId: '게임', memo: '메모', owned: '소장 여부', owners: '소장한 사람', cover: '대표 이미지',
-  playersMin: '최소 인원', playersMax: '최대 인원', timeMin: '예상 시간', timeMax: '예상 시간', genres: '장르', myRole: '내 역할', roleSpoiler: '역할 가리기',
+  playersMin: '최소 인원', playersMax: '최대 인원', timeMin: '예상 시간', timeMax: '예상 시간', genres: '장르', myRole: '내 역할', roleSpoiler: '역할 가리기', author: '작가',
 };
 
 export const STORAGE = {

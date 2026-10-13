@@ -84,7 +84,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
 
   const cover = coverField({ value: game ? coverOf(game) : null, label: '대표 이미지' });
 
-  // 보드게임: 인원 · 예상 시간 (나란히) → 장르
+  // 보드게임·머더미스터리: 인원 · 예상 시간 (나란히) → 장르(태그). 머더미스터리는 작가도
   const pMin = numIn(game && game.playersMin, { label: '최소 인원', min: 1, max: LIMITS.gamePlayers, placeholder: '2' });
   const pMax = numIn(game && game.playersMax, { label: '최대 인원', min: 1, max: LIMITS.gamePlayers, placeholder: '4' });
   const tMin = numIn(game && game.timeMin, { label: '최소 예상 시간(분)', min: 1, max: LIMITS.gameTime, placeholder: '60' });
@@ -134,6 +134,14 @@ export async function openGameEditor(game = null, { type: startType, title: star
   // 장르(보드게임) · 태그(머더미스터리)
   const genreBox = h('div', { class: 'field gf-genre-box' }, genreLabel, genreChips,
     h('div', { class: 'tag-add' }, genreIn, h('button', { type: 'button', class: 'btn btn-soft', onClick: addGenre }, '추가')));
+
+  // 머더미스터리: 작가
+  const authorIn = h('input', {
+    type: 'text', class: 'input', maxlength: String(LIMITS.gameAuthor), value: game ? game.author || '' : '', placeholder: '예) 홍길동',
+    autocomplete: 'off', enterkeyhint: 'done', id: nextId('gauthor'), 'data-field': 'game-author',
+  });
+  const authorBox = h('div', { class: 'field gf-author' }, h('label', { class: 'field-label', htmlFor: authorIn.id, text: '작가 (선택)' }), authorIn);
+  const rangeHint = bgBox.querySelector('.gf-range-hint');
 
   // 방탈출: 매장 · 지점
   const brandIn = h('input', { type: 'text', class: 'input', maxlength: String(LIMITS.brand), value: game ? game.brand || '' : '', placeholder: '예) 키이스케이프', autocomplete: 'off', 'aria-label': '매장(브랜드)' });
@@ -185,8 +193,12 @@ export async function openGameEditor(game = null, { type: startType, title: star
     const t = TYPES[type];
     titleLabel.textContent = t.titleLabel;
     titleIn.placeholder = t.titlePlaceholder;
-    memoIn.placeholder = { boardgame: '예) 확장 포함', murdermystery: '예) 보드게임형 · 6인', escaperoom: '예) 공포 2단계' }[type];
-    bgBox.hidden = type !== 'boardgame';
+    memoIn.placeholder = { boardgame: '예) 확장 포함', murdermystery: '예) 보드게임형', escaperoom: '예) 공포 2단계' }[type];
+    const mm = type === 'murdermystery';
+    bgBox.hidden = type !== 'boardgame' && !mm;
+    authorBox.hidden = !mm;
+    [pMin.placeholder, pMax.placeholder, tMin.placeholder, tMax.placeholder] = mm ? ['4', '6', '120', '180'] : ['2', '4', '60', '90'];
+    rangeHint.textContent = mm ? '인원·시간이 정해져 있으면 한 칸만 적어요' : '1인 게임이나 인원·시간이 정해져 있으면 한 칸만 적어요';
     genreBox.hidden = type === 'escaperoom';
     genreLabel.textContent = genreWord();
     genreChips.setAttribute('aria-label', genreWord());
@@ -265,9 +277,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     const payload = { ...(game ? { id: game.id } : {}), type, title, memo };
     if (OWNABLE.includes(type)) { payload.owned = ownedOn; payload.owners = owners; }
     if (type !== 'escaperoom' && !addGenre()) return false;
-    if (type === 'murdermystery') {
-      payload.genres = genres;
-    } else if (type === 'boardgame') {
+    if (type === 'boardgame' || type === 'murdermystery') {
       const a = readInt(pMin, 1, LIMITS.gamePlayers), b = readInt(pMax, 1, LIMITS.gamePlayers);
       if (Number.isNaN(a)) return fail(`인원은 1~${LIMITS.gamePlayers}명으로 적어 주세요`, pMin);
       if (Number.isNaN(b)) return fail(`인원은 1~${LIMITS.gamePlayers}명으로 적어 주세요`, pMax);
@@ -278,6 +288,11 @@ export async function openGameEditor(game = null, { type: startType, title: star
       if (c !== null && d !== null && c > d) return fail('최대 시간이 최소 시간보다 짧아요', tMax);
       // 한 칸만 적으면 고정값 (예: 2명, 60분)
       Object.assign(payload, { playersMin: a ?? b, playersMax: b ?? a, timeMin: c ?? d, timeMax: d ?? c, genres });
+      if (type === 'murdermystery') {
+        const author = authorIn.value.trim().replace(/\s+/g, ' ');
+        if (codePoints(author).length > LIMITS.gameAuthor) return fail(`작가는 ${LIMITS.gameAuthor}자까지예요`, authorIn);
+        payload.author = author;
+      }
     } else if (type === 'escaperoom') {
       Object.assign(payload, { brand: brandIn.value.trim(), branch: branchIn.value.trim() });
     }
@@ -306,6 +321,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
       if (f === 'cover') return fail('대표 이미지를 찾을 수 없어요. 다시 골라 주세요', null);
       if (f === 'title') return fail('이름을 확인해 주세요');
       if (f === 'memo') return fail(`메모는 ${LIMITS.gameMemo}자까지예요`, memoIn);
+      if (f === 'author') return fail(`작가는 ${LIMITS.gameAuthor}자까지예요`, authorIn);
       if (f && /^(players|time|genres|brand|branch)/.test(f)) return fail('입력한 정보를 확인해 주세요', null);
       if (e.code === 'limit') return fail('게임은 1,000개까지 등록할 수 있어요');
       if (e.code === 'not_found') return fail('이미 삭제된 게임이에요');
@@ -320,7 +336,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     const shown = added.slice(-3).map((x) => `‘${x}’`).join(', ');
     addedLine.textContent = `등록했어요: ${added.length > 3 ? `${shown} 외 ${added.length - 3}개` : shown} · 이어서 적어 주세요`;
     addedLine.hidden = false;
-    for (const el of [titleIn, memoIn, pMin, pMax, tMin, tMax, genreIn, brandIn, branchIn]) el.value = '';
+    for (const el of [titleIn, memoIn, authorIn, pMin, pMax, tMin, tMax, genreIn, brandIn, branchIn]) el.value = '';
     genres = [];
     paintGenres();
     cover.reset();
@@ -344,6 +360,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     h('div', { class: 'field' }, titleLabel, titleIn),
     dupBox,
     h('div', { class: 'field' }, h('span', { class: 'field-label', text: '대표 이미지 (선택)' }), cover.el),
+    authorBox,
     bgBox,
     genreBox,
     erBox,
@@ -366,7 +383,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
       : [{ label: '취소', value: null, kind: 'ghost' }, { label: '등록', value: 'ok', kind: 'primary', handler: save }];
 
   // 배경을 누르거나 ESC·뒤로가기로 닫을 때, 고치던 내용이 있으면 버릴지 먼저 물어봄 (실수로 닫혀서 쓴 게 날아가지 않게)
-  const snapshot = () => JSON.stringify([type, titleIn.value, memoIn.value, cover.value(), pMin.value, pMax.value, tMin.value, tMax.value,
+  const snapshot = () => JSON.stringify([type, titleIn.value, memoIn.value, authorIn.value, cover.value(), pMin.value, pMax.value, tMin.value, tMax.value,
     genres, genreIn.value, brandIn.value, branchIn.value, ownedOn, owners]);
   let initial = snapshot();
   const isDirty = () => cover.busy() || snapshot() !== initial;
@@ -381,7 +398,7 @@ export async function openGameEditor(game = null, { type: startType, title: star
     onOpen: (dlg) => {
       // Enter = 등록/저장 (한글 조합 중 Enter 는 글자를 마무리할 뿐이라 무시)
       const primary = dlg.querySelector('.dlg-actions .btn-primary');
-      for (const el of [titleIn, memoIn, brandIn, branchIn]) {
+      for (const el of [titleIn, memoIn, authorIn, brandIn, branchIn]) {
         el.addEventListener('keydown', (e) => {
           if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;
           e.preventDefault();
