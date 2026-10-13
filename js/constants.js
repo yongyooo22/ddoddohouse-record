@@ -112,4 +112,5 @@ export const STORAGE = {
   theme: 'ddh:theme',
   lastType: 'ddh:lastType',
   me: 'ddh:me', // 이 기기에서 '나'인 멤버 id (기기마다 따로)
+  spoilerMine: 'ddh:spoilerMine', // '0' 이면 내가 함께한 기록도 스포일러를 가림 (기본은 바로 보기)
 };

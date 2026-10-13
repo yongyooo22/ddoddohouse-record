@@ -1,7 +1,7 @@
 // 설정 — 연결 상태, 사진 저장 공간, 내보내기/가져오기, 테마, 잠금 해제 정보 지우기
 import { h, icon } from '../dom.js';
 import { APP_NAME, APP_VERSION, TYPE_KEYS } from '../constants.js';
-import { state, getTheme, setTheme, wipeLocal, upsertRecord, upsertMember, upsertGame, recordById, referencedPhotos, photosOf, getDraft } from '../store.js';
+import { state, getTheme, setTheme, getSpoilerMine, setSpoilerMine, getMeId, wipeLocal, upsertRecord, upsertMember, upsertGame, recordById, referencedPhotos, photosOf, getDraft } from '../store.js';
 import { relTime, dateStamp, nameKey, fmtBytes } from '../format.js';
 import { storageUsage } from '../stats.js';
 import * as api from '../api.js';
@@ -519,6 +519,14 @@ function render(root) {
   const themeSec = h('section', { class: 'card set-sec' },
     h('h2', { class: 'set-title', text: '화면 테마' }),
     themeSeg);
+  // 내가 함께한 기록의 스포일러: 이미 아는 내용이라 처음부터 보여 줌 (기기마다 따로 저장)
+  const spoilerSec = h('section', { class: 'card set-sec set-spoiler' },
+    h('h2', { class: 'set-title', text: '스포일러' }),
+    switchRow({
+      checked: getSpoilerMine(), label: '내가 함께한 기록은 바로 보기', icon: 'eye',
+      desc: getMeId() ? '나가 함께한 사람에 있는 기록은 감상·범인·역할을 가리지 않아요' : '먼저 ‘나’를 정하면 내가 함께한 기록의 감상·범인·역할을 가리지 않아요',
+      onChange: (v) => { setSpoilerMine(v); toast(v ? '내가 함께한 기록은 스포일러를 바로 보여요' : '내가 함께한 기록도 스포일러를 가려요', 'ok'); },
+    }));
   const deviceSec = h('section', { class: 'card set-sec' },
     h('h2', { class: 'set-title', text: '이 기기' }),
     h('p', { class: 'set-desc', text: '입장 코드와 기기에 저장된 기록 사본·사진을 지워요. 다시 들어오려면 공유 링크가 필요해요. 서버의 기록은 지워지지 않아요.' }),
@@ -540,7 +548,7 @@ function render(root) {
     // 넓은 화면은 두 단: (연결 상태·사진 저장 공간) | (백업·테마·이 기기). 휴대폰은 같은 순서로 한 줄
     h('div', { class: 'set-grid' },
       h('div', { class: 'set-col' }, connSec, storageSection()),
-      h('div', { class: 'set-col' }, backupSec, themeSec, deviceSec)),
+      h('div', { class: 'set-col' }, backupSec, spoilerSec, themeSec, deviceSec)),
     h('footer', { class: 'set-foot' },
       h('span', { class: 'logo-mark set-logo', 'aria-hidden': 'true' }, icon('logo')),
       h('p', { text: `${APP_NAME} · v${APP_VERSION}` }),

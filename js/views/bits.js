@@ -2,7 +2,7 @@
 import { h, icon, starShape } from '../dom.js';
 import { TYPES } from '../constants.js';
 import { fmtDate, fmtDateDot } from '../format.js';
-import { erOrdinals, photosOf, titleOf, gameOfRecord, coverOf, isOwnedGame } from '../store.js';
+import { erOrdinals, photosOf, titleOf, gameOfRecord, coverOf, isOwnedGame, knowsSpoiler } from '../store.js';
 import { typeBadge, spoilerBlock } from '../ui.js';
 import { ownershipOf, lenderOf } from '../stats.js';
 import { cardPhoto } from './photos.js';
@@ -76,7 +76,7 @@ export function recordCard(r) {
   let one = null;
   if (excerpt) {
     const text = h('p', { class: 'rcard-one', text: excerpt });
-    one = r.spoiler ? spoilerBlock(text, { inline: true, label: '스포일러 보기', key: spoilerKey(r, 'one') }) : text;
+    one = r.spoiler && !knowsSpoiler(r) ? spoilerBlock(text, { inline: true, label: '스포일러 보기', key: spoilerKey(r, 'one') }) : text;
   }
   return h('article', { class: ['rcard', t ? t.cls : '', photo ? 'has-photo' : ''] },
     h('div', { class: 'rcard-main' },

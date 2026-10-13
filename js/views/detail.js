@@ -2,7 +2,7 @@
 //               오른쪽(휴대폰은 아래): 플레이 결과 (함께한 사람 모두 — 결과가 없는 사람도)
 import { h, icon } from '../dom.js';
 import { TYPES, BG_MODES, MM_FORMATS, MM_OUTCOMES, MM_SCORES, ER_SCORES } from '../constants.js';
-import { state, recordById, removeRecord, memberInfo, isFirstLoad, loadFailed, titleOf, gameOfRecord, recordsOfGame, isOwnedGame, getMeId, gameSummaries } from '../store.js';
+import { state, recordById, removeRecord, memberInfo, isFirstLoad, loadFailed, titleOf, gameOfRecord, recordsOfGame, isOwnedGame, getMeId, gameSummaries, knowsSpoiler } from '../store.js';
 import { participants, bgResultRows, myBgResult, bgWinners, titleKey } from '../stats.js';
 import { fmtDate, fmtMinutes, fmtRemaining, fmtDateTime, gameInfoText } from '../format.js';
 import * as api from '../api.js';
@@ -250,7 +250,8 @@ function mmResults(r) {
   };
   const culpritLine = culprit ? h('div', { class: 'dres-outcome mm-culprit' }, culprit) : null;
   const list = ids.length ? h('ul', { class: `dres-list${anyRole ? ' has-roles' : ''}` }, ids.map(row)) : noPeople();
-  const reveal = revealGroup([culpritLine, ...cells], {
+  // 내가 함께한 기록이면 이미 아는 내용 — 접지 않음
+  const reveal = knowsSpoiler(r) ? null : revealGroup([culpritLine, ...cells], {
     label: roles.some((x) => x.culprit) || culprit ? '범인·역할 보기' : '역할 보기', key: spoilerKey(r, 'roles'),
   });
   return resultsCard('함께한 멤버', ids.length, [culpritLine, list], { action: reveal });
@@ -352,14 +353,17 @@ function render(root, id, ctx) {
       r.oneLiner ? h('p', { class: 'review-one', text: r.oneLiner }) : null,
       r.review ? h('p', { class: 'review-text', text: r.review }) : null)
     : null;
+  // 내가 함께한 기록(나가 함께한 사람에 있음)이면 스포일러를 이미 아는 사람이라 가리지 않음
+  const knows = knowsSpoiler(r);
   const review = reviewBody
-    ? part('감상', r.spoiler ? spoilerBlock(reviewBody, { label: '감상 보기', key: spoilerKey(r, 'review') }) : reviewBody)
+    ? part('감상', r.spoiler && !knows ? spoilerBlock(reviewBody, { label: '감상 보기', key: spoilerKey(r, 'review') }) : reviewBody)
     : null;
 
   // 내 역할 (머더미스터리): 작품 스포일러라 늘 접어 두고 눌렀을 때만 보여 줌
   const myRole = r.type === 'murdermystery' ? String(mmOf(r).myRole || '').trim() : '';
-  const roleSec = myRole
-    ? part('내 역할', spoilerBlock(h('p', { class: 'my-role', text: myRole }), { label: '내 역할 보기', key: spoilerKey(r, 'myrole') }))
+  const roleEl = myRole ? h('p', { class: 'my-role', text: myRole }) : null;
+  const roleSec = roleEl
+    ? part('내 역할', knows ? roleEl : spoilerBlock(roleEl, { label: '내 역할 보기', key: spoilerKey(r, 'myrole') }))
     : null;
   const scores = detailScores(r);
   const info = dayInfo(r);

@@ -30,6 +30,17 @@ export const getMeId = () => {
 };
 export const setMeId = (id) => { if (id) lsSet(STORAGE.me, id); else lsRemove(STORAGE.me); bump(); emit('me'); };
 
+// ── 내가 함께한 기록의 스포일러 ──
+// 스포일러 가림은 그 작품을 아직 안 해 본 사람을 위한 것. 나가 함께한 사람에 들어 있는 기록이면
+// 범인·역할·결말을 이미 아는 내용이라 처음부터 펼쳐 보여 줌 (설정에서 끌 수 있음 — 기기마다 따로)
+export const getSpoilerMine = () => lsGet(STORAGE.spoilerMine) !== '0';
+export const setSpoilerMine = (on) => { if (on) lsRemove(STORAGE.spoilerMine); else lsSet(STORAGE.spoilerMine, '0'); bump(); emit('me'); };
+/** 이 기록의 스포일러를 지금 보는 사람(이 기기의 나)이 이미 아는지 — 내가 함께한 기록이면 true */
+export function knowsSpoiler(r) {
+  const me = getMeId();
+  return !!me && getSpoilerMine() && participants(r).has(me);
+}
+
 // ── 테마 ──
 export const getTheme = () => {
   const t = lsGet(STORAGE.theme);

@@ -1,7 +1,7 @@
 // 멤버 목록 · 프로필 · 추가/수정 다이얼로그
 import { h, icon } from '../dom.js';
 import { PALETTE, LIMITS, TYPES, TYPE_KEYS } from '../constants.js';
-import { state, membersSorted, memberInfo, upsertMember, removeMember, isFirstLoad, loadFailed, getMeId, setMeId, subscribe } from '../store.js';
+import { state, membersSorted, memberInfo, upsertMember, removeMember, isFirstLoad, loadFailed, getMeId, setMeId, subscribe, knowsSpoiler } from '../store.js';
 import { memberProfile, memberRoles, memberActivity, mateRanking, topTies, filterPeriod } from '../stats.js';
 import { fmtDate, fmtPct, norm, codePoints, fmtDateDot } from '../format.js';
 import * as api from '../api.js';
@@ -277,19 +277,22 @@ function renderProfile(root, id, ctx) {
   const isMe = getMeId() === m.id;
   // 맡았던 역할 (머더미스터리): 역할 이름은 작품 스포일러라 목록 전체를 접어 두고 ‘역할 보기’를 눌렀을 때만 펼침.
   // 펼쳐도 스포일러로 가린 기록은 역할을 보이지 않고 기록으로만 이어 줌
+  // 내가 함께한 기록은 가리지 않음. 모든 역할이 내가 아는 것뿐이면(내 프로필 등) 목록을 접지도 않음
   let roles = [];
-  try { roles = memberRoles(state.records, m.id, { includeMyRole: isMe }); } catch { roles = []; }
-  const roleList = roles.length
-    ? h('section', { class: 'card prole' },
-      h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title', text: isMe ? '내가 맡았던 역할' : '맡았던 역할' }), h('span', { class: 'sec-sub', text: `${roles.length}개` })),
-      spoilerBlock(h('ul', { class: 'prole-list' }, roles.slice(0, 10).map((x) => h('li', { class: 'prole-row' },
+  try { roles = memberRoles(state.records, m.id, { includeMyRole: isMe, knows: knowsSpoiler }); } catch { roles = []; }
+  const shownRoles = roles.slice(0, 10);
+  const allKnown = shownRoles.length > 0 && shownRoles.every((x) => knowsSpoiler(x.record));
+  const roleUl = h('ul', { class: 'prole-list' }, shownRoles.map((x) => h('li', { class: 'prole-row' },
         h('a', { class: 'prole-link', href: `#/record/${encodeURIComponent(x.record.id)}` },
           h('span', { class: 'prole-role', text: x.hidden ? '가려진 역할' : x.character }),
           h('span', { class: 'prole-title', text: x.record.title || '(제목 없음)' }),
           h('span', { class: 'prole-meta' },
             h('span', { text: fmtDateDot(x.record.date) }),
-            Number(x.record.rating) > 0 ? starsView(x.record.rating, { size: 'xs' }) : null))))),
-      { label: '역할 보기', key: `profile-roles:${m.id}:${roles.map((x) => `${x.record.id}@${x.record.updatedAt || ''}`).join(',')}` }),
+            Number(x.record.rating) > 0 ? starsView(x.record.rating, { size: 'xs' }) : null)))));
+  const roleList = roles.length
+    ? h('section', { class: 'card prole' },
+      h('div', { class: 'sec-head' }, h('h2', { class: 'sec-title', text: isMe ? '내가 맡았던 역할' : '맡았던 역할' }), h('span', { class: 'sec-sub', text: `${roles.length}개` })),
+      allKnown ? roleUl : spoilerBlock(roleUl, { label: '역할 보기', key: `profile-roles:${m.id}:${roles.map((x) => `${x.record.id}@${x.record.updatedAt || ''}`).join(',')}` }),
       roles.length > 10 ? h('p', { class: 'muted small', text: `최근 10개만 보여요 (전체 ${roles.length}개)` }) : null)
     : null;
   const meBtn = h('button', {
