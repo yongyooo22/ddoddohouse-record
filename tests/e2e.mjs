@@ -3472,6 +3472,8 @@ await step('사진: 기록 폼에는 사진 칸이 없음 · 사진 처리는 �
   await page.setInputFiles(coverIn, [P.exif]);
   photoIds.exif = await nextCover(null);
   check('대표 이미지 올라감 (서버에 1장)', !!photoIds.exif && (await imgStats()).count === before.count + 1, JSON.stringify(await imgStats()));
+  const nearSquare = (sel) => until(() => page.$eval(sel, (e) => (e.querySelector('img').naturalWidth ? e.classList.contains('is-near-square') : null)), 5000);
+  check('2:3 세로 사진은 ‘거의 정사각형’ 아님', (await nearSquare(`${dlg} .cv-tile .pimg`)) === false);
   const full = await imgBytes(photoIds.exif, 'f');
   const thumb = await imgBytes(photoIds.exif, 't');
   check('원본: WebP/JPEG 로 다시 인코딩 (350KB 이하)', /image\/(webp|jpeg)/.test(full.type) && full.buf.length <= 350 * 1024, `${full.type} ${full.buf.length}`);
@@ -3485,6 +3487,7 @@ await step('사진: 기록 폼에는 사진 칸이 없음 · 사진 처리는 �
     /img-src 'self' data: blob:/.test(full.headers.get('content-security-policy') || ''), `${full.headers.get('cache-control')} | ${full.headers.get('content-security-policy')}`);
   await page.setInputFiles(coverIn, [P.png]);
   photoIds.png = await nextCover(photoIds.exif);
+  check('3:4 사진은 ‘거의 정사각형’ (카드에서 꽉 채움)', (await nearSquare(`${dlg} .cv-tile .pimg`)) === true);
   const png = photoIds.png ? await imgBytes(photoIds.png, 'f') : { type: '', buf: Buffer.from([0x89]) };
   check('PNG 도 WebP/JPEG 로 바꿔 올림', /image\/(webp|jpeg)/.test(png.type) && png.buf[0] !== 0x89, png.type);
   await page.setInputFiles(coverIn, [P.noisy]);
@@ -3649,6 +3652,9 @@ await step('사진: 게임 대표 이미지는 플레이 사진과 따로 (사�
   check('목록: 사진 없는 기록은 게임 대표 이미지로', (await page.getAttribute(`${covered} .rcard-photo .pimg`, 'data-photo')) === ids.catanCover && !(await page.$(`${covered} .rcard-pn`)));
   const withPhotos = `.page-list .rcard:has(.card-link[href="#/record/${encodeURIComponent(ids.catan)}"])`;
   check('목록: 플레이 사진이 있으면 그날 사진', (await page.getAttribute(`${withPhotos} .rcard-photo .pimg`, 'data-photo')) === photoIds.order[0]);
+  // 4:3 사진(대표 이미지·플레이 사진 모두)은 카드 썸네일을 꽉 채움 (상세 표지와 같은 모습)
+  const fitOf = (sel) => until(() => page.$eval(`${sel} .rcard-photo .pimg`, (e) => (e.classList.contains('is-near-square') ? getComputedStyle(e.querySelector('img')).objectFit : null)), 5000);
+  check('목록 카드: 거의 정사각형 사진은 꽉 채움 (object-fit: cover)', (await fitOf(covered)) === 'cover' && (await fitOf(withPhotos)) === 'cover');
   await shot('37-list-cover');
   check('대표 이미지는 사진 정리에서도 남음', (await api('POST', '/api/images?action=gc', {})).status === 200 && (await imgBytes(ids.catanCover, 't')).status === 200);
   check('사진 수: 대표 이미지 1장만 늘어남', (await imgStats()).count === before + 1);
